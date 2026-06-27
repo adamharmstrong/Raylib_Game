@@ -1,0 +1,12 @@
+{
+	"InstallScripts" : 
+	[
+		"C:/Users/nanob/source/repos/Raylib_Game/build/cmake_install.cmake",
+		"C:/Users/nanob/source/repos/Raylib_Game/build/_deps/raylib-build/cmake_install.cmake",
+		"C:/Users/nanob/source/repos/Raylib_Game/build/_deps/raylib-build/raylib/cmake_install.cmake",
+		"C:/Users/nanob/source/repos/Raylib_Game/build/_deps/raylib-build/raylib/external/glfw/cmake_install.cmake",
+		"C:/Users/nanob/source/repos/Raylib_Game/build/_deps/raylib-build/raylib/external/glfw/src/cmake_install.cmake",
+		"C:/Users/nanob/source/repos/Raylib_Game/build/src/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
