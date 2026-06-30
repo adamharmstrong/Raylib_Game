@@ -71,6 +71,13 @@ position.
 The winch drives ropes wrapped around large pulley wheels. The spinning
 wheels are the visual centerpiece of the game.
 
+## Rotary Latch
+
+A rotary latch is a reusable machine part that spins while powered. The
+player can latch it only when its rotating spoke aligns with its target
+notch. Rotary latches can be used to unlock gates, complete circuits,
+stabilize machinery, or force timing-based synchronization puzzles.
+
 ## Generator
 
 A pulley drives an electrical generator. Power is only produced while
@@ -120,10 +127,12 @@ spinning long enough to open the castle gate and escape.
 
 -   Multiple generators
 -   Gear ratios
+-   Rotary latch synchronization puzzles
 -   Conveyor belts
 -   Elevators
 -   Rotating bridges
 -   Split-power puzzles
+-   Data-driven level files for large level sets
 
 # Win Condition
 
