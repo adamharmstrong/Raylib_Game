@@ -2,7 +2,10 @@
 
 #include "Level.h"
 #include "Player.h"
+#include "DevConsole.h"
 #include "raylib.h"
+
+#include <string>
 
 class Game {
 public:
@@ -19,6 +22,8 @@ private:
     void UpdateMachines(float dt, float moveInput);
     void CheckFailureConditions();
     void CheckWinCondition(float gateBottom);
+    void ExecuteConsoleCommand(const std::string& line);
+    void DrawDebugCollision() const;
 
     Level level{};
     Player player{};
@@ -30,6 +35,8 @@ private:
     bool showFPS{false};
     bool won{false};
     bool lost{false};
+    bool debugCollision{false};
+    DevConsole console{};
 
     float pulleyRotation{0.0f};
     float machinePhase{0.0f};

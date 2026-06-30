@@ -6,8 +6,48 @@
 #include "MathUtils.h"
 #include "Render.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <sstream>
+#include <string>
 #include <vector>
+
+namespace {
+    std::vector<std::string> SplitCommandLine(const std::string& line) {
+        std::istringstream stream(line);
+        std::vector<std::string> parts;
+        std::string part;
+
+        while (stream >> part) {
+            parts.push_back(part);
+        }
+
+        return parts;
+    }
+
+    std::string ToLower(std::string value) {
+        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
+            return static_cast<char>(std::tolower(character));
+        });
+        return value;
+    }
+
+    bool ParseFloat(const std::string& text, float& value) {
+        try {
+            size_t consumed = 0;
+            value = std::stof(text, &consumed);
+            return consumed == text.size();
+        }
+        catch (...) {
+            return false;
+        }
+    }
+
+    std::string OnOff(bool value) {
+        return value ? "on" : "off";
+    }
+}
 
 void Game::Run() {
     Load();
@@ -52,6 +92,25 @@ void Game::Reset() {
 }
 
 void Game::Update(float dt) {
+    bool consoleToggled = false;
+    if (IsKeyPressed(KEY_GRAVE)) {
+        console.Toggle();
+        consoleToggled = true;
+    }
+
+    if (console.IsOpen()) {
+        if (!consoleToggled) {
+            console.Update();
+        }
+
+        std::string commandLine;
+        while (console.ConsumeSubmittedLine(commandLine)) {
+            ExecuteConsoleCommand(commandLine);
+        }
+
+        return;
+    }
+
     if (IsKeyPressed(KEY_F)) showFPS = !showFPS;
     if (IsKeyPressed(KEY_R)) Reset();
 
@@ -302,6 +361,12 @@ void Game::Draw() {
         DrawText("Press R to restart", 660, 485, 26, machinePower < 0.45f ? WHITE : BLACK);
     }
 
+    if (debugCollision) {
+        DrawDebugCollision();
+    }
+
+    console.Draw(Constants::ScreenWidth, Constants::ScreenHeight);
+
     EndDrawing();
 }
 
@@ -310,4 +375,123 @@ void Game::Unload() {
     UnloadTexture(industrialTiles);
     UnloadTexture(industrialBackground);
     CloseWindow();
+}
+
+void Game::ExecuteConsoleCommand(const std::string& line) {
+    std::vector<std::string> args = SplitCommandLine(line);
+    if (args.empty()) return;
+
+    std::string command = ToLower(args[0]);
+    console.AddLine("> " + line);
+
+    if (command == "help") {
+        console.AddLine("Commands: help, clear, reset, win, kill, fps, debug_collision, teleport, power, player, machine");
+    }
+    else if (command == "clear") {
+        console.Clear();
+    }
+    else if (command == "reset") {
+        Reset();
+        console.AddLine("Level reset.");
+    }
+    else if (command == "win") {
+        won = true;
+        lost = false;
+        console.AddLine("Win state set.");
+    }
+    else if (command == "kill") {
+        lost = true;
+        won = false;
+        console.AddLine("Loss state set.");
+    }
+    else if (command == "fps") {
+        showFPS = !showFPS;
+        console.AddLine("FPS display " + OnOff(showFPS) + ".");
+    }
+    else if (command == "debug_collision") {
+        if (args.size() >= 2) {
+            std::string value = ToLower(args[1]);
+            if (value == "on") {
+                debugCollision = true;
+            }
+            else if (value == "off") {
+                debugCollision = false;
+            }
+            else {
+                console.AddLine("Usage: debug_collision [on|off]");
+                return;
+            }
+        }
+        else {
+            debugCollision = !debugCollision;
+        }
+
+        console.AddLine("Collision debug " + OnOff(debugCollision) + ".");
+    }
+    else if (command == "teleport") {
+        if (args.size() != 3) {
+            console.AddLine("Usage: teleport <x> <y>");
+            return;
+        }
+
+        float x = 0.0f;
+        float y = 0.0f;
+        if (!ParseFloat(args[1], x) || !ParseFloat(args[2], y)) {
+            console.AddLine("teleport needs numeric x and y values.");
+            return;
+        }
+
+        player.rect.x = x;
+        player.rect.y = y;
+        player.velocity = {0, 0};
+        won = false;
+        lost = false;
+        console.AddLine("Teleported player.");
+    }
+    else if (command == "power") {
+        if (args.size() != 2) {
+            console.AddLine("Usage: power <0..1>");
+            return;
+        }
+
+        float requestedPower = 0.0f;
+        if (!ParseFloat(args[1], requestedPower)) {
+            console.AddLine("power needs a numeric value.");
+            return;
+        }
+
+        requestedPower = Clamp01(requestedPower);
+        machineWinch.rect.x = machineWinch.startX + requestedPower * (machineWinch.maxX - machineWinch.startX);
+        machinePower = requestedPower;
+        console.AddLine("Machine power set.");
+    }
+    else if (command == "player") {
+        console.AddLine(TextFormat("player x=%.1f y=%.1f vx=%.1f vy=%.1f", player.rect.x, player.rect.y, player.velocity.x, player.velocity.y));
+    }
+    else if (command == "machine") {
+        console.AddLine(TextFormat("machine power=%.2f winch_x=%.1f grabbed=%s", machinePower, machineWinch.rect.x, machineWinch.grabbed ? "true" : "false"));
+    }
+    else {
+        console.AddLine("Unknown command. Type help.");
+    }
+}
+
+void Game::DrawDebugCollision() const {
+    for (const Rectangle& solid : level.baseSolids) {
+        DrawRectangleLinesEx(solid, 2, Fade(GREEN, 0.85f));
+    }
+
+    for (const Rectangle& platform : level.pitPlatforms) {
+        DrawRectangleLinesEx(platform, 2, Fade(SKYBLUE, 0.9f));
+    }
+
+    DrawRectangleLinesEx(level.ladder, 2, Fade(YELLOW, 0.9f));
+    DrawRectangleLinesEx(level.spikeHazard, 2, Fade(RED, 0.95f));
+    DrawRectangleLinesEx(level.exitTrigger, 2, Fade(PURPLE, 0.95f));
+
+    for (const HangingWeight& weight : level.weights) {
+        DrawRectangleLinesEx(weight.rect, 2, Fade(RED, 0.95f));
+    }
+
+    DrawRectangleLinesEx(player.rect, 2, Fade(ORANGE, 0.95f));
 }

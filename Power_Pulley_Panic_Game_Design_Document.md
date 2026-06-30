@@ -56,9 +56,17 @@ obstacle has a mechanical explanation.
   Climb        W / S
   Grab Winch   Hold E
   Toggle FPS   F
+  Console      ` / ~
   Restart      R
 
 # Mechanics
+
+## Developer Console
+
+Pressing the backtick/tilde key opens an in-game command console. During
+development, it supports fast debug commands such as reset, teleport,
+machine power control, and collision visualization. Later, the same
+command system can expose safe cheat-code commands in release builds.
 
 ## Winch
 

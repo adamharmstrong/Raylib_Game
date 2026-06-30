@@ -11,6 +11,7 @@ The game is organized around reusable parts rather than one-off level scripts. T
 - `src/Player.*` owns player state and reset behavior.
 - `src/Collision.*` owns collision resolution helpers.
 - `src/Render.*` owns drawing helpers for machines, hazards, the player, and environment pieces.
+- `src/DevConsole.*` owns the in-game command console input, output history, and overlay rendering.
 - `src/MathUtils.*` owns small shared math helpers.
 - `src/Constants.h` owns tuning values shared across systems.
 - `prototypes/main_0.cpp` preserves the old raylib alignment prototype outside the active build.
@@ -28,6 +29,24 @@ Current reusable parts:
 - `Winch`: produces machine power while pulled and slowly unwinds.
 - `HangingWeight`: moves from pulley power and acts as a hazard.
 - `RotaryLatch`: spins while powered and can latch only when its spoke aligns with its target notch.
+
+## Developer Console
+
+The tilde/backtick console is intended to serve as both a development tool and a future cheat-code layer. `DevConsole` handles text entry, command history, and drawing. `Game` owns command execution so command handlers can safely change game state without exposing every subsystem publicly.
+
+Initial commands:
+
+- `help`
+- `clear`
+- `reset`
+- `win`
+- `kill`
+- `fps`
+- `debug_collision [on|off]`
+- `teleport <x> <y>`
+- `power <0..1>`
+- `player`
+- `machine`
 
 Good future parts:
 
