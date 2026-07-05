@@ -48,6 +48,17 @@ Initial commands:
 - `player`
 - `machine`
 
+## Game Modes
+
+`Game` starts in `GameMode::Title`. Pressing Enter or Space opens `GameMode::Overworld`, a first-pass level select map drawn with raylib shapes. The overworld owns a small node/path model so the current level can be launched from an unlocked node while campaign progress marks completed nodes and unlocks the next node. During gameplay, Esc or Enter switches to `GameMode::Paused`; the pause screen draws over the current gameplay frame and freezes gameplay updates. Clearing a level briefly shows a clear message, records progress on the overworld, and returns to the map. The title, overworld, and pause screens use simple clickable menu buttons, including a Quit Game action that opens a confirmation modal before setting `shouldQuit`. Menu and map states are kept separate from gameplay update/draw code so future menus, save slots, level select data, and settings screens can grow without crowding the level logic.
+
+Current state flow:
+
+- `Title`: main menu, title art, and application-level buttons.
+- `Overworld`: campaign map and level node selection.
+- `Playing`: active puzzle-platformer level.
+- `Paused`: gameplay overlay with resume, settings placeholders, title return, and quit.
+
 Good future parts:
 
 - `Generator`

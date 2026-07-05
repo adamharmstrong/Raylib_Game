@@ -51,15 +51,44 @@ obstacle has a mechanical explanation.
 
   Action       Key
   ------------ --------
+  Select/Start Enter / Space
+  Map Select   A / D or Arrow Keys
+  Pause        Esc / Enter
   Move         A / D
   Jump         Space
   Climb        W / S
   Grab Winch   Hold E
   Toggle FPS   F
   Console      ` / ~
-  Restart      R
 
 # Mechanics
+
+## Title Screen
+
+The game opens on a title screen with animated pulleys and basic control
+prompts. Pressing Enter or Space opens the level select map. The title
+screen provides menu buttons for New Game, Continue, Load Custom,
+Settings, and Quit Game. Quit Game opens a confirmation prompt before
+exiting.
+
+## Level Select / Overworld
+
+The first version of the overworld is a shape-drawn factory district map
+with connected level nodes. New Game and Continue both open this map.
+Players can select nodes with A/D, arrow keys, or the mouse. Enter,
+Space, or clicking an unlocked node starts that level. For now, only the
+first node launches the current puzzle. Clearing a level marks its node
+complete, unlocks the next connected node, and returns the player to the
+map.
+
+## Pause Screen
+
+During gameplay, Esc or Enter opens a pause overlay instead of exiting
+the application. Esc or Enter resumes, and T returns to the title screen.
+The pause screen provides menu buttons for
+Resume, Restart Level, Controls, Settings, Return to Map, Return to Title Screen, and Quit Game. Quit
+Game opens a confirmation prompt before exiting. Controls opens a popup
+window listing the current keyboard inputs.
 
 ## Developer Console
 
@@ -144,13 +173,19 @@ spinning long enough to open the castle gate and escape.
 
 # Win Condition
 
-Reach the castle gate before the machinery winds down.
+Reach the castle gate before the machinery winds down. Clearing a level
+briefly shows a level clear message, then returns to the overworld map
+with the completed node marked and the next node unlocked.
 
 # Failure Conditions
 
 -   Fall into the spike pit.
 -   Become trapped by moving counterweights.
 -   Lose electrical power before reaching safety.
+
+When the player dies, the game-over screen provides direct Restart
+Level and Quit Game buttons. Quit Game opens a confirmation prompt before
+exiting.
 
 # Design Goals
 
