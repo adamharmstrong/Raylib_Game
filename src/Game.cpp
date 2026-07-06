@@ -84,6 +84,10 @@ namespace {
         int textWidth = MeasureText(text, fontSize);
         DrawText(text, centerX - textWidth / 2, y, fontSize, color);
     }
+
+    bool HasArea(Rectangle rect) {
+        return rect.width > 0.0f && rect.height > 0.0f;
+    }
 }
 
 void Game::Run() {
@@ -115,7 +119,17 @@ void Game::Load() {
 }
 
 void Game::Reset() {
-    level = CreatePowerPulleyPanicLevel();
+    std::string levelId = "gatehouse";
+    if (currentLevelNode >= 0 && currentLevelNode < static_cast<int>(overworldNodes.size())) {
+        levelId = overworldNodes[currentLevelNode].id;
+    }
+
+    Level fallback = levelId == "rotary_latch_lab" ? CreateRotaryLatchLabLevel() : CreatePowerPulleyPanicLevel();
+    level = LoadLevelFromFile("game_data/levels/" + levelId + ".level", fallback);
+    for (RotaryLatch& latch : level.rotaryLatches) {
+        ResetRotaryLatch(latch);
+    }
+
     ResetPlayer(player);
 
     machineWinch.rect.x = machineWinch.startX;
@@ -140,9 +154,9 @@ void Game::StartGame() {
 void Game::InitializeOverworld() {
     overworldNodes = {
         {"gatehouse", "1", "Gatehouse Generator", {285.0f, 545.0f}, true, false},
-        {"lower_works", "2", "Lower Works", {470.0f, 465.0f}, false, false},
-        {"counterweight_row", "3", "Counterweight Row", {670.0f, 535.0f}, false, false},
-        {"rotary_latch_lab", "4", "Rotary Latch Lab", {875.0f, 405.0f}, false, false},
+        {"rotary_latch_lab", "2", "Rotary Latch Lab", {470.0f, 465.0f}, false, false},
+        {"lower_works", "3", "Lower Works", {670.0f, 535.0f}, false, false},
+        {"counterweight_row", "4", "Counterweight Row", {875.0f, 405.0f}, false, false},
         {"foundry_lift", "5", "Foundry Lift", {1095.0f, 480.0f}, false, false},
         {"clocktower_core", "6", "Clocktower Core", {1310.0f, 335.0f}, false, false}
     };
@@ -509,6 +523,16 @@ void Game::UpdatePlayer(float dt, float moveInput) {
 }
 
 void Game::UpdateMachines(float dt, float moveInput) {
+    if (level.script == LevelScript::RotaryLatchLab) {
+        machinePower = 0.0f;
+        if (!won && !lost) {
+            for (RotaryLatch& latch : level.rotaryLatches) {
+                UpdateRotaryLatch(latch, player, 1.0f, dt);
+            }
+        }
+        return;
+    }
+
     float winchDelta = 0.0f;
     if (!won && !lost) {
         winchDelta = UpdateWinch(machineWinch, player, moveInput, dt);
@@ -520,13 +544,13 @@ void Game::UpdateMachines(float dt, float moveInput) {
     machinePhase += (0.35f + machinePower * 3.3f) * dt;
 
     UpdateHangingWeights(level.weights, machinePower, machinePhase);
-
 }
 
 void Game::CheckFailureConditions() {
     if (won || lost) return;
 
-    if (player.rect.y > Constants::ScreenHeight || CheckCollisionRecs(player.rect, level.spikeHazard)) {
+    if (player.rect.y > Constants::ScreenHeight ||
+        (HasArea(level.spikeHazard) && CheckCollisionRecs(player.rect, level.spikeHazard))) {
         lost = true;
     }
 
@@ -540,14 +564,21 @@ void Game::CheckFailureConditions() {
 void Game::CheckWinCondition(float gateBottom) {
     if (won || lost) return;
 
+    bool latchesComplete = level.rotaryLatches.empty() || AreAllRotaryLatchesLatched(level.rotaryLatches);
+    if (!HasArea(level.exitTrigger)) {
+        return;
+    }
+
     Vector2 playerCenter{
         player.rect.x + player.rect.width * 0.5f,
         player.rect.y + player.rect.height * 0.5f
     };
     float doorwayCenterX = level.exitTrigger.x + level.exitTrigger.width * 0.5f;
     bool playerCenteredInDoorway = fabsf(playerCenter.x - doorwayCenterX) <= 2.0f;
+    bool hasFactoryMachine = level.pulleys.size() >= 5;
+    bool doorUnlocked = latchesComplete && (!hasFactoryMachine || gateBottom <= player.rect.y + 4.0f);
 
-    if (playerCenteredInDoorway && CheckCollisionPointRec(playerCenter, level.exitTrigger) && gateBottom <= player.rect.y + 4.0f) {
+    if (doorUnlocked && playerCenteredInDoorway && CheckCollisionPointRec(playerCenter, level.exitTrigger)) {
         BeginLevelClear();
     }
 }
@@ -786,6 +817,7 @@ void Game::DrawControlsPopup() {
         {"Jump", "Space"},
         {"Climb", "W / S"},
         {"Grab Winch", "Hold E"},
+        {"Lock Wheel", "E near aligned wheel"},
         {"Pause / Resume", "Esc / Enter"},
         {"Map Select", "A / D or Arrow Keys"},
         {"Select / Start", "Enter / Space"},
@@ -852,122 +884,163 @@ void Game::DrawGameplay() {
         DrawRectangleLinesEx(solid, 2, BLACK);
     }
 
-    DrawLineEx({level.ladder.x + 8, level.ladder.y}, {level.ladder.x + 8, level.ladder.y + level.ladder.height}, 4, BLACK);
-    DrawLineEx({level.ladder.x + level.ladder.width - 8, level.ladder.y}, {level.ladder.x + level.ladder.width - 8, level.ladder.y + level.ladder.height}, 4, BLACK);
-    for (int i = 0; i < 13; i++) {
-        float y = level.ladder.y + i * 30;
-        DrawLineEx({level.ladder.x + 8, y}, {level.ladder.x + level.ladder.width - 8, y}, 3, BLACK);
+    if (HasArea(level.ladder)) {
+        DrawLineEx({level.ladder.x + 8, level.ladder.y}, {level.ladder.x + 8, level.ladder.y + level.ladder.height}, 4, BLACK);
+        DrawLineEx({level.ladder.x + level.ladder.width - 8, level.ladder.y}, {level.ladder.x + level.ladder.width - 8, level.ladder.y + level.ladder.height}, 4, BLACK);
+        for (int i = 0; i < 13; i++) {
+            float y = level.ladder.y + i * 30;
+            DrawLineEx({level.ladder.x + 8, y}, {level.ladder.x + level.ladder.width - 8, y}, 3, BLACK);
+        }
     }
 
-    DrawWinch(machineWinch);
-    DrawText(machineWinch.grabbed ? "Move to push" : "Press E", static_cast<int>(machineWinch.rect.x - 12.0f), static_cast<int>(machineWinch.rect.y - 28.0f), 18, machineWinch.grabbed ? ORANGE : BLACK);
-
-    DrawLineEx({machineWinch.rect.x + machineWinch.rect.width, machineWinch.rect.y + 20}, {level.pulleys[0].x - 38, level.pulleys[0].y - 38}, 5, BROWN);
-    DrawLineEx({level.pulleys[0].x, level.pulleys[0].y + 55}, {level.pulleys[1].x, level.pulleys[1].y - 45}, 5, BROWN);
-    DrawLineEx({level.pulleys[1].x, level.pulleys[1].y + 45}, {level.pulleys[2].x, level.pulleys[2].y - 45}, 5, BROWN);
-    DrawLineEx({level.pulleys[2].x, level.pulleys[2].y + 45}, {level.pulleys[3].x, level.pulleys[3].y - 45}, 5, BROWN);
-    DrawLineEx({level.pulleys[3].x, level.pulleys[3].y + 45}, {level.pulleys[4].x, level.pulleys[4].y - 55}, 5, BROWN);
-
-    DrawPulley(level.pulleys[0], 55, pulleyRotation, BLACK);
-    DrawPulley(level.pulleys[1], 45, pulleyRotation * 1.2f, BLACK);
-    DrawPulley(level.pulleys[2], 45, pulleyRotation * 1.4f, BLACK);
-    DrawPulley(level.pulleys[3], 45, pulleyRotation * 1.6f, BLACK);
-    DrawPulley(level.pulleys[4], 55, pulleyRotation * 1.1f, BLACK);
-
-    Rectangle generatorBox{565, 365, 90, 70};
-    Vector2 generatorGear{
-        generatorBox.x + generatorBox.width * 0.42f,
-        generatorBox.y + generatorBox.height * 0.48f
-    };
-    DrawMachineBox(generatorBox, pulleyRotation * 1.7f, machinePower > 0.04f);
-
-    float mainWeightY = 390.0f + machinePower * 92.0f;
-    float mainRopeX = level.pulleys[0].x + 55.0f;
-    DrawLineEx({mainRopeX, level.pulleys[0].y}, {mainRopeX, mainWeightY}, 5, BROWN);
-    DrawRectangle(mainRopeX - 25, mainWeightY, 50, 60, GRAY);
-    DrawRectangleLines(mainRopeX - 25, mainWeightY, 50, 60, BLACK);
-    DrawLineEx({mainRopeX, mainWeightY + 60}, generatorGear, 4, BROWN);
-
-    bool lightsOn = machinePower > 0.12f;
-    Color wireColor = lightsOn ? BLUE : DARKBLUE;
-
-    DrawLineEx({655, 400}, {760, 400}, 4, wireColor);
-    DrawLineEx({760, 400}, {760, 320}, 4, wireColor);
-    DrawLineEx({760, 320}, {1220, 320}, 4, wireColor);
-    DrawLineEx({1220, 320}, {1220, 598}, 4, wireColor);
-    DrawLineEx({1220, 598}, {1370, 598}, 4, wireColor);
-
+    bool hasFactoryMachine = level.pulleys.size() >= 5;
     float flicker = 0.0f;
-    float flickerCycle = fmodf(static_cast<float>(GetTime()), 3.4f);
-    if (machinePower < 0.65f && flickerCycle < 0.22f) {
-        float sputter = 0.5f + sinf(static_cast<float>(GetTime()) * 75.0f) * 0.5f;
-        flicker = -0.10f * sputter * (1.0f - machinePower);
-    }
+    if (hasFactoryMachine) {
+        DrawWinch(machineWinch);
+        DrawText(machineWinch.grabbed ? "Move to push" : "Press E", static_cast<int>(machineWinch.rect.x - 12.0f), static_cast<int>(machineWinch.rect.y - 28.0f), 18, machineWinch.grabbed ? ORANGE : BLACK);
 
-    for (int i = 0; i < 5; i++) {
-        float x = 780 + i * 95;
-        float lampPower = Clamp01(0.18f + machinePower * 0.82f + flicker);
+        DrawLineEx({machineWinch.rect.x + machineWinch.rect.width, machineWinch.rect.y + 20}, {level.pulleys[0].x - 38, level.pulleys[0].y - 38}, 5, BROWN);
+        DrawLineEx({level.pulleys[0].x, level.pulleys[0].y + 55}, {level.pulleys[1].x, level.pulleys[1].y - 45}, 5, BROWN);
+        DrawLineEx({level.pulleys[1].x, level.pulleys[1].y + 45}, {level.pulleys[2].x, level.pulleys[2].y - 45}, 5, BROWN);
+        DrawLineEx({level.pulleys[2].x, level.pulleys[2].y + 45}, {level.pulleys[3].x, level.pulleys[3].y - 45}, 5, BROWN);
+        DrawLineEx({level.pulleys[3].x, level.pulleys[3].y + 45}, {level.pulleys[4].x, level.pulleys[4].y - 55}, 5, BROWN);
 
-        DrawLineEx({x, 320}, {x, 360}, 3, BLACK);
-        DrawCircleV({x, 375}, 13, Fade(YELLOW, 0.35f + lampPower * 0.65f));
-        DrawTriangle({x - 38, 445}, {x + 38, 445}, {x, 385}, Fade(YELLOW, 0.08f + lampPower * 0.45f));
+        DrawPulley(level.pulleys[0], 55, pulleyRotation, BLACK);
+        DrawPulley(level.pulleys[1], 45, pulleyRotation * 1.2f, BLACK);
+        DrawPulley(level.pulleys[2], 45, pulleyRotation * 1.4f, BLACK);
+        DrawPulley(level.pulleys[3], 45, pulleyRotation * 1.6f, BLACK);
+        DrawPulley(level.pulleys[4], 55, pulleyRotation * 1.1f, BLACK);
+
+        Rectangle generatorBox{565, 365, 90, 70};
+        Vector2 generatorGear{
+            generatorBox.x + generatorBox.width * 0.42f,
+            generatorBox.y + generatorBox.height * 0.48f
+        };
+        DrawMachineBox(generatorBox, pulleyRotation * 1.7f, machinePower > 0.04f);
+
+        float mainWeightY = 390.0f + machinePower * 92.0f;
+        float mainRopeX = level.pulleys[0].x + 55.0f;
+        DrawLineEx({mainRopeX, level.pulleys[0].y}, {mainRopeX, mainWeightY}, 5, BROWN);
+        DrawRectangle(mainRopeX - 25, mainWeightY, 50, 60, GRAY);
+        DrawRectangleLines(mainRopeX - 25, mainWeightY, 50, 60, BLACK);
+        DrawLineEx({mainRopeX, mainWeightY + 60}, generatorGear, 4, BROWN);
+
+        bool lightsOn = machinePower > 0.12f;
+        Color wireColor = lightsOn ? BLUE : DARKBLUE;
+
+        DrawLineEx({655, 400}, {760, 400}, 4, wireColor);
+        DrawLineEx({760, 400}, {760, 320}, 4, wireColor);
+        DrawLineEx({760, 320}, {1220, 320}, 4, wireColor);
+        DrawLineEx({1220, 320}, {1220, 598}, 4, wireColor);
+        DrawLineEx({1220, 598}, {1370, 598}, 4, wireColor);
+
+        float flickerCycle = fmodf(static_cast<float>(GetTime()), 3.4f);
+        if (machinePower < 0.65f && flickerCycle < 0.22f) {
+            float sputter = 0.5f + sinf(static_cast<float>(GetTime()) * 75.0f) * 0.5f;
+            flicker = -0.10f * sputter * (1.0f - machinePower);
+        }
+
+        for (int i = 0; i < 5; i++) {
+            float x = 780 + i * 95;
+            float lampPower = Clamp01(0.18f + machinePower * 0.82f + flicker);
+
+            DrawLineEx({x, 320}, {x, 360}, 3, BLACK);
+            DrawCircleV({x, 375}, 13, Fade(YELLOW, 0.35f + lampPower * 0.65f));
+            DrawTriangle({x - 38, 445}, {x + 38, 445}, {x, 385}, Fade(YELLOW, 0.08f + lampPower * 0.45f));
+        }
     }
 
     for (const HangingWeight& weight : level.weights) {
         DrawHazardWeight(weight);
     }
 
-    DrawTiledTextureRect(industrialTiles, darkPitTile, {300, 650, 960, 160}, Fade(WHITE, 0.85f));
-    DrawSpikes(302, 805, 34);
+    if (HasArea(level.spikeHazard)) {
+        DrawTiledTextureRect(industrialTiles, darkPitTile, {300, 650, 960, 160}, Fade(WHITE, 0.85f));
+        DrawSpikes(302, 805, 34);
+    }
 
     for (Rectangle platform : level.pitPlatforms) {
         DrawTiledTextureRect(industrialTiles, platformTile, platform, WHITE);
         DrawRectangleLinesEx(platform, 2, BLACK);
     }
 
-    Rectangle gateMotorBox{1370, 565, 85, 65};
-    Vector2 gateMotorGear{
-        gateMotorBox.x + gateMotorBox.width * 0.42f,
-        gateMotorBox.y + gateMotorBox.height * 0.48f
-    };
-    DrawMachineBox(gateMotorBox, pulleyRotation * 1.4f, machinePower > 0.04f);
-    DrawLineEx({level.pulleys[4].x - 48.0f, level.pulleys[4].y + 27.0f}, {gateMotorGear.x - 25.0f, gateMotorGear.y - 7.0f}, 5, BROWN);
-    DrawLineEx({level.pulleys[4].x + 24.0f, level.pulleys[4].y + 50.0f}, {gateMotorGear.x + 23.0f, gateMotorGear.y + 10.0f}, 5, BROWN);
-    DrawRing(gateMotorGear, 22.0f, 27.0f, 0.0f, 360.0f, 32, BROWN);
+    int latchedCount = 0;
+    for (const RotaryLatch& latch : level.rotaryLatches) {
+        bool playerNear = CheckCollisionCircleRec(latch.center, latch.radius + 20.0f, player.rect);
+        if (latch.latched) {
+            latchedCount++;
+        }
 
-    Rectangle doorway{1490, 430, 75, 220};
-    DrawRectangleRec(level.exitTrigger, LIGHTGRAY);
-    DrawOutdoorDoorway(doorway);
-    DrawRectangleLinesEx(level.exitTrigger, 1, BLACK);
+        DrawRotaryLatch(latch, playerNear);
+    }
 
     float gateBottom = 650.0f - machinePower * 170.0f;
-    DrawRectangle(1490, 430, 75, static_cast<int>(gateBottom - 430.0f), BROWN);
-    for (int i = 0; i < 6; i++) {
-        float x = 1495 + i * 13;
-        DrawLineEx({x, 430}, {x, gateBottom}, 5, BLACK);
+    if (HasArea(level.exitTrigger)) {
+        if (hasFactoryMachine) {
+            Rectangle gateMotorBox{1370, 565, 85, 65};
+            Vector2 gateMotorGear{
+                gateMotorBox.x + gateMotorBox.width * 0.42f,
+                gateMotorBox.y + gateMotorBox.height * 0.48f
+            };
+            DrawMachineBox(gateMotorBox, pulleyRotation * 1.4f, machinePower > 0.04f);
+            DrawLineEx({level.pulleys[4].x - 48.0f, level.pulleys[4].y + 27.0f}, {gateMotorGear.x - 25.0f, gateMotorGear.y - 7.0f}, 5, BROWN);
+            DrawLineEx({level.pulleys[4].x + 24.0f, level.pulleys[4].y + 50.0f}, {gateMotorGear.x + 23.0f, gateMotorGear.y + 10.0f}, 5, BROWN);
+            DrawRing(gateMotorGear, 22.0f, 27.0f, 0.0f, 360.0f, 32, BROWN);
+        }
+        else {
+            bool allLatchesLocked = !level.rotaryLatches.empty() && latchedCount == static_cast<int>(level.rotaryLatches.size());
+            gateBottom = allLatchesLocked ? level.exitTrigger.y : level.exitTrigger.y + level.exitTrigger.height;
+        }
+
+        Rectangle doorway{level.exitTrigger.x + 5.0f, level.exitTrigger.y, level.exitTrigger.width - 10.0f, level.exitTrigger.height};
+        DrawRectangleRec(level.exitTrigger, LIGHTGRAY);
+        DrawOutdoorDoorway(doorway);
+        DrawRectangleLinesEx(level.exitTrigger, 1, BLACK);
+
+        float gateX = level.exitTrigger.x + 5.0f;
+        float gateTop = level.exitTrigger.y;
+        float gateWidth = level.exitTrigger.width - 10.0f;
+        float visibleGateHeight = gateBottom - gateTop;
+        if (visibleGateHeight > 0.0f) {
+            DrawRectangle(static_cast<int>(gateX), static_cast<int>(gateTop), static_cast<int>(gateWidth), static_cast<int>(visibleGateHeight), BROWN);
+            int barCount = static_cast<int>(gateWidth / 13.0f);
+            for (int i = 0; i < barCount; i++) {
+                float x = gateX + 5.0f + i * 13.0f;
+                DrawLineEx({x, gateTop}, {x, gateBottom}, 5, BLACK);
+            }
+            DrawRectangle(static_cast<int>(gateX), static_cast<int>(gateBottom - 15.0f), static_cast<int>(gateWidth), 15, BLACK);
+        }
     }
-    DrawRectangle(1490, gateBottom - 15, 75, 15, BLACK);
 
     DrawPlayer(player, bobTexture);
 
-    float blackoutFlicker = machinePower > 0.02f ? flicker : 0.0f;
-    float safeAreaDimAlpha = Clamp01(0.20f + (1.0f - machinePower) * 0.18f - flicker * 0.45f);
-    float blackoutAlpha = Clamp01(1.0f - machinePower - blackoutFlicker);
-    DrawRectangle(0, 0, 300, Constants::ScreenHeight, Fade(BLACK, safeAreaDimAlpha));
-    DrawRectangle(300, 0, 960, 275, Fade(BLACK, safeAreaDimAlpha));
-    DrawRectangleRec(level.darknessArea, Fade(BLACK, blackoutAlpha));
-    DrawRectangleRec(level.rightDarknessArea, Fade(BLACK, blackoutAlpha));
+    if (HasArea(level.darknessArea) || HasArea(level.rightDarknessArea)) {
+        float blackoutFlicker = machinePower > 0.02f ? flicker : 0.0f;
+        float safeAreaDimAlpha = Clamp01(0.20f + (1.0f - machinePower) * 0.18f - flicker * 0.45f);
+        float blackoutAlpha = Clamp01(1.0f - machinePower - blackoutFlicker);
+        DrawRectangle(0, 0, 300, Constants::ScreenHeight, Fade(BLACK, safeAreaDimAlpha));
+        DrawRectangle(300, 0, 960, 275, Fade(BLACK, safeAreaDimAlpha));
+        DrawRectangleRec(level.darknessArea, Fade(BLACK, blackoutAlpha));
+        DrawRectangleRec(level.rightDarknessArea, Fade(BLACK, blackoutAlpha));
+    }
+
+    int latchTotal = static_cast<int>(level.rotaryLatches.size());
+    if (latchTotal > 0) {
+        bool allLatchesLocked = latchedCount == latchTotal;
+        DrawRectangle(20, 20, 260, 66, Fade(BLACK, 0.45f));
+        DrawText(TextFormat("Wheel locks: %d / %d", latchedCount, latchTotal), 34, 32, 22, RAYWHITE);
+        DrawText(allLatchesLocked ? "Gate circuit complete" : "Align spokes, press E", 34, 60, 18, allLatchesLocked ? GREEN : ORANGE);
+    }
 
     if (won) {
         DrawText("LEVEL CLEAR!", 615, 420, 60, GREEN);
-        DrawText("Returning to map...", 650, 485, 26, machinePower < 0.45f ? WHITE : BLACK);
+        DrawText("Returning to map...", 650, 485, 26, machinePower < 0.45f && HasArea(level.darknessArea) ? WHITE : BLACK);
     }
 
     if (lost) {
         DrawText("YOU DIED!", 660, 420, 54, RED);
         DrawGameOverActions();
     }
-
 }
 
 void Game::Unload() {
@@ -985,7 +1058,7 @@ void Game::ExecuteConsoleCommand(const std::string& line) {
     console.AddLine("> " + line);
 
     if (command == "help") {
-        console.AddLine("Commands: help, clear, start, overworld, title, pause, resume, quit, reset, win, kill, fps, debug_collision, teleport, power, player, machine");
+        console.AddLine("Commands: help, clear, start, overworld, title, pause, resume, quit, reset, win, kill, fps, debug_collision, unlock_all_levels, teleport, power, player, machine");
     }
     else if (command == "clear") {
         console.Clear();
@@ -1053,6 +1126,20 @@ void Game::ExecuteConsoleCommand(const std::string& line) {
 
         console.AddLine("Collision debug " + OnOff(debugCollision) + ".");
     }
+    else if (command == "unlock_all_levels" ||
+        command == "unlockall" ||
+        (command == "unlock" && args.size() >= 3 && ToLower(args[1]) == "all" && ToLower(args[2]) == "levels")) {
+        if (overworldNodes.empty()) {
+            InitializeOverworld();
+        }
+
+        for (OverworldNode& node : overworldNodes) {
+            node.unlocked = true;
+        }
+
+        menuMessage = "All levels unlocked.";
+        console.AddLine("All map levels unlocked.");
+    }
     else if (command == "teleport") {
         if (args.size() != 3) {
             console.AddLine("Usage: teleport <x> <y>");
@@ -1118,6 +1205,10 @@ void Game::DrawDebugCollision() const {
 
     for (const HangingWeight& weight : level.weights) {
         DrawRectangleLinesEx(weight.rect, 2, Fade(RED, 0.95f));
+    }
+
+    for (const RotaryLatch& latch : level.rotaryLatches) {
+        DrawCircleLinesV(latch.center, latch.radius + 20.0f, Fade(PURPLE, 0.9f));
     }
 
     DrawRectangleLinesEx(player.rect, 2, Fade(ORANGE, 0.95f));

@@ -1,0 +1,21 @@
+# Five-wheel latch lab. Uses game assets and contains placement/tuning only.
+script rotary_latch_lab
+
+exit 1485 430 85 220
+
+solid 0 650 300 40
+solid 1260 650 340 40
+solid 0 690 300 210
+solid 1260 690 340 210
+
+platform 405 570 100 18
+platform 575 520 100 18
+platform 745 570 100 18
+platform 915 515 100 18
+platform 1085 570 100 18
+
+rotaryLatch 455 512 38 35 270 8 180
+rotaryLatch 625 462 38 120 270 8 150
+rotaryLatch 795 512 38 215 270 8 195
+rotaryLatch 965 457 38 305 270 8 165
+rotaryLatch 1135 512 38 80 270 8 210

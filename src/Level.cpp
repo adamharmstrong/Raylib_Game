@@ -1,7 +1,22 @@
 #include "Level.h"
 
+#include <fstream>
+#include <sstream>
+#include <string>
+
+namespace {
+    LevelScript ParseLevelScript(const std::string& value) {
+        if (value == "rotary_latch_lab") {
+            return LevelScript::RotaryLatchLab;
+        }
+
+        return LevelScript::PowerPulleyPanic;
+    }
+}
+
 Level CreatePowerPulleyPanicLevel() {
     Level level;
+    level.script = LevelScript::PowerPulleyPanic;
 
     level.ladder = {255, 250, 45, 400};
     level.spikeHazard = {300, 773, 960, 32};
@@ -39,6 +54,109 @@ Level CreatePowerPulleyPanicLevel() {
         {level.pulleys[2], 45.0f, 1.6f, 1.25f, {0, 0, 44, 55}},
         {level.pulleys[3], 45.0f, 3.2f, 1.10f, {0, 0, 44, 55}}
     };
+
+    return level;
+}
+
+Level CreateRotaryLatchLabLevel() {
+    Level level;
+    level.script = LevelScript::RotaryLatchLab;
+    level.exitTrigger = {1485, 430, 85, 220};
+
+    level.baseSolids = {
+        {0, 650, 300, 40},
+        {1260, 650, 340, 40},
+        {0, 690, 300, 210},
+        {1260, 690, 340, 210}
+    };
+
+    level.pitPlatforms = {
+        {405, 570, 100, 18},
+        {575, 520, 100, 18},
+        {745, 570, 100, 18},
+        {915, 515, 100, 18},
+        {1085, 570, 100, 18}
+    };
+
+    level.rotaryLatches = {
+        {{455, 512}, 38.0f, 35.0f, 270.0f, 8.0f, 180.0f},
+        {{625, 462}, 38.0f, 120.0f, 270.0f, 8.0f, 150.0f},
+        {{795, 512}, 38.0f, 215.0f, 270.0f, 8.0f, 195.0f},
+        {{965, 457}, 38.0f, 305.0f, 270.0f, 8.0f, 165.0f},
+        {{1135, 512}, 38.0f, 80.0f, 270.0f, 8.0f, 210.0f}
+    };
+
+    return level;
+}
+
+Level LoadLevelFromFile(const std::string& path, Level fallback) {
+    std::ifstream file(path);
+    if (!file) {
+        return fallback;
+    }
+
+    Level level;
+    std::string line;
+
+    while (std::getline(file, line)) {
+        std::istringstream stream(line);
+        std::string command;
+        stream >> command;
+
+        if (command.empty() || command[0] == '#') {
+            continue;
+        }
+
+        if (command == "script") {
+            std::string scriptName;
+            stream >> scriptName;
+            level.script = ParseLevelScript(scriptName);
+        }
+        else if (command == "ladder") {
+            stream >> level.ladder.x >> level.ladder.y >> level.ladder.width >> level.ladder.height;
+        }
+        else if (command == "spikeHazard") {
+            stream >> level.spikeHazard.x >> level.spikeHazard.y >> level.spikeHazard.width >> level.spikeHazard.height;
+        }
+        else if (command == "darkness") {
+            stream >> level.darknessArea.x >> level.darknessArea.y >> level.darknessArea.width >> level.darknessArea.height;
+        }
+        else if (command == "rightDarkness") {
+            stream >> level.rightDarknessArea.x >> level.rightDarknessArea.y >> level.rightDarknessArea.width >> level.rightDarknessArea.height;
+        }
+        else if (command == "exit") {
+            stream >> level.exitTrigger.x >> level.exitTrigger.y >> level.exitTrigger.width >> level.exitTrigger.height;
+        }
+        else if (command == "solid") {
+            Rectangle rect{};
+            stream >> rect.x >> rect.y >> rect.width >> rect.height;
+            level.baseSolids.push_back(rect);
+        }
+        else if (command == "platform") {
+            Rectangle rect{};
+            stream >> rect.x >> rect.y >> rect.width >> rect.height;
+            level.pitPlatforms.push_back(rect);
+        }
+        else if (command == "pulley") {
+            Vector2 pulley{};
+            stream >> pulley.x >> pulley.y;
+            level.pulleys.push_back(pulley);
+        }
+        else if (command == "weight") {
+            int pulleyIndex = 0;
+            HangingWeight weight{};
+            stream >> pulleyIndex >> weight.pulleyRadius >> weight.phase >> weight.speed >> weight.rect.width >> weight.rect.height;
+            if (pulleyIndex >= 0 && pulleyIndex < static_cast<int>(level.pulleys.size())) {
+                weight.pulley = level.pulleys[pulleyIndex];
+                level.weights.push_back(weight);
+            }
+        }
+        else if (command == "rotaryLatch") {
+            RotaryLatch latch{};
+            stream >> latch.center.x >> latch.center.y >> latch.radius >> latch.angle >> latch.targetAngle >> latch.tolerance >> latch.spinSpeed;
+            level.rotaryLatches.push_back(latch);
+        }
+    }
 
     return level;
 }
