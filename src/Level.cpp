@@ -9,6 +9,9 @@ namespace {
         if (value == "rotary_latch_lab") {
             return LevelScript::RotaryLatchLab;
         }
+        if (value == "flooded_foundry") {
+            return LevelScript::FloodedFoundry;
+        }
 
         return LevelScript::PowerPulleyPanic;
     }
@@ -89,6 +92,31 @@ Level CreateRotaryLatchLabLevel() {
     return level;
 }
 
+Level CreateFloodedFoundryLevel() {
+    Level level;
+    level.script = LevelScript::FloodedFoundry;
+
+    level.ladder = {255, 250, 45, 400};
+    level.spikeHazard = {300, 773, 960, 32};
+    level.darknessArea = {300, 275, 960, 625};
+    level.rightDarknessArea = {1260, 0, 340, 900};
+    level.exitTrigger = {1485, 430, 85, 220};
+    level.valve = {{515, 560}, 34.0f, false};
+    level.waterPit = {{300, 650, 960, 155}, 805.0f, 646.0f, 86.0f, false};
+
+    level.baseSolids = {
+        {0, 650, 300, 40},
+        {300, 250, 960, 25},
+        {1238, 0, 22, 275},
+        {1260, 650, 340, 40},
+        {0, 690, 300, 210},
+        {1260, 690, 340, 210},
+        {460, 590, 135, 18}
+    };
+
+    return level;
+}
+
 Level LoadLevelFromFile(const std::string& path, Level fallback) {
     std::ifstream file(path);
     if (!file) {
@@ -127,6 +155,13 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
         else if (command == "exit") {
             stream >> level.exitTrigger.x >> level.exitTrigger.y >> level.exitTrigger.width >> level.exitTrigger.height;
         }
+        else if (command == "valve") {
+            stream >> level.valve.center.x >> level.valve.center.y >> level.valve.radius;
+        }
+        else if (command == "waterPit") {
+            stream >> level.waterPit.bounds.x >> level.waterPit.bounds.y >> level.waterPit.bounds.width >> level.waterPit.bounds.height >>
+                level.waterPit.surfaceY >> level.waterPit.targetSurfaceY >> level.waterPit.fillRate;
+        }
         else if (command == "solid") {
             Rectangle rect{};
             stream >> rect.x >> rect.y >> rect.width >> rect.height;
@@ -155,6 +190,28 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
             RotaryLatch latch{};
             stream >> latch.center.x >> latch.center.y >> latch.radius >> latch.angle >> latch.targetAngle >> latch.tolerance >> latch.spinSpeed;
             level.rotaryLatches.push_back(latch);
+        }
+        else if (command == "stoneBlock") {
+            StoneBlock block{};
+            stream >> block.rect.x >> block.rect.y >> block.rect.width >> block.rect.height >> block.mass;
+            level.stoneBlocks.push_back(block);
+        }
+        else if (command == "seeSaw") {
+            SeeSaw seeSaw{};
+            stream >> seeSaw.pivot.x >> seeSaw.pivot.y >> seeSaw.length >> seeSaw.thickness >> seeSaw.minAngle >> seeSaw.maxAngle >> seeSaw.response;
+            level.seeSaws.push_back(seeSaw);
+        }
+        else if (command == "chain") {
+            Chain chain{};
+            stream >> chain.start.x >> chain.start.y >> chain.end.x >> chain.end.y >> chain.spacing >> chain.scale;
+            level.chains.push_back(chain);
+        }
+        else if (command == "enemy") {
+            Enemy enemy{};
+            stream >> enemy.rect.x >> enemy.rect.y >> enemy.rect.width >> enemy.rect.height >> enemy.patrolMinX >> enemy.patrolMaxX >> enemy.speed;
+            enemy.facingRight = enemy.speed > 0.0f;
+            enemy.walking = true;
+            level.enemies.push_back(enemy);
         }
     }
 

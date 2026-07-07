@@ -51,7 +51,10 @@ private:
     void UpdatePaused();
     void UpdateGameOverActions();
     void UpdatePlayer(float dt, float moveInput);
+    void UpdateEnemies(float dt);
     void UpdateMachines(float dt, float moveInput);
+    void UpdateStoneBlocksAndSeeSaws(float dt);
+    void KillPlayer();
     void CheckFailureConditions();
     void CheckWinCondition(float gateBottom);
     void ExecuteConsoleCommand(const std::string& line);
@@ -72,12 +75,16 @@ private:
     Player player{};
     Winch machineWinch{{350, 205, 70, 45}, 350.0f, 590.0f, 7.0f};
     Texture2D bobTexture{};
+    Texture2D skullTexture{};
     Texture2D industrialTiles{};
     Texture2D industrialBackground{};
+    Texture2D chainLinksTexture{};
+    Texture2D enemyPlaceholderTexture{};
 
     bool showFPS{false};
     bool won{false};
     bool lost{false};
+    Rectangle deathRect{80, 600, 31, 40};
     bool debugCollision{false};
     bool quitConfirmationOpen{false};
     bool controlsPopupOpen{false};
@@ -90,8 +97,7 @@ private:
 
     float pulleyRotation{0.0f};
     float machinePhase{0.0f};
-    float coyoteTimer{0.0f};
-    float jumpBufferTimer{0.0f};
     float machinePower{0.0f};
+    float gateBottom{650.0f};
     float levelClearTimer{0.0f};
 };

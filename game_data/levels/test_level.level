@@ -1,0 +1,26 @@
+# Sandbox for experimenting with newly added level objects.
+script power_pulley_panic
+
+exit 1485 430 85 220
+
+solid 0 650 1600 40
+solid 0 690 1600 210
+solid 0 0 28 900
+solid 1572 0 28 900
+
+platform 260 560 140 18
+platform 500 520 160 18
+platform 900 525 160 18
+platform 1160 575 160 18
+
+enemy 530 480 34 40 500 660 80
+
+stoneBlock 340 500 54 48 3.0
+stoneBlock 760 585 54 48 3.0
+
+seeSaw 650 620 300 16 -18 18 7
+seeSaw 1085 600 260 16 -18 18 7
+
+chain 500 520 500 650 11 1
+chain 650 620 650 500 11 1
+chain 1085 600 1235 575 11 1

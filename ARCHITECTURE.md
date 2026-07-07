@@ -29,6 +29,9 @@ Current reusable parts:
 - `Winch`: produces machine power while pulled and slowly unwinds.
 - `HangingWeight`: moves from pulley power and acts as a hazard.
 - `RotaryLatch`: spins while powered and can latch only when its spoke aligns with its target notch.
+- `StoneBlock`: a heavy pushable body that can stand on platforms, blocks, and see-saws.
+- `SeeSaw`: a tilting beam that reacts to player and stone block weight.
+- `Chain`: a repeated two-link visual span for machine rigging and future mechanical connections.
 
 ## Developer Console
 
