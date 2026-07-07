@@ -60,10 +60,10 @@ struct Chain {
 };
 
 float GetMachinePower(const Winch& winch);
-float UpdateWinch(Winch& winch, Player& player, float moveInput, float dt);
+float UpdateWinch(Winch& winch, Player& player, float moveInput, KeyboardKey interactKey, float dt);
 void UpdateHangingWeights(std::vector<HangingWeight>& weights, float machinePower, float machinePhase);
 void ResetRotaryLatch(RotaryLatch& latch);
-void UpdateRotaryLatch(RotaryLatch& latch, const Player& player, float machinePower, float dt);
+void UpdateRotaryLatch(RotaryLatch& latch, const Player& player, KeyboardKey interactKey, float machinePower, float dt);
 bool IsRotaryLatchAligned(const RotaryLatch& latch);
 bool AreAllRotaryLatchesLatched(const std::vector<RotaryLatch>& latches);
 float GetSeeSawSurfaceY(const SeeSaw& seeSaw, float x);

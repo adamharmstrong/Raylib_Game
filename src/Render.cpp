@@ -2,6 +2,7 @@
 
 #include "Machine.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace {
@@ -281,22 +282,46 @@ void DrawMachineBox(Rectangle rect, float gearRotation, bool running) {
     DrawCircleV({rect.x + rect.width - 8.0f, rect.y + rect.height - 13.0f}, 4.0f, lightColor);
 }
 
-void DrawPlayer(const Player& player, Texture2D texture) {
+void DrawPlayer(const Player& player, Texture2D texture, int frameCount, Rectangle frameCrop) {
     if (texture.id > 0) {
-        float frameWidth = static_cast<float>(texture.width) / 3.0f;
-        int frameIndex = 1;
-        if (player.walking) {
-            frameIndex = (static_cast<int>(player.animationTimer * 8.0f) % 2 == 0) ? 0 : 2;
+        frameCount = std::max(1, frameCount);
+        float frameWidth = static_cast<float>(texture.width) / static_cast<float>(frameCount);
+        float frameHeight = static_cast<float>(texture.height);
+        bool hasFrameCrop = frameCrop.width > 0.0f && frameCrop.height > 0.0f;
+        if (!hasFrameCrop) {
+            frameCrop = {0.0f, 0.0f, frameWidth, frameHeight};
         }
 
-        float sourceX = frameWidth * frameIndex;
+        int frameIndex = std::min(1, frameCount - 1);
+        if (player.walking && frameCount == 3) {
+            frameIndex = (static_cast<int>(player.animationTimer * 8.0f) % 2 == 0) ? 0 : 2;
+        }
+        else if (player.walking) {
+            frameIndex = static_cast<int>(player.animationTimer * 8.0f) % frameCount;
+        }
+
+        float frameSourceX = frameWidth * frameIndex;
         Rectangle source{
-            player.facingRight ? sourceX : sourceX + frameWidth,
-            0,
+            player.facingRight ? frameSourceX : frameSourceX + frameWidth,
+            0.0f,
             player.facingRight ? frameWidth : -frameWidth,
-            static_cast<float>(texture.height)
+            frameHeight
         };
-        DrawTexturePro(texture, source, player.rect, {0, 0}, 0.0f, WHITE);
+
+        Rectangle dest = player.rect;
+        if (hasFrameCrop) {
+            float scaleX = player.rect.width / frameCrop.width;
+            float scaleY = player.rect.height / frameCrop.height;
+            float visibleCropX = player.facingRight ? frameCrop.x : frameWidth - frameCrop.x - frameCrop.width;
+            dest = {
+                player.rect.x - visibleCropX * scaleX,
+                player.rect.y - frameCrop.y * scaleY,
+                frameWidth * scaleX,
+                frameHeight * scaleY
+            };
+        }
+
+        DrawTexturePro(texture, source, dest, {0, 0}, 0.0f, WHITE);
     }
     else {
         DrawRectangleRec(player.rect, BLACK);
@@ -327,7 +352,7 @@ void DrawEnemy(const Enemy& enemy, Texture2D texture) {
     DrawRectangleLinesEx(enemy.rect, 2, BLACK);
 }
 
-void DrawRotaryLatch(const RotaryLatch& latch, bool playerNear) {
+void DrawRotaryLatch(const RotaryLatch& latch, bool playerNear, const char* interactPrompt) {
     Color ringColor = latch.latched ? GREEN : (IsRotaryLatchAligned(latch) ? ORANGE : BLACK);
     Color spokeColor = latch.latched ? GREEN : BLACK;
 
@@ -351,17 +376,22 @@ void DrawRotaryLatch(const RotaryLatch& latch, bool playerNear) {
     DrawLineEx(latch.center, spokeEnd, 5.0f, spokeColor);
 
     if (playerNear && !latch.latched) {
-        DrawText("E", static_cast<int>(latch.center.x - 6.0f), static_cast<int>(latch.center.y - latch.radius - 28.0f), 20, ringColor);
+        int promptWidth = MeasureText(interactPrompt, 20);
+        DrawText(interactPrompt, static_cast<int>(latch.center.x - promptWidth * 0.5f), static_cast<int>(latch.center.y - latch.radius - 28.0f), 20, ringColor);
     }
 }
 
-void DrawValve(const Valve& valve, bool playerNear) {
+void DrawValve(const Valve& valve, bool playerNear, const char* interactPrompt) {
+    float openAmount = fminf(1.0f, fmaxf(0.0f, valve.turnDegrees / 360.0f));
     Color ringColor = valve.opened ? BLUE : (playerNear ? ORANGE : BLACK);
-    float rotation = valve.opened ? 45.0f : 0.0f;
+    float rotation = valve.turnDegrees;
 
     DrawRing(valve.center, valve.radius - 6.0f, valve.radius, 0.0f, 360.0f, 32, BROWN);
     DrawCircleLinesV(valve.center, valve.radius, ringColor);
     DrawCircleV(valve.center, 5.0f, BLACK);
+    if (!valve.opened && openAmount > 0.0f) {
+        DrawRing(valve.center, valve.radius + 5.0f, valve.radius + 9.0f, -90.0f, -90.0f + openAmount * 360.0f, 32, BLUE);
+    }
 
     for (int i = 0; i < 4; i++) {
         float angle = rotation + i * 90.0f;
@@ -373,7 +403,8 @@ void DrawValve(const Valve& valve, bool playerNear) {
     }
 
     if (playerNear && !valve.opened) {
-        DrawText("E", static_cast<int>(valve.center.x - 6.0f), static_cast<int>(valve.center.y - valve.radius - 28.0f), 20, ringColor);
+        int promptWidth = MeasureText(interactPrompt, 20);
+        DrawText(interactPrompt, static_cast<int>(valve.center.x - promptWidth * 0.5f), static_cast<int>(valve.center.y - valve.radius - 28.0f), 20, ringColor);
     }
 }
 
@@ -388,14 +419,18 @@ void DrawWaterPit(const WaterPit& waterPit) {
         return;
     }
 
-    Rectangle waterRect{waterPit.bounds.x, surfaceY, waterPit.bounds.width, pitBottom - surfaceY};
-    DrawRectangleRec(waterRect, Fade(SKYBLUE, 0.58f));
-    DrawRectangleRec({waterRect.x, waterRect.y, waterRect.width, 8.0f}, Fade(BLUE, 0.65f));
-
+    Color waterColor = Fade(SKYBLUE, 0.62f);
     float waveTime = static_cast<float>(GetTime()) * 4.0f;
-    for (float x = waterRect.x; x < waterRect.x + waterRect.width; x += 28.0f) {
-        float y = waterRect.y + 4.0f + sinf(waveTime + x * 0.045f) * 3.0f;
-        DrawLineEx({x, y}, {fminf(x + 18.0f, waterRect.x + waterRect.width), y}, 2.0f, Fade(RAYWHITE, 0.55f));
+    constexpr float WaveStep = 16.0f;
+    constexpr float WaveAmplitude = 4.0f;
+
+    for (float x = waterPit.bounds.x; x < waterPit.bounds.x + waterPit.bounds.width; x += WaveStep) {
+        float nextX = fminf(x + WaveStep, waterPit.bounds.x + waterPit.bounds.width);
+        float y0 = surfaceY + sinf(waveTime + x * 0.045f) * WaveAmplitude;
+        float y1 = surfaceY + sinf(waveTime + nextX * 0.045f) * WaveAmplitude;
+
+        DrawTriangle({x, y0}, {x, pitBottom}, {nextX, pitBottom}, waterColor);
+        DrawTriangle({x, y0}, {nextX, pitBottom}, {nextX, y1}, waterColor);
     }
 }
 

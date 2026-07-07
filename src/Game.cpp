@@ -20,6 +20,45 @@ namespace {
         bool enabled{true};
     };
 
+    bool IsControlDown(KeyboardKey key) {
+        return key != KEY_NULL && IsKeyDown(key);
+    }
+
+    bool IsControlPressed(KeyboardKey key) {
+        return key != KEY_NULL && IsKeyPressed(key);
+    }
+
+    bool IsControlReleased(KeyboardKey key) {
+        return key != KEY_NULL && IsKeyReleased(key);
+    }
+
+    bool IsNearRect(Rectangle a, Rectangle b, float distance) {
+        Rectangle expanded{b.x - distance, b.y - distance, b.width + distance * 2.0f, b.height + distance * 2.0f};
+        return CheckCollisionRecs(a, expanded);
+    }
+
+    const char* GetInteractPrompt(bool player1Near, bool player2Near, const char* player1Prompt, const char* player2Prompt, const char* bothPrompt) {
+        if (player1Near && player2Near) return bothPrompt;
+        if (player2Near) return player2Prompt;
+        return player1Prompt;
+    }
+
+    void DrawDeathMarker(Texture2D skullTexture, Rectangle rect) {
+        if (skullTexture.id > 0) {
+            DrawTexturePro(
+                skullTexture,
+                {0.0f, 0.0f, static_cast<float>(skullTexture.width), static_cast<float>(skullTexture.height)},
+                rect,
+                {0.0f, 0.0f},
+                0.0f,
+                WHITE
+            );
+        }
+        else {
+            DrawRectangleRec(rect, BLACK);
+        }
+    }
+
     std::vector<std::string> SplitCommandLine(const std::string& line) {
         std::istringstream stream(line);
         std::vector<std::string> parts;
@@ -109,11 +148,6 @@ namespace {
         return {waterPit.bounds.x, surfaceY, waterPit.bounds.width, pitBottom - surfaceY};
     }
 
-    bool IsRectInWater(Rectangle rect, const WaterPit& waterPit) {
-        Rectangle waterRect = GetFilledWaterRect(waterPit);
-        return waterRect.height > 0.0f && CheckCollisionRecs(rect, waterRect);
-    }
-
     bool IsPlayerSwimming(const Player& player, const Level& level) {
         if (!HasWaterPit(level)) {
             return false;
@@ -135,6 +169,10 @@ namespace {
 
         float currentTravel = waterPit.bounds.y + waterPit.bounds.height - waterPit.surfaceY;
         return Clamp01(currentTravel / totalTravel);
+    }
+
+    float GetValveOpenAmount(const Valve& valve) {
+        return Clamp01(valve.turnDegrees / 360.0f);
     }
 
     bool HorizontallyOverlaps(Rectangle a, Rectangle b) {
@@ -301,9 +339,14 @@ namespace {
         return {minX, minY, maxX - minX, maxY - minY};
     }
 
-    std::vector<Rectangle> BuildChainColliders(const Level& level, const Player& player) {
+    std::vector<Rectangle> BuildChainColliders(const Level& level, const Player* player, const Player* player2) {
         std::vector<Rectangle> colliders = BuildSolids(level);
-        colliders.push_back(player.rect);
+        if (player != nullptr) {
+            colliders.push_back(player->rect);
+        }
+        if (player2 != nullptr) {
+            colliders.push_back(player2->rect);
+        }
 
         for (const StoneBlock& block : level.stoneBlocks) {
             colliders.push_back(block.rect);
@@ -329,6 +372,14 @@ namespace {
     }
 }
 
+struct Game::PlayerControls {
+    KeyboardKey left;
+    KeyboardKey right;
+    KeyboardKey up;
+    KeyboardKey down;
+    KeyboardKey jump;
+};
+
 void Game::Run() {
     Load();
 
@@ -346,6 +397,7 @@ void Game::Load() {
     SetTargetFPS(60);
 
     bobTexture = LoadTexture("assets/first_party/characters/Bob.png");
+    dobTexture = LoadTexture("assets/first_party/characters/Dob.png");
     skullTexture = LoadTexture("assets/first_party/characters/skull.png");
     industrialTiles = LoadTexture("assets/third_party/AtomicRealm/[FREE] Industrial Tileset/raw/FREE/5. Industrial Tileset - Starter Pack 32p/1_Industrial_Tileset_1.png");
     industrialBackground = LoadTexture("assets/third_party/AtomicRealm/[FREE] Industrial Tileset/raw/FREE/5. Industrial Tileset - Starter Pack 32p/2_Industrial_Tileset_1_Background.png");
@@ -354,6 +406,7 @@ void Game::Load() {
     enemyPlaceholderTexture = LoadTexture("assets/third_party/AtomicRealm/[FREE] Industrial Tileset/raw/FREE/6. Character Animations 32p/Anim_Robot_Walk1_v1.1_spritesheet.png");
 
     if (bobTexture.id > 0) SetTextureFilter(bobTexture, TEXTURE_FILTER_POINT);
+    if (dobTexture.id > 0) SetTextureFilter(dobTexture, TEXTURE_FILTER_POINT);
     if (skullTexture.id > 0) SetTextureFilter(skullTexture, TEXTURE_FILTER_POINT);
     if (industrialTiles.id > 0) SetTextureFilter(industrialTiles, TEXTURE_FILTER_POINT);
     if (industrialBackground.id > 0) SetTextureFilter(industrialBackground, TEXTURE_FILTER_POINT);
@@ -386,13 +439,19 @@ void Game::Reset() {
     }
 
     ResetPlayer(player);
+    ResetPlayer(player2);
+    player2.rect.x += 44.0f;
     deathRect = player.rect;
+    playerDeathRect = player.rect;
+    player2DeathRect = player2.rect;
 
     machineWinch.rect.x = machineWinch.startX;
     machineWinch.grabbed = false;
 
     won = false;
     lost = false;
+    playerAlive = true;
+    player2Alive = true;
     pulleyRotation = 0.0f;
     machinePhase = 0.0f;
     machinePower = 0.0f;
@@ -435,6 +494,7 @@ void Game::OpenOverworld() {
 
     selectedOverworldNode = std::clamp(selectedOverworldNode, 0, static_cast<int>(overworldNodes.size()) - 1);
     mode = GameMode::Overworld;
+    titleModeMenuOpen = false;
     quitConfirmationOpen = false;
     menuMessage.clear();
 }
@@ -543,13 +603,26 @@ void Game::Update(float dt) {
         return;
     }
 
+    constexpr PlayerControls PlayerOneControls{KEY_A, KEY_D, KEY_W, KEY_S, KEY_SPACE};
+    constexpr PlayerControls PlayerTwoControls{KEY_J, KEY_L, KEY_I, KEY_K, KEY_NULL};
+
     float moveInput = 0.0f;
     if (!won && !lost) {
         if (IsKeyDown(KEY_A)) moveInput -= 1.0f;
         if (IsKeyDown(KEY_D)) moveInput += 1.0f;
     }
 
-    UpdatePlayer(dt, moveInput);
+    if (playerAlive) {
+        UpdatePlayer(player, PlayerOneControls, dt, moveInput);
+    }
+    if (multiplayerEnabled && player2Alive) {
+        float player2MoveInput = 0.0f;
+        if (!won && !lost) {
+            if (IsKeyDown(KEY_J)) player2MoveInput -= 1.0f;
+            if (IsKeyDown(KEY_L)) player2MoveInput += 1.0f;
+        }
+        UpdatePlayer(player2, PlayerTwoControls, dt, player2MoveInput);
+    }
     UpdateMachines(dt, moveInput);
     UpdateEnemies(dt);
     CheckFailureConditions();
@@ -558,8 +631,43 @@ void Game::Update(float dt) {
 }
 
 void Game::UpdateTitle() {
+    if (titleModeMenuOpen) {
+        if (IsKeyPressed(KEY_ESCAPE)) {
+            titleModeMenuOpen = false;
+            menuMessage.clear();
+            return;
+        }
+
+        if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE)) {
+            multiplayerEnabled = false;
+            OpenOverworld();
+        }
+
+        std::vector<MenuButton> buttons{
+            {{1080, 510, 310, 46}, "Single Player"},
+            {{1080, 566, 310, 46}, "Multiplayer"},
+            {{1080, 622, 310, 46}, "Back"}
+        };
+
+        if (WasButtonPressed(buttons[0])) {
+            multiplayerEnabled = false;
+            OpenOverworld();
+        }
+        else if (WasButtonPressed(buttons[1])) {
+            multiplayerEnabled = true;
+            OpenOverworld();
+        }
+        else if (WasButtonPressed(buttons[2])) {
+            titleModeMenuOpen = false;
+            menuMessage.clear();
+        }
+
+        return;
+    }
+
     if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE)) {
-        OpenOverworld();
+        titleModeMenuOpen = true;
+        menuMessage.clear();
     }
 
     std::vector<MenuButton> buttons{
@@ -571,9 +679,11 @@ void Game::UpdateTitle() {
     };
 
     if (WasButtonPressed(buttons[0])) {
-        OpenOverworld();
+        titleModeMenuOpen = true;
+        menuMessage.clear();
     }
     else if (WasButtonPressed(buttons[1])) {
+        multiplayerEnabled = false;
         OpenOverworld();
     }
     else if (WasButtonPressed(buttons[2])) {
@@ -584,6 +694,7 @@ void Game::UpdateTitle() {
     }
     else if (WasButtonPressed(buttons[4])) {
         quitConfirmationOpen = true;
+        titleModeMenuOpen = false;
         menuMessage.clear();
     }
 }
@@ -591,6 +702,7 @@ void Game::UpdateTitle() {
 void Game::UpdateOverworld() {
     if (IsKeyPressed(KEY_ESCAPE)) {
         mode = GameMode::Title;
+        titleModeMenuOpen = false;
         menuMessage.clear();
         return;
     }
@@ -616,6 +728,7 @@ void Game::UpdateOverworld() {
 
     if (WasButtonPressed(buttons[0])) {
         mode = GameMode::Title;
+        titleModeMenuOpen = false;
         menuMessage.clear();
     }
     else if (WasButtonPressed(buttons[1])) {
@@ -677,6 +790,7 @@ void Game::UpdatePaused() {
     }
     else if (WasButtonPressed(buttons[5])) {
         mode = GameMode::Title;
+        titleModeMenuOpen = false;
         menuMessage.clear();
     }
     else if (WasButtonPressed(buttons[6])) {
@@ -701,7 +815,7 @@ void Game::UpdateGameOverActions() {
 
 void Game::UpdateControlsPopup() {
     std::vector<MenuButton> buttons{
-        {{705, 710, 190, 46}, "Close"}
+        {{705, 775, 190, 46}, "Close"}
     };
 
     if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE) || WasButtonPressed(buttons[0])) {
@@ -723,131 +837,143 @@ void Game::UpdateQuitConfirmation() {
     }
 }
 
-void Game::UpdatePlayer(float dt, float moveInput) {
+void Game::UpdatePlayer(Player& activePlayer, const PlayerControls& controls, float dt, float moveInput) {
     bool controlsEnabled = !won && !lost;
 
     if (moveInput < 0.0f) {
-        player.facingRight = false;
+        activePlayer.facingRight = false;
     }
     else if (moveInput > 0.0f) {
-        player.facingRight = true;
+        activePlayer.facingRight = true;
     }
 
-    bool onLadder = CheckCollisionRecs(player.rect, level.ladder);
-    bool swimming = IsPlayerSwimming(player, level);
-    player.climbing = onLadder && !swimming && (IsKeyDown(KEY_W) || IsKeyDown(KEY_S)) && controlsEnabled;
-    player.walking = (fabsf(player.velocity.x) > 8.0f || player.climbing) && controlsEnabled;
+    bool onLadder = CheckCollisionRecs(activePlayer.rect, level.ladder);
+    bool swimming = IsPlayerSwimming(activePlayer, level);
+    activePlayer.climbing = onLadder && !swimming && (IsControlDown(controls.up) || IsControlDown(controls.down)) && controlsEnabled;
+    activePlayer.walking = (fabsf(activePlayer.velocity.x) > 8.0f || activePlayer.climbing) && controlsEnabled;
 
     float maxMoveSpeed = swimming ? 170.0f : Constants::PlayerSpeed;
     float targetSpeed = controlsEnabled ? moveInput * maxMoveSpeed : 0.0f;
     bool applyingInput = fabsf(targetSpeed) > 0.0f;
-    bool changingDirection = (targetSpeed < 0.0f && player.velocity.x > 0.0f) || (targetSpeed > 0.0f && player.velocity.x < 0.0f);
+    bool changingDirection = (targetSpeed < 0.0f && activePlayer.velocity.x > 0.0f) || (targetSpeed > 0.0f && activePlayer.velocity.x < 0.0f);
     float acceleration = swimming
         ? (applyingInput ? 820.0f : 620.0f)
-        : player.onGround
+        : activePlayer.onGround
         ? (applyingInput ? Constants::PlayerGroundAcceleration : Constants::PlayerGroundDeceleration)
         : (applyingInput ? Constants::PlayerAirAcceleration : Constants::PlayerAirDeceleration);
-    if (changingDirection && player.onGround && !swimming) {
+    if (changingDirection && activePlayer.onGround && !swimming) {
         acceleration = Constants::PlayerGroundDeceleration;
     }
-    player.velocity.x = ApproachFloat(player.velocity.x, targetSpeed, acceleration * dt);
+    activePlayer.velocity.x = ApproachFloat(activePlayer.velocity.x, targetSpeed, acceleration * dt);
 
-    if (player.onGround) {
-        player.coyoteTimer = Constants::CoyoteTime;
+    if (activePlayer.onGround) {
+        activePlayer.coyoteTimer = Constants::CoyoteTime;
     }
     else {
-        player.coyoteTimer -= dt;
+        activePlayer.coyoteTimer -= dt;
     }
 
-    if ((IsKeyPressed(KEY_W) || IsKeyPressed(KEY_SPACE)) && controlsEnabled) {
-        player.jumpBufferTimer = Constants::JumpBufferTime;
+    if ((IsControlPressed(controls.up) || IsControlPressed(controls.jump)) && controlsEnabled) {
+        activePlayer.jumpBufferTimer = Constants::JumpBufferTime;
     }
     else {
-        player.jumpBufferTimer -= dt;
+        activePlayer.jumpBufferTimer -= dt;
     }
 
     if (swimming && controlsEnabled) {
-        float swimInput = 0.0f;
-        if (IsKeyDown(KEY_W) || IsKeyDown(KEY_SPACE)) swimInput -= 1.0f;
-        if (IsKeyDown(KEY_S)) swimInput += 1.0f;
+        bool atSurface = HasWaterPit(level) && activePlayer.rect.y <= level.waterPit.surfaceY + 22.0f;
+        bool wantsSurfaceJump = atSurface && (IsControlPressed(controls.up) || IsControlPressed(controls.jump));
+        if (wantsSurfaceJump) {
+            activePlayer.velocity.y = Constants::PlayerJumpVelocity * 0.88f;
+            activePlayer.jumpBufferTimer = 0.0f;
+        }
+        else {
+            float swimInput = 0.0f;
+            if (IsControlDown(controls.up) || IsControlDown(controls.jump)) swimInput -= 1.0f;
+            if (IsControlDown(controls.down)) swimInput += 1.0f;
 
-        float targetSwimSpeed = swimInput * 165.0f;
-        float swimAcceleration = fabsf(targetSwimSpeed) > 0.0f ? 920.0f : 680.0f;
-        player.velocity.y = ApproachFloat(player.velocity.y, targetSwimSpeed, swimAcceleration * dt);
-        player.velocity.y = fminf(player.velocity.y, 210.0f);
-        player.onGround = false;
-        player.coyoteTimer = 0.0f;
+            float targetSwimSpeed = swimInput * 165.0f;
+            float swimAcceleration = fabsf(targetSwimSpeed) > 0.0f ? 920.0f : 680.0f;
+            activePlayer.velocity.y = ApproachFloat(activePlayer.velocity.y, targetSwimSpeed, swimAcceleration * dt);
+            activePlayer.velocity.y = fminf(activePlayer.velocity.y, 210.0f);
+        }
+        activePlayer.onGround = false;
+        activePlayer.coyoteTimer = 0.0f;
     }
-    else if (onLadder && IsKeyDown(KEY_W) && controlsEnabled) {
-        player.velocity.y = -Constants::PlayerClimbSpeed;
+    else if (onLadder && IsControlDown(controls.up) && controlsEnabled) {
+        activePlayer.velocity.y = -Constants::PlayerClimbSpeed;
     }
-    else if (onLadder && IsKeyDown(KEY_S) && controlsEnabled) {
-        player.velocity.y = Constants::PlayerClimbSpeed;
+    else if (onLadder && IsControlDown(controls.down) && controlsEnabled) {
+        activePlayer.velocity.y = Constants::PlayerClimbSpeed;
     }
     else {
-        player.velocity.y += Constants::Gravity * dt;
-        player.velocity.y = fminf(player.velocity.y, Constants::PlayerMaxFallSpeed);
+        activePlayer.velocity.y += Constants::Gravity * dt;
+        activePlayer.velocity.y = fminf(activePlayer.velocity.y, Constants::PlayerMaxFallSpeed);
     }
 
-    if (player.jumpBufferTimer > 0.0f && player.coyoteTimer > 0.0f && !onLadder && !swimming && controlsEnabled) {
-        player.velocity.y = Constants::PlayerJumpVelocity;
-        player.onGround = false;
-        player.coyoteTimer = 0.0f;
-        player.jumpBufferTimer = 0.0f;
+    if (activePlayer.jumpBufferTimer > 0.0f && activePlayer.coyoteTimer > 0.0f && !onLadder && !swimming && controlsEnabled) {
+        activePlayer.velocity.y = Constants::PlayerJumpVelocity;
+        activePlayer.onGround = false;
+        activePlayer.coyoteTimer = 0.0f;
+        activePlayer.jumpBufferTimer = 0.0f;
     }
 
-    if ((IsKeyReleased(KEY_W) || IsKeyReleased(KEY_SPACE)) && player.velocity.y < 0.0f && !onLadder && !swimming && controlsEnabled) {
-        player.velocity.y *= Constants::PlayerJumpCutMultiplier;
+    if ((IsControlReleased(controls.up) || IsControlReleased(controls.jump)) && activePlayer.velocity.y < 0.0f && !onLadder && !swimming && controlsEnabled) {
+        activePlayer.velocity.y *= Constants::PlayerJumpCutMultiplier;
     }
 
-    if (player.walking) {
-        player.animationTimer += dt;
+    if (activePlayer.walking) {
+        activePlayer.animationTimer += dt;
     }
     else {
-        player.animationTimer = 0.0f;
+        activePlayer.animationTimer = 0.0f;
     }
 
     if (controlsEnabled) {
         std::vector<Rectangle> solids = BuildSolids(level);
 
-        player.rect.x += player.velocity.x * dt;
-        ResolveHorizontal(player, solids);
+        activePlayer.rect.x += activePlayer.velocity.x * dt;
+        ResolveHorizontal(activePlayer, solids);
 
         for (int i = 0; i < static_cast<int>(level.stoneBlocks.size()); i++) {
             StoneBlock& block = level.stoneBlocks[i];
-            if (!CheckCollisionRecs(player.rect, block.rect)) {
+            if (!CheckCollisionRecs(activePlayer.rect, block.rect)) {
                 continue;
             }
 
-            if (player.velocity.x > 0.0f) {
-                block.velocity.x = player.velocity.x * GetStoneBlockPushScale(block);
+            if (activePlayer.velocity.x > 0.0f) {
+                block.velocity.x = activePlayer.velocity.x * GetStoneBlockPushScale(block);
                 block.rect.x += block.velocity.x * dt;
                 ResolveStoneBlockHorizontal(block, solids, level.stoneBlocks, i);
-                player.rect.x = block.rect.x - player.rect.width;
+                activePlayer.rect.x = block.rect.x - activePlayer.rect.width;
             }
-            else if (player.velocity.x < 0.0f) {
-                block.velocity.x = player.velocity.x * GetStoneBlockPushScale(block);
+            else if (activePlayer.velocity.x < 0.0f) {
+                block.velocity.x = activePlayer.velocity.x * GetStoneBlockPushScale(block);
                 block.rect.x += block.velocity.x * dt;
                 ResolveStoneBlockHorizontal(block, solids, level.stoneBlocks, i);
-                player.rect.x = block.rect.x + block.rect.width;
+                activePlayer.rect.x = block.rect.x + block.rect.width;
             }
         }
 
-        player.rect.y += player.velocity.y * dt;
+        activePlayer.rect.y += activePlayer.velocity.y * dt;
         std::vector<Rectangle> playerSolids = solids;
         for (const StoneBlock& block : level.stoneBlocks) {
             playerSolids.push_back(block.rect);
         }
 
-        ResolveVertical(player, playerSolids);
-        ResolveSeeSawStanding(player.rect, player.velocity, player.onGround, level.seeSaws);
+        ResolveVertical(activePlayer, playerSolids);
+        ResolveSeeSawStanding(activePlayer.rect, activePlayer.velocity, activePlayer.onGround, level.seeSaws);
     }
 }
 
 void Game::UpdateMachines(float dt, float moveInput) {
     if (!won && !lost) {
         UpdateStoneBlocksAndSeeSaws(dt);
-        std::vector<Rectangle> chainColliders = BuildChainColliders(level, player);
+        std::vector<Rectangle> chainColliders = BuildChainColliders(
+            level,
+            playerAlive ? &player : nullptr,
+            multiplayerEnabled && player2Alive ? &player2 : nullptr
+        );
         for (Chain& chain : level.chains) {
             UpdateChainPhysics(chain, chainColliders, dt);
         }
@@ -855,20 +981,34 @@ void Game::UpdateMachines(float dt, float moveInput) {
 
     if (level.script == LevelScript::FloodedFoundry) {
         if (!won && !lost) {
-            bool playerNearValve = CheckCollisionCircleRec(level.valve.center, level.valve.radius + 24.0f, player.rect);
-            if (playerNearValve && IsKeyPressed(KEY_E)) {
-                level.valve.opened = true;
-                level.waterPit.filling = true;
+            bool player1NearValve = playerAlive && CheckCollisionCircleRec(level.valve.center, level.valve.radius + 24.0f, player.rect);
+            bool player2NearValve = multiplayerEnabled && player2Alive && CheckCollisionCircleRec(level.valve.center, level.valve.radius + 24.0f, player2.rect);
+            bool valveHeld = (player1NearValve && IsKeyDown(KEY_E)) || (player2NearValve && IsKeyDown(KEY_U));
+            if (valveHeld && !level.valve.opened) {
+                level.valve.turnDegrees = fminf(360.0f, level.valve.turnDegrees + level.valve.turnSpeed * dt);
+                if (level.valve.turnDegrees >= 360.0f) {
+                    level.valve.opened = true;
+                }
             }
 
-            if (level.waterPit.filling) {
-                level.waterPit.surfaceY = MoveTowardsFloat(level.waterPit.surfaceY, level.waterPit.targetSurfaceY, level.waterPit.fillRate * dt);
+            float valveOpenAmount = GetValveOpenAmount(level.valve);
+            if (valveOpenAmount > 0.0f) {
+                level.waterPit.filling = true;
+                level.waterPit.surfaceY = MoveTowardsFloat(
+                    level.waterPit.surfaceY,
+                    level.waterPit.targetSurfaceY,
+                    level.waterPit.fillRate * valveOpenAmount * dt
+                );
             }
         }
 
         machinePower = GetWaterFillProgress(level.waterPit);
         if (HasArea(level.exitTrigger)) {
-            gateBottom = MoveTowardsFloat(gateBottom, level.exitTrigger.y, 190.0f * dt);
+            float targetGateBottom = level.exitTrigger.y + level.exitTrigger.height;
+            if (level.valve.opened) {
+                targetGateBottom = level.exitTrigger.y;
+            }
+            gateBottom = MoveTowardsFloat(gateBottom, targetGateBottom, 190.0f * dt);
         }
         return;
     }
@@ -877,7 +1017,12 @@ void Game::UpdateMachines(float dt, float moveInput) {
         machinePower = 0.0f;
         if (!won && !lost) {
             for (RotaryLatch& latch : level.rotaryLatches) {
-                UpdateRotaryLatch(latch, player, 1.0f, dt);
+                if (playerAlive) {
+                    UpdateRotaryLatch(latch, player, KEY_E, 1.0f, dt);
+                }
+                if (multiplayerEnabled && player2Alive) {
+                    UpdateRotaryLatch(latch, player2, KEY_U, 1.0f, dt);
+                }
             }
         }
         if (HasArea(level.exitTrigger)) {
@@ -892,7 +1037,20 @@ void Game::UpdateMachines(float dt, float moveInput) {
 
     float winchDelta = 0.0f;
     if (!won && !lost) {
-        winchDelta = UpdateWinch(machineWinch, player, moveInput, dt);
+        float player2MoveInput = 0.0f;
+        if (multiplayerEnabled) {
+            if (player2Alive && IsKeyDown(KEY_J)) player2MoveInput -= 1.0f;
+            if (player2Alive && IsKeyDown(KEY_L)) player2MoveInput += 1.0f;
+        }
+
+        bool player1GrabbingWinch = playerAlive && IsNearRect(player.rect, machineWinch.rect, 18.0f) && IsKeyDown(KEY_E);
+        bool player2GrabbingWinch = multiplayerEnabled && player2Alive && IsNearRect(player2.rect, machineWinch.rect, 18.0f) && IsKeyDown(KEY_U);
+        if (player2GrabbingWinch && !player1GrabbingWinch) {
+            winchDelta = UpdateWinch(machineWinch, player2, player2MoveInput, KEY_U, dt);
+        }
+        else if (playerAlive) {
+            winchDelta = UpdateWinch(machineWinch, player, moveInput, KEY_E, dt);
+        }
     }
 
     machinePower = GetMachinePower(machineWinch);
@@ -966,7 +1124,10 @@ void Game::UpdateStoneBlocksAndSeeSaws(float dt) {
     }
 
     for (SeeSaw& seeSaw : level.seeSaws) {
-        float torque = GetSeeSawTorqueContribution(seeSaw, player.rect, 1.0f);
+        float torque = playerAlive ? GetSeeSawTorqueContribution(seeSaw, player.rect, 1.0f) : 0.0f;
+        if (multiplayerEnabled && player2Alive) {
+            torque += GetSeeSawTorqueContribution(seeSaw, player2.rect, 1.0f);
+        }
         for (const StoneBlock& block : level.stoneBlocks) {
             torque += GetSeeSawTorqueContribution(seeSaw, block.rect, block.mass);
         }
@@ -976,40 +1137,67 @@ void Game::UpdateStoneBlocksAndSeeSaws(float dt) {
     }
 }
 
-void Game::KillPlayer() {
+void Game::KillPlayer(const Player& defeatedPlayer) {
     if (lost) {
         return;
     }
 
-    deathRect = player.rect;
-    player.velocity = {0.0f, 0.0f};
-    player.walking = false;
-    player.climbing = false;
+    deathRect = defeatedPlayer.rect;
     won = false;
-    lost = true;
+
+    if (!multiplayerEnabled) {
+        playerAlive = false;
+        playerDeathRect = defeatedPlayer.rect;
+        player.velocity = {0.0f, 0.0f};
+        player.walking = false;
+        player.climbing = false;
+        lost = true;
+        return;
+    }
+
+    if (&defeatedPlayer == &player) {
+        playerAlive = false;
+        playerDeathRect = defeatedPlayer.rect;
+        player.velocity = {0.0f, 0.0f};
+        player.walking = false;
+        player.climbing = false;
+    }
+    else if (&defeatedPlayer == &player2) {
+        player2Alive = false;
+        player2DeathRect = defeatedPlayer.rect;
+        player2.velocity = {0.0f, 0.0f};
+        player2.walking = false;
+        player2.climbing = false;
+    }
+
+    lost = !playerAlive && !player2Alive;
 }
 
 void Game::CheckFailureConditions() {
     if (won || lost) return;
 
-    bool protectedByWater = HasWaterPit(level) &&
-        IsRectInWater(player.rect, level.waterPit) &&
-        level.waterPit.surfaceY <= level.spikeHazard.y;
+    const Player* players[] = {playerAlive ? &player : nullptr, multiplayerEnabled && player2Alive ? &player2 : nullptr};
+    for (const Player* activePlayer : players) {
+        if (activePlayer == nullptr) continue;
 
-    if (player.rect.y > Constants::ScreenHeight ||
-        (HasArea(level.spikeHazard) && CheckCollisionRecs(player.rect, level.spikeHazard) && !protectedByWater)) {
-        KillPlayer();
-    }
-
-    for (const HangingWeight& weight : level.weights) {
-        if (CheckCollisionRecs(player.rect, weight.rect)) {
-            KillPlayer();
+        if (activePlayer->rect.y > Constants::ScreenHeight ||
+            (HasArea(level.spikeHazard) && CheckCollisionRecs(activePlayer->rect, level.spikeHazard))) {
+            KillPlayer(*activePlayer);
+            return;
         }
-    }
 
-    for (const Enemy& enemy : level.enemies) {
-        if (CheckCollisionRecs(player.rect, enemy.rect)) {
-            KillPlayer();
+        for (const HangingWeight& weight : level.weights) {
+            if (CheckCollisionRecs(activePlayer->rect, weight.rect)) {
+                KillPlayer(*activePlayer);
+                return;
+            }
+        }
+
+        for (const Enemy& enemy : level.enemies) {
+            if (CheckCollisionRecs(activePlayer->rect, enemy.rect)) {
+                KillPlayer(*activePlayer);
+                return;
+            }
         }
     }
 }
@@ -1022,18 +1210,24 @@ void Game::CheckWinCondition(float gateBottom) {
         return;
     }
 
-    Vector2 playerCenter{
-        player.rect.x + player.rect.width * 0.5f,
-        player.rect.y + player.rect.height * 0.5f
-    };
-    float doorwayCenterX = level.exitTrigger.x + level.exitTrigger.width * 0.5f;
-    bool playerCenteredInDoorway = fabsf(playerCenter.x - doorwayCenterX) <= 2.0f;
     bool hasFactoryMachine = level.pulleys.size() >= 5;
-    bool doorRaisedPastPlayer = gateBottom <= player.rect.y + 4.0f;
-    bool doorUnlocked = latchesComplete && doorRaisedPastPlayer && (!hasFactoryMachine || machinePower > 0.05f);
+    float doorwayCenterX = level.exitTrigger.x + level.exitTrigger.width * 0.5f;
+    const Player* players[] = {playerAlive ? &player : nullptr, multiplayerEnabled && player2Alive ? &player2 : nullptr};
+    for (const Player* activePlayer : players) {
+        if (activePlayer == nullptr) continue;
 
-    if (doorUnlocked && playerCenteredInDoorway && CheckCollisionPointRec(playerCenter, level.exitTrigger)) {
-        BeginLevelClear();
+        Vector2 playerCenter{
+            activePlayer->rect.x + activePlayer->rect.width * 0.5f,
+            activePlayer->rect.y + activePlayer->rect.height * 0.5f
+        };
+        bool playerCenteredInDoorway = fabsf(playerCenter.x - doorwayCenterX) <= 2.0f;
+        bool doorRaisedPastPlayer = gateBottom <= activePlayer->rect.y + 4.0f;
+        bool doorUnlocked = latchesComplete && doorRaisedPastPlayer && (!hasFactoryMachine || machinePower > 0.05f);
+
+        if (doorUnlocked && playerCenteredInDoorway && CheckCollisionPointRec(playerCenter, level.exitTrigger)) {
+            BeginLevelClear();
+            return;
+        }
     }
 }
 
@@ -1129,16 +1323,28 @@ void Game::DrawTitleScreen() {
         );
     }
 
-    std::vector<MenuButton> buttons{
-        {{1080, 510, 310, 46}, "New Game"},
-        {{1080, 566, 310, 46}, "Continue"},
-        {{1080, 622, 310, 46}, "Load Custom"},
-        {{1080, 678, 310, 46}, "Settings"},
-        {{1080, 734, 310, 46}, "Quit Game"}
-    };
-
     DrawRectangle(1048, 486, 374, 324, Fade(BLACK, 0.26f));
     DrawRectangleLinesEx({1048, 486, 374, 324}, 2.0f, Fade(RAYWHITE, 0.15f));
+
+    std::vector<MenuButton> buttons;
+    if (titleModeMenuOpen) {
+        DrawText("Select Mode", 1080, 458, 24, Fade(RAYWHITE, 0.86f));
+        buttons = {
+            {{1080, 510, 310, 46}, "Single Player"},
+            {{1080, 566, 310, 46}, "Multiplayer"},
+            {{1080, 622, 310, 46}, "Back"}
+        };
+    }
+    else {
+        buttons = {
+            {{1080, 510, 310, 46}, "New Game"},
+            {{1080, 566, 310, 46}, "Continue"},
+            {{1080, 622, 310, 46}, "Load Custom"},
+            {{1080, 678, 310, 46}, "Settings"},
+            {{1080, 734, 310, 46}, "Quit Game"}
+        };
+    }
+
     for (const MenuButton& button : buttons) {
         DrawMenuButton(button);
     }
@@ -1280,13 +1486,13 @@ void Game::DrawGameOverActions() {
 void Game::DrawControlsPopup() {
     DrawRectangle(0, 0, Constants::ScreenWidth, Constants::ScreenHeight, Fade(BLACK, 0.35f));
 
-    Rectangle panel{430, 245, 740, 530};
+    Rectangle panel{430, 180, 740, 660};
     int panelCenterX = static_cast<int>(panel.x + panel.width * 0.5f);
 
     DrawRectangleRec(panel, Color{22, 28, 35, 248});
     DrawRectangleLinesEx(panel, 2.0f, Fade(RAYWHITE, 0.55f));
 
-    DrawCenteredText("Controls", panelCenterX, 282, 42, RAYWHITE);
+    DrawCenteredText("Controls", panelCenterX, 218, 42, RAYWHITE);
 
     struct ControlRow {
         const char* action;
@@ -1294,21 +1500,27 @@ void Game::DrawControlsPopup() {
     };
 
     const std::vector<ControlRow> rows{
-        {"Move", "A / D"},
-        {"Jump", "Space"},
-        {"Swim", "W / S / Space"},
-        {"Climb", "W / S"},
-        {"Grab Winch", "Hold E"},
-        {"Turn Valve", "E near valve"},
-        {"Lock Wheel", "E near aligned wheel"},
+        {"Player 1 Move", "A / D"},
+        {"Player 1 Jump", "W / Space"},
+        {"Player 1 Swim", "W / S / Space"},
+        {"Player 1 Climb", "W / S"},
+        {"Player 2 Move", "J / L"},
+        {"Player 2 Jump", "I"},
+        {"Player 2 Swim", "I / K"},
+        {"Player 2 Climb", "I / K"},
+        {"Player 1 Interact", "E"},
+        {"Player 2 Interact", "U"},
+        {"Grab Winch", "Hold E / U"},
+        {"Turn Valve", "Hold E / U near valve"},
+        {"Lock Wheel", "E / U near aligned wheel"},
         {"Pause / Resume", "Esc / Enter"},
         {"Map Select", "A / D or Arrow Keys"},
         {"Select / Start", "Enter / Space"},
         {"Console", "` / ~"}
     };
 
-    int startY = 350;
-    int rowHeight = 34;
+    int startY = 285;
+    int rowHeight = 27;
     int actionX = 525;
     int inputX = 795;
     for (int i = 0; i < static_cast<int>(rows.size()); i++) {
@@ -1320,7 +1532,7 @@ void Game::DrawControlsPopup() {
     }
 
     std::vector<MenuButton> buttons{
-        {{705, 710, 190, 46}, "Close"}
+        {{705, 775, 190, 46}, "Close"}
     };
 
     for (const MenuButton& button : buttons) {
@@ -1384,8 +1596,11 @@ void Game::DrawGameplay() {
     bool hasFactoryMachine = level.pulleys.size() >= 5;
     float flicker = 0.0f;
     if (hasFactoryMachine) {
+        bool player1NearWinch = playerAlive && IsNearRect(player.rect, machineWinch.rect, 18.0f);
+        bool player2NearWinch = multiplayerEnabled && player2Alive && IsNearRect(player2.rect, machineWinch.rect, 18.0f);
+        const char* winchPrompt = GetInteractPrompt(player1NearWinch, player2NearWinch, "Press E", "Press U", "Press E / U");
         DrawWinch(machineWinch);
-        DrawText(machineWinch.grabbed ? "Move to push" : "Press E", static_cast<int>(machineWinch.rect.x - 12.0f), static_cast<int>(machineWinch.rect.y - 28.0f), 18, machineWinch.grabbed ? ORANGE : BLACK);
+        DrawText(machineWinch.grabbed ? "Move to push" : winchPrompt, static_cast<int>(machineWinch.rect.x - 28.0f), static_cast<int>(machineWinch.rect.y - 28.0f), 18, machineWinch.grabbed ? ORANGE : BLACK);
 
         DrawLineEx({machineWinch.rect.x + machineWinch.rect.width, machineWinch.rect.y + 20}, {level.pulleys[0].x - 38, level.pulleys[0].y - 38}, 5, BROWN);
         DrawLineEx({level.pulleys[0].x, level.pulleys[0].y + 55}, {level.pulleys[1].x, level.pulleys[1].y - 45}, 5, BROWN);
@@ -1443,16 +1658,27 @@ void Game::DrawGameplay() {
     }
 
     if (HasWaterPit(level)) {
-        bool playerNearValve = CheckCollisionCircleRec(level.valve.center, level.valve.radius + 24.0f, player.rect);
-        Color pipeColor = level.valve.opened ? BLUE : DARKGRAY;
-        DrawLineEx({level.valve.center.x + level.valve.radius, level.valve.center.y}, {650.0f, level.valve.center.y}, 12.0f, pipeColor);
-        DrawLineEx({650.0f, level.valve.center.y}, {650.0f, level.waterPit.bounds.y + 34.0f}, 12.0f, pipeColor);
-        DrawRectangle(632, static_cast<int>(level.waterPit.bounds.y + 20.0f), 36, 26, DARKGRAY);
-        DrawRectangleLines(632, static_cast<int>(level.waterPit.bounds.y + 20.0f), 36, 26, BLACK);
-        if (level.valve.opened && level.waterPit.surfaceY > level.waterPit.targetSurfaceY) {
-            DrawLineEx({650.0f, level.waterPit.bounds.y + 46.0f}, {650.0f, level.waterPit.surfaceY - 8.0f}, 7.0f, Fade(SKYBLUE, 0.72f));
+        bool player1NearValve = playerAlive && CheckCollisionCircleRec(level.valve.center, level.valve.radius + 24.0f, player.rect);
+        bool player2NearValve = multiplayerEnabled && player2Alive && CheckCollisionCircleRec(level.valve.center, level.valve.radius + 24.0f, player2.rect);
+        bool playerNearValve = player1NearValve || player2NearValve;
+        const char* valvePrompt = GetInteractPrompt(player1NearValve, player2NearValve, "Hold E", "Hold U", "Hold E / U");
+        float valveOpenAmount = GetValveOpenAmount(level.valve);
+        Color pipeColor = valveOpenAmount > 0.0f ? BLUE : DARKGRAY;
+        float outletX = level.valve.center.x + 118.0f;
+        float outletY = 302.0f;
+        DrawLineEx({level.valve.center.x + level.valve.radius, level.valve.center.y}, {outletX, level.valve.center.y}, 12.0f, pipeColor);
+        DrawLineEx({outletX, level.valve.center.y}, {outletX, outletY}, 12.0f, pipeColor);
+        DrawRectangle(static_cast<int>(outletX - 18.0f), static_cast<int>(outletY - 4.0f), 36, 18, DARKGRAY);
+        DrawRectangleLines(static_cast<int>(outletX - 18.0f), static_cast<int>(outletY - 4.0f), 36, 18, BLACK);
+        if (valveOpenAmount > 0.0f && level.waterPit.surfaceY > level.waterPit.targetSurfaceY) {
+            DrawLineEx(
+                {outletX, outletY + 14.0f},
+                {outletX, level.waterPit.surfaceY - 8.0f},
+                3.0f + valveOpenAmount * 7.0f,
+                Fade(SKYBLUE, 0.35f + valveOpenAmount * 0.45f)
+            );
         }
-        DrawValve(level.valve, playerNearValve);
+        DrawValve(level.valve, playerNearValve, valvePrompt);
     }
 
     if (HasArea(level.spikeHazard)) {
@@ -1499,12 +1725,15 @@ void Game::DrawGameplay() {
 
     int latchedCount = 0;
     for (const RotaryLatch& latch : level.rotaryLatches) {
-        bool playerNear = CheckCollisionCircleRec(latch.center, latch.radius + 20.0f, player.rect);
+        bool player1Near = playerAlive && CheckCollisionCircleRec(latch.center, latch.radius + 20.0f, player.rect);
+        bool player2Near = multiplayerEnabled && player2Alive && CheckCollisionCircleRec(latch.center, latch.radius + 20.0f, player2.rect);
+        bool playerNear = player1Near || player2Near;
+        const char* latchPrompt = GetInteractPrompt(player1Near, player2Near, "E", "U", "E / U");
         if (latch.latched) {
             latchedCount++;
         }
 
-        DrawRotaryLatch(latch, playerNear);
+        DrawRotaryLatch(latch, playerNear, latchPrompt);
     }
 
     if (HasArea(level.exitTrigger)) {
@@ -1549,23 +1778,27 @@ void Game::DrawGameplay() {
         }
     }
 
-    if (lost) {
-        if (skullTexture.id > 0) {
-            DrawTexturePro(
-                skullTexture,
-                {0.0f, 0.0f, static_cast<float>(skullTexture.width), static_cast<float>(skullTexture.height)},
-                deathRect,
-                {0.0f, 0.0f},
-                0.0f,
-                WHITE
-            );
-        }
-        else {
-            DrawRectangleRec(deathRect, BLACK);
-        }
+    if (!playerAlive) {
+        DrawDeathMarker(skullTexture, playerDeathRect);
     }
-    else {
-        DrawPlayer(player, bobTexture);
+    if (multiplayerEnabled && !player2Alive) {
+        DrawDeathMarker(skullTexture, player2DeathRect);
+    }
+
+    if (playerAlive) {
+        Player visiblePlayer = player;
+        if (IsPlayerSwimming(player, level)) {
+            visiblePlayer.rect.y += sinf(static_cast<float>(GetTime()) * 5.0f) * 3.5f;
+        }
+        DrawPlayer(visiblePlayer, bobTexture);
+    }
+
+    if (multiplayerEnabled && player2Alive) {
+        Player visiblePlayer2 = player2;
+        if (IsPlayerSwimming(player2, level)) {
+            visiblePlayer2.rect.y += sinf(static_cast<float>(GetTime()) * 5.0f + 0.65f) * 3.5f;
+        }
+        DrawPlayer(visiblePlayer2, dobTexture, 4, {19.0f, 7.0f, 30.0f, 44.0f});
     }
 
     if (HasArea(level.darknessArea) || HasArea(level.rightDarknessArea)) {
@@ -1583,14 +1816,15 @@ void Game::DrawGameplay() {
         bool allLatchesLocked = latchedCount == latchTotal;
         DrawRectangle(20, 20, 260, 66, Fade(BLACK, 0.45f));
         DrawText(TextFormat("Wheel locks: %d / %d", latchedCount, latchTotal), 34, 32, 22, RAYWHITE);
-        DrawText(allLatchesLocked ? "Gate circuit complete" : "Align spokes, press E", 34, 60, 18, allLatchesLocked ? GREEN : ORANGE);
+        DrawText(allLatchesLocked ? "Gate circuit complete" : (multiplayerEnabled ? "Align spokes, press E or U" : "Align spokes, press E"), 34, 60, 18, allLatchesLocked ? GREEN : ORANGE);
     }
 
     if (HasWaterPit(level)) {
         float fillPercent = GetWaterFillProgress(level.waterPit) * 100.0f;
+        float valvePercent = GetValveOpenAmount(level.valve) * 100.0f;
         DrawRectangle(20, 20, 260, 66, Fade(BLACK, 0.45f));
         DrawText(TextFormat("Water level: %.0f%%", fillPercent), 34, 32, 22, RAYWHITE);
-        DrawText(level.valve.opened ? "Swim the flooded pit" : "Turn the valve", 34, 60, 18, level.valve.opened ? SKYBLUE : ORANGE);
+        DrawText(level.valve.opened ? "Swim the flooded pit" : TextFormat(multiplayerEnabled ? "Hold E/U: valve %.0f%%" : "Hold E: valve %.0f%%", valvePercent), 34, 60, 18, level.valve.opened ? SKYBLUE : ORANGE);
     }
 
     if (won) {
@@ -1606,6 +1840,7 @@ void Game::DrawGameplay() {
 
 void Game::Unload() {
     UnloadTexture(bobTexture);
+    UnloadTexture(dobTexture);
     UnloadTexture(skullTexture);
     UnloadTexture(industrialTiles);
     UnloadTexture(industrialBackground);
@@ -1641,6 +1876,7 @@ void Game::ExecuteConsoleCommand(const std::string& line) {
     }
     else if (command == "title") {
         mode = GameMode::Title;
+        titleModeMenuOpen = false;
         console.AddLine("Returned to title screen.");
     }
     else if (command == "pause") {
@@ -1662,7 +1898,7 @@ void Game::ExecuteConsoleCommand(const std::string& line) {
     }
     else if (command == "kill") {
         mode = GameMode::Playing;
-        KillPlayer();
+        KillPlayer(player);
         console.AddLine("Loss state set.");
     }
     else if (command == "fps") {
@@ -1720,9 +1956,13 @@ void Game::ExecuteConsoleCommand(const std::string& line) {
         player.rect.y = y;
         player.velocity = {0, 0};
         deathRect = player.rect;
+        playerDeathRect = player.rect;
+        player2DeathRect = player2.rect;
         mode = GameMode::Playing;
         won = false;
         lost = false;
+        playerAlive = true;
+        player2Alive = true;
         console.AddLine("Teleported player.");
     }
     else if (command == "power") {
@@ -1817,5 +2057,10 @@ void Game::DrawDebugCollision() const {
         }
     }
 
-    DrawRectangleLinesEx(player.rect, 2, Fade(ORANGE, 0.95f));
+    if (playerAlive) {
+        DrawRectangleLinesEx(player.rect, 2, Fade(ORANGE, 0.95f));
+    }
+    if (multiplayerEnabled && player2Alive) {
+        DrawRectangleLinesEx(player2.rect, 2, Fade(SKYBLUE, 0.95f));
+    }
 }

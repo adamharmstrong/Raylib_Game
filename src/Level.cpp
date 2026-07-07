@@ -1,5 +1,7 @@
 #include "Level.h"
 
+#include "Constants.h"
+
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -98,10 +100,8 @@ Level CreateFloodedFoundryLevel() {
 
     level.ladder = {255, 250, 45, 400};
     level.spikeHazard = {300, 773, 960, 32};
-    level.darknessArea = {300, 275, 960, 625};
-    level.rightDarknessArea = {1260, 0, 340, 900};
     level.exitTrigger = {1485, 430, 85, 220};
-    level.valve = {{515, 560}, 34.0f, false};
+    level.valve = {{515, 210}, 34.0f, 0.0f, 120.0f, false};
     level.waterPit = {{300, 650, 960, 155}, 805.0f, 646.0f, 86.0f, false};
 
     level.baseSolids = {
@@ -110,8 +110,7 @@ Level CreateFloodedFoundryLevel() {
         {1238, 0, 22, 275},
         {1260, 650, 340, 40},
         {0, 690, 300, 210},
-        {1260, 690, 340, 210},
-        {460, 590, 135, 18}
+        {1260, 690, 340, 210}
     };
 
     return level;
@@ -223,6 +222,16 @@ std::vector<Rectangle> BuildSolids(const Level& level) {
 
     for (Rectangle platform : level.pitPlatforms) {
         solids.push_back(platform);
+    }
+
+    if (level.spikeHazard.width > 0.0f && level.spikeHazard.height > 0.0f) {
+        float spikeBottom = level.spikeHazard.y + level.spikeHazard.height;
+        solids.push_back({
+            level.spikeHazard.x,
+            spikeBottom,
+            level.spikeHazard.width,
+            static_cast<float>(Constants::ScreenHeight) - spikeBottom
+        });
     }
 
     return solids;

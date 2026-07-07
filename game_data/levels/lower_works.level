@@ -3,11 +3,9 @@ script flooded_foundry
 
 ladder 255 250 45 400
 spikeHazard 300 773 960 32
-darkness 300 275 960 625
-rightDarkness 1260 0 340 900
 exit 1485 430 85 220
 
-valve 515 560 34
+valve 515 210 34
 waterPit 300 650 960 155 805 646 86
 
 solid 0 650 300 40
@@ -16,4 +14,3 @@ solid 1238 0 22 275
 solid 1260 650 340 40
 solid 0 690 300 210
 solid 1260 690 340 210
-solid 460 590 135 18

@@ -26,6 +26,8 @@ struct Enemy {
 struct Valve {
     Vector2 center{};
     float radius{34.0f};
+    float turnDegrees{0.0f};
+    float turnSpeed{120.0f};
     bool opened{false};
 };
 

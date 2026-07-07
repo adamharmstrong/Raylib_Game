@@ -79,9 +79,9 @@ float GetMachinePower(const Winch& winch) {
     return Clamp01((winch.rect.x - winch.startX) / (winch.maxX - winch.startX));
 }
 
-float UpdateWinch(Winch& winch, Player& player, float moveInput, float dt) {
+float UpdateWinch(Winch& winch, Player& player, float moveInput, KeyboardKey interactKey, float dt) {
     float oldX = winch.rect.x;
-    winch.grabbed = NearRect(player.rect, winch.rect, 18.0f) && IsKeyDown(KEY_E);
+    winch.grabbed = NearRect(player.rect, winch.rect, 18.0f) && IsKeyDown(interactKey);
 
     if (winch.grabbed) {
         winch.rect.x += moveInput * 120.0f * dt;
@@ -119,7 +119,7 @@ void ResetRotaryLatch(RotaryLatch& latch) {
     latch.latched = false;
 }
 
-void UpdateRotaryLatch(RotaryLatch& latch, const Player& player, float machinePower, float dt) {
+void UpdateRotaryLatch(RotaryLatch& latch, const Player& player, KeyboardKey interactKey, float machinePower, float dt) {
     latch.powered = machinePower > 0.05f;
 
     if (!latch.latched && latch.powered) {
@@ -127,7 +127,7 @@ void UpdateRotaryLatch(RotaryLatch& latch, const Player& player, float machinePo
     }
 
     bool playerNear = CheckCollisionCircleRec(latch.center, latch.radius + 20.0f, player.rect);
-    if (playerNear && IsKeyPressed(KEY_E) && IsRotaryLatchAligned(latch)) {
+    if (playerNear && IsKeyPressed(interactKey) && IsRotaryLatchAligned(latch)) {
         latch.latched = true;
     }
 }

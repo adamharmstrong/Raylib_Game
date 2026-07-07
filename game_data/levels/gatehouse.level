@@ -20,8 +20,6 @@ platform 760 570 70 18
 platform 930 515 70 18
 platform 1100 570 70 18
 
-enemy 505 610 34 40 420 660 70
-
 pulley 650 210
 pulley 820 210
 pulley 990 210
