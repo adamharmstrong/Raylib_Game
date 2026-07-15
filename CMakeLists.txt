@@ -26,6 +26,12 @@ FetchContent_MakeAvailable(raylib)
 add_executable(${PROJECT_NAME})
 add_subdirectory(src)
 
+# Level data is loaded at runtime, but changing it must still refresh the copy
+# beside the executable. Marking these files as link dependencies makes the
+# existing post-build copy run again even when no C++ source changed.
+file(GLOB_RECURSE GAME_DATA_FILES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/game_data/*")
+set_property(TARGET ${PROJECT_NAME} APPEND PROPERTY LINK_DEPENDS "${GAME_DATA_FILES}")
+
 set_target_properties(${PROJECT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/${PROJECT_NAME})
 

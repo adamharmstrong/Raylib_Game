@@ -1,30 +1,178 @@
 # Power Pulley Panic factory layout
 script power_pulley_panic
+playerStart 80 600
 
-ladder 255 250 45 400
+# Layer 1: pale open chamber space. Areas omitted here remain black void.
+visualTileRect farBackground 0 0 32 32 48 19
+visualTileRect farBackground 0 0 300 640 30 8
+
+# Layer 2: blue structural panels on the half-tile parallax grid.
+# Upper-left panel.
+visualTile background 0 0 80 80
+visualTile background 1 0 112 80
+visualTile background 2 0 144 80
+visualTile background 0 1 80 112
+visualTile background 1 1 112 112
+visualTile background 2 1 144 112
+visualTile background 0 3 80 144
+visualTile background 1 3 112 144
+visualTile background 2 3 144 144
+
+# Upper-center panel.
+visualTile background 0 0 432 80
+visualTileRect background 1 0 464 80 2 1
+visualTile background 2 0 528 80
+visualTile background 0 1 432 112
+visualTileRect background 1 1 464 112 2 1
+visualTile background 2 1 528 112
+visualTile background 0 3 432 144
+visualTileRect background 1 3 464 144 2 1
+visualTile background 2 3 528 144
+
+# Upper-right panel.
+visualTile background 0 0 880 80
+visualTileRect background 1 0 912 80 2 1
+visualTile background 2 0 976 80
+visualTile background 0 1 880 112
+visualTileRect background 1 1 912 112 2 1
+visualTile background 2 1 976 112
+visualTile background 0 3 880 144
+visualTileRect background 1 3 912 144 2 1
+visualTile background 2 3 976 144
+
+# Exit recess panel.
+visualTile background 0 0 1360 112
+visualTile background 1 0 1392 112
+visualTile background 2 0 1424 112
+visualTile background 0 1 1360 144
+visualTile background 1 1 1392 144
+visualTile background 2 1 1424 144
+visualTile background 0 3 1360 176
+visualTile background 1 3 1392 176
+visualTile background 2 3 1424 176
+
+# Lower machinery panels.
+visualTile background 0 0 368 368
+visualTile background 1 0 400 368
+visualTile background 2 0 432 368
+visualTile background 0 1 368 400
+visualTile background 1 1 400 400
+visualTile background 2 1 432 400
+visualTile background 0 3 368 432
+visualTile background 1 3 400 432
+visualTile background 2 3 432 432
+
+visualTile background 0 0 752 400
+visualTile background 1 0 784 400
+visualTile background 2 0 816 400
+visualTile background 0 1 752 432
+visualTile background 1 1 784 432
+visualTile background 2 1 816 432
+visualTile background 0 3 752 464
+visualTile background 1 3 784 464
+visualTile background 2 3 816 464
+
+visualTile background 0 0 1104 368
+visualTile background 1 0 1136 368
+visualTile background 2 0 1168 368
+visualTile background 0 1 1104 400
+visualTile background 1 1 1136 400
+visualTile background 2 1 1168 400
+visualTile background 0 3 1104 432
+visualTile background 1 3 1136 432
+visualTile background 2 3 1168 432
+
+# Broad shadow behind the lower center of the pulley room.
+visualTile background 0 0 688 560
+visualTileRect background 1 0 720 560 3 1
+visualTile background 2 0 816 560
+visualTile background 0 1 688 592
+visualTileRect background 1 1 720 592 3 1
+visualTile background 2 1 816 592
+visualTile background 0 3 688 624
+visualTileRect background 1 3 720 624 3 1
+visualTile background 2 3 816 624
+
+# Layer 3: foreground shell and collision-aligned walkable structure.
+# Ceiling with a dedicated junction for the hanging divider.
+visualTile foreground 4 0 0 0
+visualTileRect foreground 1 3 32 0 37 1
+visualTile foreground 5 3 1216 0
+visualTileRect foreground 1 3 1248 0 10 1
+visualTile foreground 5 0 1568 0
+
+# Exterior walls use vertical wall tiles, never floor tiles.
+visualTileRect foreground 2 2 0 32 1 19
+visualTileRect foreground 0 2 1568 32 1 19
+
+# Hanging divider from the ceiling to the upper walkway.
+visualTileRect foreground 3 2 1216 32 1 6
+visualTile foreground 3 3 1216 224
+
+# Upper thin walkway.
+visualTile foreground 0 0 300 250
+visualTileRect foreground 1 0 332 250 28 1
+visualTile foreground 2 0 1228 250
+
+# Left foundation: one floor surface, wall edges, black interior, and ceiling edge.
+visualTile foreground 4 1 0 640
+visualTileRect foreground 1 1 32 640 8 1
+visualTile foreground 2 1 288 640
+visualTileRect foreground 2 2 0 672 1 6
+visualTileRect foreground 2 2 288 672 1 6
+visualTile foreground 0 3 0 864
+visualTileRect foreground 1 3 32 864 8 1
+visualTile foreground 2 3 288 864
+
+# Right foundation mirrors the left with correctly oriented wall edges.
+visualTile foreground 0 1 1248 640
+visualTileRect foreground 1 1 1280 640 9 1
+visualTile foreground 5 1 1568 640
+visualTileRect foreground 0 2 1248 672 1 6
+visualTileRect foreground 0 2 1568 672 1 6
+visualTile foreground 0 3 1248 864
+visualTileRect foreground 1 3 1280 864 9 1
+visualTile foreground 2 3 1568 864
+
+# Thin stepping platforms across the pit.
+visualTile foreground 0 0 420 570
+visualTile foreground 2 0 452 570
+visualTile foreground 0 0 590 520
+visualTile foreground 2 0 622 520
+visualTile foreground 0 0 760 570
+visualTile foreground 2 0 792 570
+visualTile foreground 0 0 930 515
+visualTile foreground 2 0 962 515
+visualTile foreground 0 0 1100 570
+visualTile foreground 2 0 1132 570
+
+ladder 255 250 45 390
 spikeHazard 300 773 960 32
-darkness 300 275 960 625
-rightDarkness 1260 0 340 900
-exit 1485 430 85 220
+darkness 300 282 960 618
+darkness 1260 0 340 900
+exit 1440 430 85 210
 
-solid 0 650 300 40
-solid 300 250 960 25
-solid 1238 0 22 275
-solid 1260 650 340 40
+solid 0 0 1600 32
+solid 0 32 32 608
+solid 1568 32 32 608
+solid 0 640 300 50
+solid 300 250 960 32
+solid 1216 0 32 256
+solid 1260 640 340 50
 solid 0 690 300 210
 solid 1260 690 340 210
 
-platform 420 570 70 18
-platform 590 520 70 18
-platform 760 570 70 18
-platform 930 515 70 18
-platform 1100 570 70 18
+platform 420 570 64 32
+platform 590 520 64 32
+platform 760 570 64 32
+platform 930 515 64 32
+platform 1100 570 64 32
 
 pulley 650 210
 pulley 820 210
 pulley 990 210
 pulley 1160 210
-pulley 1430 515
+pulley 1385 515
 
 weight 1 45 0.0 1.00 44 55
 weight 2 45 1.6 1.25 44 55

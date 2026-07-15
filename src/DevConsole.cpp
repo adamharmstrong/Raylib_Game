@@ -78,14 +78,14 @@ void DevConsole::Draw(int screenWidth, int screenHeight) const {
     DrawRectangleLines(0, 0, screenWidth, height, Fade(WHITE, 0.45f));
 
     const int margin = 12;
-    const int lineHeight = 20;
-    const int promptHeight = 28;
+    const int lineHeight = 24;
+    const int promptHeight = 32;
     int maxOutputLines = std::max(1, (height - promptHeight - margin * 2) / lineHeight);
     int firstLine = std::max(0, static_cast<int>(outputLines.size()) - maxOutputLines);
 
     int y = margin;
     for (int i = firstLine; i < static_cast<int>(outputLines.size()); i++) {
-        DrawText(outputLines[i].c_str(), margin, y, 18, RAYWHITE);
+        DrawText(outputLines[i].c_str(), margin, y, 20, RAYWHITE);
         y += lineHeight;
     }
 
@@ -96,7 +96,7 @@ void DevConsole::Draw(int screenWidth, int screenHeight) const {
     }
 
     DrawRectangle(0, height - promptHeight, screenWidth, promptHeight, Fade(BLACK, 0.88f));
-    DrawText(prompt.c_str(), margin, height - promptHeight + 6, 18, GREEN);
+    DrawText(prompt.c_str(), margin, height - promptHeight + 6, 20, GREEN);
 }
 
 bool DevConsole::ConsumeSubmittedLine(std::string& line) {

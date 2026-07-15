@@ -1,16 +1,151 @@
 # Flooded Lower Works. Turn the valve, flood the spike pit, then swim across.
 script flooded_foundry
+playerStart 80 600
 
-ladder 255 250 45 400
-spikeHazard 300 773 960 32
-exit 1485 430 85 220
+# Layer 1: pale open chamber space, including the floodable center pit.
+visualTileRect farBackground 0 0 32 32 48 19
+visualTileRect farBackground 0 0 320 640 29 8
+
+# Layer 2: blue structural panels sit behind machinery and open play space.
+# Upper-left recess.
+visualTile background 0 0 80 80
+visualTile background 1 0 112 80
+visualTile background 2 0 144 80
+visualTile background 0 1 80 112
+visualTile background 1 1 112 112
+visualTile background 2 1 144 112
+visualTile background 0 3 80 144
+visualTile background 1 3 112 144
+visualTile background 2 3 144 144
+
+# Valve station recess.
+visualTile background 0 0 432 80
+visualTileRect background 1 0 464 80 2 1
+visualTile background 2 0 528 80
+visualTile background 0 1 432 112
+visualTileRect background 1 1 464 112 2 1
+visualTile background 2 1 528 112
+visualTile background 0 3 432 144
+visualTileRect background 1 3 464 144 2 1
+visualTile background 2 3 528 144
+
+# Upper-right recess.
+visualTile background 0 0 880 80
+visualTileRect background 1 0 912 80 2 1
+visualTile background 2 0 976 80
+visualTile background 0 1 880 112
+visualTileRect background 1 1 912 112 2 1
+visualTile background 2 1 976 112
+visualTile background 0 3 880 144
+visualTileRect background 1 3 912 144 2 1
+visualTile background 2 3 976 144
+
+# Exit recess.
+visualTile background 0 0 1360 112
+visualTile background 1 0 1392 112
+visualTile background 2 0 1424 112
+visualTile background 0 1 1360 144
+visualTile background 1 1 1392 144
+visualTile background 2 1 1424 144
+visualTile background 0 3 1360 176
+visualTile background 1 3 1392 176
+visualTile background 2 3 1424 176
+
+# Pipe outlet backing.
+visualTile background 0 0 592 304
+visualTile background 1 0 624 304
+visualTile background 2 0 656 304
+visualTile background 0 1 592 336
+visualTile background 1 1 624 336
+visualTile background 2 1 656 336
+visualTile background 0 3 592 368
+visualTile background 1 3 624 368
+visualTile background 2 3 656 368
+
+# Flood chamber depth panels.
+visualTile background 0 0 384 384
+visualTile background 1 0 416 384
+visualTile background 2 0 448 384
+visualTile background 0 1 384 416
+visualTile background 1 1 416 416
+visualTile background 2 1 448 416
+visualTile background 0 3 384 448
+visualTile background 1 3 416 448
+visualTile background 2 3 448 448
+
+visualTile background 0 0 752 416
+visualTile background 1 0 784 416
+visualTile background 2 0 816 416
+visualTile background 0 1 752 448
+visualTile background 1 1 784 448
+visualTile background 2 1 816 448
+visualTile background 0 3 752 480
+visualTile background 1 3 784 480
+visualTile background 2 3 816 480
+
+visualTile background 0 0 1072 384
+visualTile background 1 0 1104 384
+visualTile background 2 0 1136 384
+visualTile background 0 1 1072 416
+visualTile background 1 1 1104 416
+visualTile background 2 1 1136 416
+visualTile background 0 3 1072 448
+visualTile background 1 3 1104 448
+visualTile background 2 3 1136 448
+
+# Layer 3: enclosed shell and collision-aligned walkable structure.
+# Ceiling with a junction for the hanging divider.
+visualTile foreground 4 0 0 0
+visualTileRect foreground 1 3 32 0 37 1
+visualTile foreground 5 3 1216 0
+visualTileRect foreground 1 3 1248 0 10 1
+visualTile foreground 5 0 1568 0
+
+# Exterior walls use vertical wall tiles.
+visualTileRect foreground 2 2 0 32 1 19
+visualTileRect foreground 0 2 1568 32 1 19
+
+# Hanging divider from the ceiling to the valve catwalk.
+visualTileRect foreground 3 2 1216 32 1 6
+visualTile foreground 3 3 1216 224
+
+# Single-row valve catwalk.
+visualTile foreground 0 0 300 250
+visualTileRect foreground 1 0 332 250 28 1
+visualTile foreground 2 0 1228 250
+
+# Left foundation: one floor surface around a black structural interior.
+visualTile foreground 4 1 0 640
+visualTileRect foreground 1 1 32 640 8 1
+visualTile foreground 2 1 288 640
+visualTileRect foreground 2 2 0 672 1 6
+visualTile foreground 0 3 0 864
+visualTileRect foreground 1 3 32 864 8 1
+visualTile foreground 2 3 288 864
+
+# Right foundation mirrors the left with correctly oriented wall edges.
+visualTile foreground 0 1 1248 640
+visualTileRect foreground 1 1 1280 640 9 1
+visualTile foreground 5 1 1568 640
+visualTileRect foreground 0 2 1568 672 1 6
+visualTile foreground 0 3 1248 864
+visualTileRect foreground 1 3 1280 864 9 1
+visualTile foreground 2 3 1568 864
+
+ladder 255 250 45 390
+spikeHazard 320 773 928 32
+exit 1440 430 85 210
 
 valve 515 210 34
-waterPit 300 650 960 155 805 646 86
+water 320 646 928 159 1 0 1
+valveFluidFill 0 1 86
 
-solid 0 650 300 40
-solid 300 250 960 25
-solid 1238 0 22 275
-solid 1260 650 340 40
-solid 0 690 300 210
-solid 1260 690 340 210
+solid 0 0 1600 32
+solid 0 32 32 608
+solid 1568 32 32 608
+solid 0 640 320 50
+solid 300 250 960 32
+solid 1216 0 32 256
+solid 1248 640 352 50
+solid 0 690 320 210
+solid 1248 690 352 210

@@ -1,0 +1,48 @@
+# Level 4: Counterweight Row
+# Descend into the firing gallery, use the boulders as mobile shields, and
+# leave one on the pressure plate to lift the exit gate.
+script counterweight_row
+playerStart 78 105
+
+# Start chamber and broken bridge.
+solid 0 0 1600 28
+solid 0 28 28 152
+solid 0 180 235 32
+platform 275 180 42 32
+platform 350 180 42 32
+platform 425 180 42 32
+
+# The icy chute from the mockup is approximated with short collision steps so
+# the current axis-aligned physics remains predictable.
+platform 500 180 96 32
+platform 575 212 72 32
+platform 625 244 72 32
+platform 675 276 72 32
+platform 725 308 118 32
+platform 795 340 82 32
+
+# Ladder landing and arrow-gallery floor.
+ladder 810 340 44 220
+solid 650 560 318 40
+solid 650 600 40 300
+solid 690 868 910 32
+
+# Split spike pits and the safe islands between them.
+platform 968 560 126 32
+platform 1192 560 126 32
+platform 1370 560 230 32
+spikeHazard 1094 773 276 32
+
+# Two launchers fire into the approach lane. The first boulder is positioned
+# as immediate cover; later boulders must be rolled across the safe islands.
+arrowTrap 995 500 -1 0 1.25 520
+arrowTrap 995 540 -1 0 1.65 470
+boulder 1045 520 28 3.2
+boulder 1250 520 28 3.2
+boulder 1460 520 28 3.4
+
+# Only a boulder counts as the counterweight. The final boulder starts fully on
+# the same platform as the plate, with enough room for the player to land behind
+# it and roll it into place.
+button 1510 548 48 16
+exit 1530 350 60 210

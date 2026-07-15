@@ -1,0 +1,172 @@
+# Tileset reference room matched to Target_Example.png.
+# Coordinates are laid out on a 32px grid to make tile rule mistakes obvious.
+script tileset_reference
+playerStart 657 232
+
+# Far-background mask. These pale cells define open room space and never collide.
+visualTile farBackground 0 0 560 176
+visualTile farBackground 0 0 592 176
+visualTile farBackground 0 0 624 176
+visualTile farBackground 0 0 656 176
+visualTile farBackground 0 0 720 176
+visualTile farBackground 0 0 752 176
+visualTile farBackground 0 0 816 176
+visualTile farBackground 0 0 848 176
+visualTile farBackground 0 0 880 176
+visualTile farBackground 0 0 624 208
+visualTile farBackground 0 0 656 208
+visualTile farBackground 0 0 688 208
+visualTile farBackground 0 0 720 208
+visualTile farBackground 0 0 752 208
+visualTile farBackground 0 0 816 208
+visualTile farBackground 0 0 560 240
+visualTile farBackground 0 0 592 240
+visualTile farBackground 0 0 624 240
+visualTile farBackground 0 0 656 240
+visualTile farBackground 0 0 688 240
+visualTile farBackground 0 0 720 240
+visualTile farBackground 0 0 752 240
+visualTile farBackground 0 0 784 240
+visualTile farBackground 0 0 816 240
+visualTile farBackground 0 0 560 272
+visualTile farBackground 0 0 592 272
+visualTile farBackground 0 0 752 272
+visualTile farBackground 0 0 784 272
+visualTile farBackground 0 0 816 272
+visualTile farBackground 0 0 848 272
+visualTile farBackground 0 0 880 272
+visualTile farBackground 0 0 912 272
+visualTile farBackground 0 0 752 304
+visualTile farBackground 0 0 784 304
+visualTile farBackground 0 0 816 304
+visualTile farBackground 0 0 880 304
+visualTile farBackground 0 0 688 336
+visualTile farBackground 0 0 720 336
+visualTile farBackground 0 0 752 336
+visualTile farBackground 0 0 784 336
+visualTile farBackground 0 0 816 336
+visualTile farBackground 0 0 848 336
+visualTile farBackground 0 0 880 336
+visualTile farBackground 0 0 912 336
+visualTile farBackground 0 0 688 368
+visualTile farBackground 0 0 720 368
+visualTile farBackground 0 0 752 368
+visualTile farBackground 0 0 784 368
+visualTile farBackground 0 0 848 368
+visualTile farBackground 0 0 880 368
+visualTile farBackground 0 0 912 368
+
+# Blue background clusters use their own half-tile parallax grid (+16, +16).
+# Upper-left recess.
+visualTile background 0 0 544 160
+visualTile background 2 0 576 160
+visualTile background 0 1 544 192
+visualTile background 2 1 576 192
+visualTile background 0 3 544 224
+visualTile background 2 3 576 224
+
+# Narrow shadow below the first ceiling support.
+visualTile background 3 0 704 160
+visualTile background 3 1 704 192
+visualTile background 3 3 704 224
+
+# Upper-right recess and its lower detached panel.
+visualTile background 0 0 800 160
+visualTile background 1 0 832 160
+visualTile background 1 0 864 160
+visualTile background 2 0 896 160
+visualTile background 0 3 800 192
+visualTile background 1 3 832 192
+visualTile background 1 3 864 192
+visualTile background 2 3 896 192
+visualTile background 3 0 800 256
+visualTile background 0 0 896 256
+visualTile background 2 0 928 256
+visualTile background 0 3 896 288
+visualTile background 2 3 928 288
+
+# Lower-left parallax mass, widening beneath its upper ledge.
+visualTile background 0 0 672 320
+visualTile background 1 0 704 320
+visualTile background 2 0 736 320
+visualTile background 0 1 672 352
+visualTile background 1 1 704 352
+visualTile background 1 1 736 352
+visualTile background 1 1 768 352
+visualTile background 1 1 800 352
+visualTile background 2 1 832 352
+visualTile background 0 3 672 384
+visualTile background 1 3 704 384
+visualTile background 1 3 736 384
+visualTile background 1 3 768 384
+visualTile background 1 3 800 384
+visualTile background 2 3 832 384
+
+# Foreground cells traced from Target_Example.png with annotations ignored.
+visualTile foreground 4 0 528 144
+visualTile foreground 1 3 560 144
+visualTile foreground 1 3 592 144
+visualTile foreground 1 3 624 144
+visualTile foreground 1 3 656 144
+visualTile foreground 5 3 688 144
+visualTile foreground 1 3 720 144
+visualTile foreground 1 3 752 144
+visualTile foreground 5 3 784 144
+visualTile foreground 1 3 816 144
+visualTile foreground 1 3 848 144
+visualTile foreground 1 3 880 144
+visualTile foreground 5 0 912 144
+visualTile foreground 1 2 944 144
+visualTile foreground 2 2 528 176
+visualTile foreground 3 3 688 176
+visualTile foreground 3 2 784 176
+visualTile foreground 0 2 912 176
+visualTile foreground 1 2 944 176
+visualTile foreground 4 3 528 208
+visualTile foreground 1 0 560 208
+visualTile foreground 2 0 592 208
+visualTile foreground 3 3 784 208
+visualTile foreground 0 1 848 208
+visualTile foreground 1 1 880 208
+visualTile foreground 5 1 912 208
+visualTile foreground 1 2 944 208
+visualTile foreground 2 2 528 240
+visualTile foreground 0 3 848 240
+visualTile foreground 1 3 880 240
+visualTile foreground 1 3 912 240
+visualTile foreground 5 0 944 240
+visualTile foreground 2 2 528 272
+visualTile foreground 0 1 624 272
+visualTile foreground 1 1 656 272
+visualTile foreground 1 1 688 272
+visualTile foreground 2 1 720 272
+visualTile foreground 0 2 944 272
+visualTile foreground 4 1 528 304
+visualTile foreground 1 1 560 304
+visualTile foreground 1 1 592 304
+visualTile foreground 5 1 624 304
+visualTile foreground 4 0 656 304
+visualTile foreground 1 3 688 304
+visualTile foreground 2 3 720 304
+visualTile foreground 3 0 848 304
+visualTile foreground 0 0 912 304
+visualTile foreground 4 2 944 304
+visualTile foreground 1 2 528 336
+visualTile foreground 1 2 560 336
+visualTile foreground 2 2 656 336
+visualTile foreground 0 2 944 336
+visualTile foreground 3 1 816 368
+visualTile foreground 2 2 656 368
+visualTile foreground 0 2 944 368
+visualTile foreground 4 1 656 400
+visualTile foreground 1 1 688 400
+visualTile foreground 1 1 720 400
+visualTile foreground 1 1 752 400
+visualTile foreground 1 1 784 400
+visualTile foreground 5 2 816 400
+visualTile foreground 1 1 848 400
+visualTile foreground 1 1 880 400
+visualTile foreground 1 1 912 400
+visualTile foreground 5 1 944 400
+
+# Collision for this reference level is generated from non-void foreground cells.

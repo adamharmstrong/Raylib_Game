@@ -1,26 +1,76 @@
-# Sandbox for experimenting with newly added level objects.
+# Organized sandbox for experimenting with reusable level objects.
 script power_pulley_panic
+# Safe landing strip between the fluid tank and balance station.
+playerStart 1040 260
 
 exit 1485 430 85 220
 
-solid 0 650 1600 40
+# Continuous foundation, with a two-tile breakable section before the exit.
+solid 0 650 1320 40
+solid 1448 650 152 40
 solid 0 690 1600 210
 solid 0 0 28 900
 solid 1572 0 28 900
 
-platform 260 560 140 18
-platform 500 520 160 18
-platform 900 525 160 18
+# Upper test floor. The center gap leaves room to climb through and step off
+# onto either side without the player colliding with the deck edge.
+solid 28 300 332 24
+solid 440 300 1132 24
+ladder 376 270 48 380
+
+# Lightweight fluid test tank on the upper floor.
+water 1100 80 400 220 1 0.55 1.0
+
+# -----------------------------------------------------------------------------
+# Station 1 (x 28-390): rolling bodies and an inclined surface.
+# -----------------------------------------------------------------------------
+platform 250 520 118 18
+ramp 175 610 240 18 -22
+physicsWheel 78 585 24 1.4
+boulder 300 485 25 2.6
+
+# -----------------------------------------------------------------------------
+# Station 2 (x 420-890): pushables, patrol AI, buttons, and balance beams.
+# The upper shelves are aligned; the two see-saws have separate footprints.
+# -----------------------------------------------------------------------------
+platform 430 500 180 18
+platform 690 500 180 18
+
+enemy 545 460 34 40 430 610 80
+stoneBlock 465 452 54 48 3.0
+stoneBlock 700 560 54 48 3.0
+flywheel 825 455 34 4.0 80
+steeringWheel 625 430 28 0
+
+button 430 632 62 18
+button 820 632 62 18
+seeSaw 535 620 210 16 -18 18 7
+seeSaw 780 620 210 16 -18 18 7
+
+# Flexible-body samples frame the balance station instead of crossing it.
+chain 420 470 420 640 11 1
+chain 650 450 650 640 11 1
+chain 900 470 900 620 11 1
+
+# -----------------------------------------------------------------------------
+# Station 3 (x 900-1120): trap door, screw conveyor, and vertical arrow range.
+# -----------------------------------------------------------------------------
+trapDoor 920 620 110 16 0
+platform 940 565 180 18
+screw 1030 540 150 13 0 210
+gear 990 500 24 1.8
+arrowTrap 1085 525 0 -1 1.8 420
+boulder 1065 510 28 3.2
+
+# -----------------------------------------------------------------------------
+# Station 4 (x 1120-1448): fan response, pinwheel, and rope physics.
+# -----------------------------------------------------------------------------
 platform 1160 575 160 18
+fan 1140 500 1 0 260 110 420 1.0
+pinwheel 1365 500 24
+physicsRope 1140 420 1460 420 370 5 1 1
 
-enemy 530 480 34 40 500 660 80
-
-stoneBlock 340 500 54 48 3.0
-stoneBlock 760 585 54 48 3.0
-
-seeSaw 650 620 300 16 -18 18 7
-seeSaw 1085 600 260 16 -18 18 7
-
-chain 500 520 500 650 11 1
-chain 650 620 650 500 11 1
-chain 1085 600 1235 575 11 1
+# Exit approach: projectile lane followed by a breakable floor bridge.
+arrowTrap 1480 610 -1 0 1.4 500
+breakableTile 1320 650 64 32 2.0
+breakableTile 1384 650 64 32 2.0
