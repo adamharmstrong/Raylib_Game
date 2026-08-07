@@ -110,6 +110,7 @@ namespace {
     }
 
     void CollideFlexiblePointWithRect(Vector2& point, Vector2& previousPoint, Rectangle rect, float radius) {
+        const Vector2 pointBeforeCollision = point;
         float closestX = std::clamp(point.x, rect.x, rect.x + rect.width);
         float closestY = std::clamp(point.y, rect.y, rect.y + rect.height);
         float dx = point.x - closestX;
@@ -147,8 +148,39 @@ namespace {
             point.y += (dy / distance) * push;
         }
 
-        previousPoint.x = LerpFloat(previousPoint.x, point.x, 0.18f);
-        previousPoint.y = LerpFloat(previousPoint.y, point.y, 0.18f);
+        const Vector2 correction{
+            point.x - pointBeforeCollision.x,
+            point.y - pointBeforeCollision.y
+        };
+        previousPoint.x += correction.x;
+        previousPoint.y += correction.y;
+
+        const float correctionLength =
+            sqrtf(correction.x * correction.x + correction.y * correction.y);
+        if (correctionLength > 0.0001f) {
+            const Vector2 outwardNormal{
+                correction.x / correctionLength,
+                correction.y / correctionLength
+            };
+            const Vector2 movement{
+                point.x - previousPoint.x,
+                point.y - previousPoint.y
+            };
+            const float inwardMovement = Dot(movement, outwardNormal);
+            if (inwardMovement < 0.0f) {
+                previousPoint.x += outwardNormal.x * inwardMovement;
+                previousPoint.y += outwardNormal.y * inwardMovement;
+            }
+        }
+    }
+
+    template <typename Body>
+    bool IsFixedPhysicsBody(const Body&) {
+        return false;
+    }
+
+    bool IsFixedPhysicsBody(const Gear& gear) {
+        return gear.mounting == GearMounting::Mounted;
     }
 
     void ResolveContact(
@@ -161,14 +193,16 @@ namespace {
         float massB,
         bool& onGroundB,
         Vector2 normal,
-        float penetration
+        float penetration,
+        bool fixedA = false,
+        bool fixedB = false
     ) {
         if (penetration <= 0.0f) {
             return;
         }
 
-        float inverseMassA = 1.0f / fmaxf(0.1f, massA);
-        float inverseMassB = 1.0f / fmaxf(0.1f, massB);
+        float inverseMassA = fixedA ? 0.0f : 1.0f / fmaxf(0.1f, massA);
+        float inverseMassB = fixedB ? 0.0f : 1.0f / fmaxf(0.1f, massB);
 
         // A grounded lower body should support a stack instead of being driven into the floor.
         if (normal.y > 0.55f && onGroundB) {
@@ -189,10 +223,10 @@ namespace {
         centerB.x += normal.x * correction * inverseMassB;
         centerB.y += normal.y * correction * inverseMassB;
 
-        if (normal.y > 0.55f) {
+        if (normal.y > 0.55f && !fixedA) {
             onGroundA = true;
         }
-        else if (normal.y < -0.55f) {
+        else if (normal.y < -0.55f && !fixedB) {
             onGroundB = true;
         }
 
@@ -235,6 +269,10 @@ namespace {
     }
 
     void ResolveStoneBlockPair(StoneBlock& a, StoneBlock& b) {
+        if (a.layer != b.layer) {
+            return;
+        }
+
         float overlapX = fminf(a.rect.x + a.rect.width, b.rect.x + b.rect.width) - fmaxf(a.rect.x, b.rect.x);
         float overlapY = fminf(a.rect.y + a.rect.height, b.rect.y + b.rect.height) - fmaxf(a.rect.y, b.rect.y);
         if (overlapX <= 0.0f || overlapY <= 0.0f) {
@@ -267,6 +305,10 @@ namespace {
 
     template <typename RoundBody>
     void ResolveStoneBlockRoundPair(StoneBlock& block, RoundBody& body, float radius) {
+        if (block.layer != body.layer) {
+            return;
+        }
+
         float closestX = std::clamp(body.center.x, block.rect.x, block.rect.x + block.rect.width);
         float closestY = std::clamp(body.center.y, block.rect.y, block.rect.y + block.rect.height);
         float dx = body.center.x - closestX;
@@ -311,7 +353,7 @@ namespace {
         ResolveContact(
             blockCenter, block.velocity, block.mass, block.onGround,
             body.center, body.velocity, body.mass, body.onGround,
-            normal, penetration
+            normal, penetration, false, IsFixedPhysicsBody(body)
         );
         block.rect.x = blockCenter.x - block.rect.width * 0.5f;
         block.rect.y = blockCenter.y - block.rect.height * 0.5f;
@@ -319,6 +361,10 @@ namespace {
 
     template <typename RoundBodyA, typename RoundBodyB>
     void ResolveRoundPair(RoundBodyA& a, float radiusA, RoundBodyB& b, float radiusB) {
+        if (a.layer != b.layer) {
+            return;
+        }
+
         Vector2 delta{b.center.x - a.center.x, b.center.y - a.center.y};
         float distanceSquared = Dot(delta, delta);
         float combinedRadius = radiusA + radiusB;
@@ -333,7 +379,8 @@ namespace {
         ResolveContact(
             a.center, a.velocity, a.mass, a.onGround,
             b.center, b.velocity, b.mass, b.onGround,
-            normal, combinedRadius - distance
+            normal, combinedRadius - distance,
+            IsFixedPhysicsBody(a), IsFixedPhysicsBody(b)
         );
     }
 
@@ -376,28 +423,56 @@ namespace {
         }
     }
 
+    bool SectorTeethFaceGear(const Gear& sector, const Gear& other) {
+        if (sector.visualType != GearVisualType::Sector) {
+            return true;
+        }
+
+        const float contactAngle = atan2f(other.center.y - sector.center.y,
+            other.center.x - sector.center.x) * RAD2DEG;
+        const float offset = remainderf(contactAngle - sector.rotation, 360.0f);
+        return fabsf(offset) <= 117.5f;
+    }
+
+    bool CanGearsMesh(const Gear& a, const Gear& b) {
+        if (a.layer != b.layer) {
+            return false;
+        }
+
+        const bool samePlane = a.orientation == b.orientation;
+        const bool bevelTransfer = a.visualType == GearVisualType::Bevel ||
+            b.visualType == GearVisualType::Bevel;
+        return (samePlane || bevelTransfer) && SectorTeethFaceGear(a, b) && SectorTeethFaceGear(b, a);
+    }
+
     void CoupleTouchingGears(Gear& a, Gear& b) {
-        float radiusA = a.radius * 1.12f;
-        float radiusB = b.radius * 1.12f;
+        if (!CanGearsMesh(a, b)) {
+            return;
+        }
+
+        float radiusA = a.radius * GearOuterRadiusScale;
+        float radiusB = b.radius * GearOuterRadiusScale;
         if (Distance(a.center, b.center) > radiusA + radiusB + 1.0f) {
             return;
         }
 
         float inertiaA = 0.5f * fmaxf(0.1f, a.mass) * radiusA * radiusA;
         float inertiaB = 0.5f * fmaxf(0.1f, b.mass) * radiusB * radiusB;
+        float inverseInertiaA = a.stopped ? 0.0f : 1.0f / inertiaA;
+        float inverseInertiaB = b.stopped ? 0.0f : 1.0f / inertiaB;
         float omegaA = a.angularVelocity * DEG2RAD;
         float omegaB = b.angularVelocity * DEG2RAD;
         float contactSlip = omegaA * radiusA + omegaB * radiusB;
-        float denominator = radiusA * radiusA / inertiaA + radiusB * radiusB / inertiaB;
+        float denominator = radiusA * radiusA * inverseInertiaA + radiusB * radiusB * inverseInertiaB;
         if (fabsf(contactSlip) <= 0.0001f || denominator <= 0.0001f) {
             return;
         }
 
         float impulse = contactSlip / denominator * 0.65f;
-        omegaA -= impulse * radiusA / inertiaA;
-        omegaB -= impulse * radiusB / inertiaB;
-        a.angularVelocity = omegaA * RAD2DEG;
-        b.angularVelocity = omegaB * RAD2DEG;
+        omegaA -= impulse * radiusA * inverseInertiaA;
+        omegaB -= impulse * radiusB * inverseInertiaB;
+        a.angularVelocity = a.stopped ? 0.0f : omegaA * RAD2DEG;
+        b.angularVelocity = b.stopped ? 0.0f : omegaB * RAD2DEG;
     }
 
     bool IsPhysicsRopePointPinned(const PhysicsRope& rope, int index) {
@@ -600,7 +675,8 @@ std::array<Vector2, 2> GetTrapDoorRingPositions(const TrapDoor& trapDoor) {
     Vector2 axis{cosf(angle), sinf(angle)};
     Vector2 normal{-axis.y, axis.x};
     float inset = std::clamp(trapDoor.length * 0.12f, trapDoor.thickness * 0.7f, trapDoor.length * 0.3f);
-    float faceOffset = trapDoor.thickness * 0.62f;
+    // Keep each ring fully clear of its door face, with a small readable gap.
+    float faceOffset = trapDoor.thickness * 1.10f;
     Vector2 center{
         trapDoor.hinge.x + axis.x * (trapDoor.length - inset),
         trapDoor.hinge.y + axis.y * (trapDoor.length - inset)
@@ -629,6 +705,10 @@ bool IsPointOverTrapDoor(const TrapDoor& trapDoor, float x) {
 void ApplyScrewGearCoupling(Gear& gear, const std::vector<Screw>& screws, float dt) {
     float gearOuterRadius = gear.radius * GearOuterRadiusScale;
     for (const Screw& screw : screws) {
+        if (gear.layer != screw.layer) {
+            continue;
+        }
+
         float angle = screw.angle * DEG2RAD;
         Vector2 axis{cosf(angle), sinf(angle)};
         Vector2 normal{-axis.y, axis.x};
@@ -652,7 +732,9 @@ void ApplyScrewGearCoupling(Gear& gear, const std::vector<Screw>& screws, float 
         float side = Dot(offset, normal) < 0.0f ? -1.0f : 1.0f;
         float inertiaScale = 1.0f / sqrtf(fmaxf(1.0f, gear.mass));
         float angularCoupling = std::clamp(8.0f * inertiaScale * dt, 0.0f, 1.0f);
-        float targetAngularVelocity = -side * screw.spinSpeed / static_cast<float>(GearToothCount);
+        const float screwSurfaceSpeed = screw.spinSpeed * DEG2RAD * screw.radius;
+        const float targetAngularVelocity = -side * screwSurfaceSpeed /
+            fmaxf(1.0f, gearOuterRadius) * RAD2DEG;
         gear.angularVelocity = LerpFloat(gear.angularVelocity, targetAngularVelocity, angularCoupling);
 
         float pitch = fmaxf(20.0f, screw.radius * 1.85f);
@@ -682,20 +764,20 @@ void ResolveDynamicBodyCollisions(
 
         ResolveBlocksAgainstRoundBodies(stoneBlocks, boulders, 1.0f);
         ResolveBlocksAgainstRoundBodies(stoneBlocks, physicsWheels, 1.0f);
-        ResolveBlocksAgainstRoundBodies(stoneBlocks, gears, 1.12f);
+        ResolveBlocksAgainstRoundBodies(stoneBlocks, gears, GearOuterRadiusScale);
         ResolveBlocksAgainstRoundBodies(stoneBlocks, flywheels, 1.0f);
 
         ResolveSameRoundBodies(boulders, 1.0f);
         ResolveSameRoundBodies(physicsWheels, 1.0f);
-        ResolveSameRoundBodies(gears, 1.12f);
+        ResolveSameRoundBodies(gears, GearOuterRadiusScale);
         ResolveSameRoundBodies(flywheels, 1.0f);
 
         ResolveRoundBodyCollections(boulders, 1.0f, physicsWheels, 1.0f);
-        ResolveRoundBodyCollections(boulders, 1.0f, gears, 1.12f);
+        ResolveRoundBodyCollections(boulders, 1.0f, gears, GearOuterRadiusScale);
         ResolveRoundBodyCollections(boulders, 1.0f, flywheels, 1.0f);
-        ResolveRoundBodyCollections(physicsWheels, 1.0f, gears, 1.12f);
+        ResolveRoundBodyCollections(physicsWheels, 1.0f, gears, GearOuterRadiusScale);
         ResolveRoundBodyCollections(physicsWheels, 1.0f, flywheels, 1.0f);
-        ResolveRoundBodyCollections(gears, 1.12f, flywheels, 1.0f);
+        ResolveRoundBodyCollections(gears, GearOuterRadiusScale, flywheels, 1.0f);
     }
 
     for (int i = 0; i < static_cast<int>(gears.size()); i++) {
@@ -754,14 +836,44 @@ void UpdateChainPhysics(
             if (IsChainPointPinned(chain, i)) {
                 continue;
             }
+            if (!std::isfinite(chain.points[i].x) ||
+                !std::isfinite(chain.points[i].y) ||
+                !std::isfinite(chain.previousPoints[i].x) ||
+                !std::isfinite(chain.previousPoints[i].y)) {
+                const float amount = static_cast<float>(i) /
+                    static_cast<float>(chain.points.size() - 1);
+                chain.points[i] = LerpVector(chain.start, chain.end, amount);
+                chain.previousPoints[i] = chain.points[i];
+            }
+
             Vector2 point = chain.points[i];
             Vector2 displacement{
                 (chain.points[i].x - chain.previousPoints[i].x) * timeScale * damping,
                 (chain.points[i].y - chain.previousPoints[i].y) * timeScale * damping
             };
+            const float displacementLength =
+                sqrtf(displacement.x * displacement.x + displacement.y * displacement.y);
+            const float maximumDisplacement = fmaxf(4.0f, segmentLength * 0.75f);
+            if (displacementLength > maximumDisplacement) {
+                const float scale = maximumDisplacement / displacementLength;
+                displacement.x *= scale;
+                displacement.y *= scale;
+            }
+
             Vector2 external{};
             if (i < static_cast<int>(externalAccelerations.size())) {
                 external = externalAccelerations[i];
+            }
+            if (!std::isfinite(external.x) || !std::isfinite(external.y)) {
+                external = {};
+            }
+            const float externalLength =
+                sqrtf(external.x * external.x + external.y * external.y);
+            constexpr float MaximumExternalAcceleration = 5000.0f;
+            if (externalLength > MaximumExternalAcceleration) {
+                const float scale = MaximumExternalAcceleration / externalLength;
+                external.x *= scale;
+                external.y *= scale;
             }
 
             chain.previousPoints[i] = point;
@@ -791,10 +903,46 @@ void UpdateChainPhysics(
                 bool bPinned = IsChainPointPinned(chain, i + 1);
                 float aWeight = aPinned ? 0.0f : (bPinned ? 1.0f : 0.5f);
                 float bWeight = bPinned ? 0.0f : (aPinned ? 1.0f : 0.5f);
-                a.x += dx * difference * aWeight;
-                a.y += dy * difference * aWeight;
-                b.x -= dx * difference * bWeight;
-                b.y -= dy * difference * bWeight;
+                Vector2 correctionA{
+                    dx * difference * aWeight,
+                    dy * difference * aWeight
+                };
+                Vector2 correctionB{
+                    -dx * difference * bWeight,
+                    -dy * difference * bWeight
+                };
+                const auto clampCorrection = [&](Vector2& correction) {
+                    const float correctionLength = sqrtf(
+                        correction.x * correction.x +
+                        correction.y * correction.y
+                    );
+                    const float maximumCorrection = segmentLength * 0.55f;
+                    if (correctionLength > maximumCorrection) {
+                        const float scale = maximumCorrection / correctionLength;
+                        correction.x *= scale;
+                        correction.y *= scale;
+                    }
+                };
+                clampCorrection(correctionA);
+                clampCorrection(correctionB);
+                a.x += correctionA.x;
+                a.y += correctionA.y;
+                b.x += correctionB.x;
+                b.y += correctionB.y;
+
+                // Most constraint projection is geometric cleanup, not real
+                // acceleration. Mirror it into Verlet history so a stretched
+                // or newly pinned chain cannot turn that correction into an
+                // explosive velocity on the following substep.
+                constexpr float HistoryCorrection = 0.85f;
+                if (!aPinned) {
+                    chain.previousPoints[i].x += correctionA.x * HistoryCorrection;
+                    chain.previousPoints[i].y += correctionA.y * HistoryCorrection;
+                }
+                if (!bPinned) {
+                    chain.previousPoints[i + 1].x += correctionB.x * HistoryCorrection;
+                    chain.previousPoints[i + 1].y += correctionB.y * HistoryCorrection;
+                }
             }
 
             for (int i = 0; i < static_cast<int>(chain.points.size()); i++) {

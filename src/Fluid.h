@@ -75,6 +75,28 @@ void UpdateFluidField(
 );
 void AddFluidImpulse(FluidField& field, Vector2 point, float radius, Vector2 velocityChange);
 float AddCellularFluidMass(FluidField& field, float amount, Vector2 velocity = {});
+int EmitParticleFluid(
+    FluidField& field,
+    Vector2 source,
+    Vector2 velocity,
+    int count,
+    const std::vector<Rectangle>& obstacles
+);
+float EmitGasDensity(
+    FluidField& field,
+    Vector2 source,
+    Vector2 velocity,
+    float amount
+);
+float VentGasDensity(
+    FluidField& field,
+    Rectangle outlet,
+    Vector2 outwardDirection,
+    float influenceRadius,
+    float acceleration,
+    float maximumRemoved,
+    float dt
+);
 
 int GetFluidSimulationPointCount(const FluidField& field);
 Vector2 GetFluidSimulationPoint(const FluidField& field, int index);

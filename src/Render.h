@@ -9,13 +9,30 @@
 void DrawPulley(Vector2 center, float radius, float rotation, Color color);
 void DrawRope(Vector2 start, Vector2 end, float thickness, float patternOffset = 0.0f);
 void DrawWinch(const Winch& winch);
-void DrawSpikes(float startX, float baseY, int count);
+void DrawSpikes(Rectangle hazard);
+void DrawDirectionalSpikes(const DirectionalSpikeHazard& hazard);
+void DrawPortal(Rectangle portal, Color color);
 void DrawHazardWeight(const HangingWeight& weight, float ropePatternOffset = 0.0f);
 void DrawOutdoorDoorway(Rectangle doorway);
+void DrawExitDoor(Rectangle trigger, float gateBottom);
 void DrawMachineBox(Rectangle rect, float gearRotation, bool running);
-void DrawPlayer(const Player& player, Texture2D texture, int spriteRow);
+void DrawPlayer(
+    const Player& player,
+    Texture2D texture,
+    int spriteRow,
+    float frameWidth = 37.0f,
+    float frameHeight = 47.0f,
+    int spriteRowCount = 3,
+    float frameStride = 0.0f,
+    float sourceOffsetX = 0.0f,
+    float sourceOffsetY = 0.0f,
+    Color tint = WHITE
+);
 void DrawEnemy(const Enemy& enemy, Texture2D texture);
 void DrawRotaryLatch(const RotaryLatch& latch, bool playerNear, const char* interactPrompt);
+void DrawFloodPump(const Valve& valve, Vector2 outlet, float waterSurfaceY, bool filling);
+void DrawValveBody(const Valve& valve, bool playerNear);
+void DrawValvePrompt(const Valve& valve, bool playerNear, const char* interactPrompt, bool belowValve = false);
 void DrawValve(const Valve& valve, bool playerNear, const char* interactPrompt);
 void DrawWaterPit(const WaterPit& waterPit);
 void DrawFluidBackground(const FluidField& fluid);

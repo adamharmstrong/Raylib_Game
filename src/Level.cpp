@@ -11,7 +11,55 @@
 namespace {
     constexpr float VisualTileSize = 32.0f;
     constexpr float PitWallSize = 32.0f;
-    constexpr float PitTopY = 682.0f;
+
+    GearOrientation ParseGearOrientation(const std::string& value) {
+        return value == "horizontal" ? GearOrientation::Horizontal : GearOrientation::Vertical;
+    }
+
+    WorldLayer ParseWorldLayer(const std::string& value) {
+        if (value == "background" || value == "back") return WorldLayer::Background;
+        if (value == "foreground" || value == "front") return WorldLayer::Foreground;
+        return WorldLayer::Middleground;
+    }
+
+    GearMounting ParseGearMounting(const std::string& value) {
+        return value == "mounted" || value == "fixed" || value == "anchored"
+            ? GearMounting::Mounted
+            : GearMounting::Dynamic;
+    }
+
+    GearVisualType ParseGearVisualType(const std::string& value) {
+        if (value == "lantern" || value == "lanternPinion") return GearVisualType::LanternPinion;
+        if (value == "ratchet") return GearVisualType::Ratchet;
+        if (value == "escape") return GearVisualType::Escape;
+        if (value == "bevel") return GearVisualType::Bevel;
+        if (value == "sector") return GearVisualType::Sector;
+        if (value == "count") return GearVisualType::Count;
+        return GearVisualType::Spur;
+    }
+
+    ClockHandType ParseClockHandType(const std::string& value) {
+        if (value == "hour") return ClockHandType::Hour;
+        if (value == "minute") return ClockHandType::Minute;
+        if (value == "second") return ClockHandType::Second;
+        return ClockHandType::None;
+    }
+
+    bool TryParseFloat(const std::string& value, float& result) {
+        std::istringstream number(value);
+        number >> result;
+        return number && number.eof();
+    }
+
+    void SanitizeGear(Gear& gear) {
+        gear.radius = fmaxf(1.0f, gear.radius);
+        gear.mass = fmaxf(0.1f, gear.mass);
+        gear.toothCount = std::clamp(gear.toothCount, 4, 160);
+        if (gear.mounting == GearMounting::Mounted) {
+            gear.velocity = {0.0f, 0.0f};
+            gear.onGround = false;
+        }
+    }
 
     LevelScript ParseLevelScript(const std::string& value) {
         if (value == "rotary_latch_lab") {
@@ -23,11 +71,30 @@ namespace {
         if (value == "counterweight_row") {
             return LevelScript::CounterweightRow;
         }
+        if (value == "button_sequence") {
+            return LevelScript::ButtonSequence;
+        }
+        if (value == "portal_lift") {
+            return LevelScript::PortalLift;
+        }
+        if (value == "neurotoxin_maze") {
+            return LevelScript::NeurotoxinMaze;
+        }
+        if (value == "clocktower_core") {
+            return LevelScript::ClocktowerCore;
+        }
         if (value == "tileset_reference") {
             return LevelScript::TilesetReference;
         }
 
         return LevelScript::PowerPulleyPanic;
+    }
+
+    SpikeDirection ParseSpikeDirection(const std::string& value) {
+        if (value == "down") return SpikeDirection::Down;
+        if (value == "left") return SpikeDirection::Left;
+        if (value == "right") return SpikeDirection::Right;
+        return SpikeDirection::Up;
     }
 
     TileLayer ParseTileLayer(const std::string& value) {
@@ -51,7 +118,7 @@ Level CreatePowerPulleyPanicLevel() {
     Level level;
     level.script = LevelScript::PowerPulleyPanic;
 
-    level.ladder = {255, 250, 45, 400};
+    level.ladders = {{255, 250, 45, 400}};
     level.spikeHazard = {300, 773, 960, 32};
     level.darknessAreas = {
         {300, 275, 960, 625},
@@ -136,7 +203,7 @@ Level CreateFloodedFoundryLevel() {
     level.script = LevelScript::FloodedFoundry;
     level.playerStart = {80.0f, 600.0f};
 
-    level.ladder = {255, 250, 45, 390};
+    level.ladders = {{255, 250, 45, 390}};
     level.spikeHazard = {320, 773, 928, 32};
     level.exitTrigger = {1440, 430, 85, 210};
     level.valve = {{515, 210}, 34.0f, 0.0f, 120.0f, false};
@@ -172,6 +239,7 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
 
     Level level;
     std::string line;
+    WorldLayer currentLayer = WorldLayer::Middleground;
 
     while (std::getline(file, line)) {
         std::istringstream stream(line);
@@ -187,14 +255,56 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
             stream >> scriptName;
             level.script = ParseLevelScript(scriptName);
         }
+        else if (command == "layer") {
+            std::string layerName;
+            stream >> layerName;
+            currentLayer = ParseWorldLayer(layerName);
+        }
+        else if (command == "bounds") {
+            stream >> level.worldBounds.x >> level.worldBounds.y >> level.worldBounds.width >> level.worldBounds.height;
+            level.worldBounds.width = fmaxf(1.0f, level.worldBounds.width);
+            level.worldBounds.height = fmaxf(1.0f, level.worldBounds.height);
+        }
+        else if (command == "cameraZone") {
+            Rectangle zone{};
+            stream >> zone.x >> zone.y >> zone.width >> zone.height;
+            zone.width = fmaxf(1.0f, zone.width);
+            zone.height = fmaxf(1.0f, zone.height);
+            level.cameraZones.push_back(zone);
+        }
         else if (command == "playerStart") {
             stream >> level.playerStart.x >> level.playerStart.y;
         }
+        else if (command == "clockFace") {
+            stream >> level.clockFaceCenter.x >> level.clockFaceCenter.y >> level.clockFaceRadius;
+            level.clockFaceRadius = fmaxf(1.0f, level.clockFaceRadius);
+        }
+        else if (command == "label" || command == "labelSized") {
+            LevelLabel label{};
+            stream >> label.position.x >> label.position.y;
+            if (command == "labelSized") {
+                stream >> label.fontSize;
+                label.fontSize = std::clamp(label.fontSize, 8, 72);
+            }
+            std::getline(stream, label.text);
+            const size_t firstCharacter = label.text.find_first_not_of(" \t");
+            if (firstCharacter != std::string::npos) {
+                label.text.erase(0, firstCharacter);
+                level.labels.push_back(label);
+            }
+        }
         else if (command == "ladder") {
-            stream >> level.ladder.x >> level.ladder.y >> level.ladder.width >> level.ladder.height;
+            Rectangle ladder{};
+            stream >> ladder.x >> ladder.y >> ladder.width >> ladder.height;
+            ladder.width = fmaxf(1.0f, ladder.width);
+            ladder.height = fmaxf(1.0f, ladder.height);
+            level.ladders.push_back(ladder);
         }
         else if (command == "spikeHazard") {
             stream >> level.spikeHazard.x >> level.spikeHazard.y >> level.spikeHazard.width >> level.spikeHazard.height;
+        }
+        else if (command == "spikePitTop") {
+            stream >> level.spikePitTopY;
         }
         else if (command == "darkness") {
             Rectangle darknessArea{};
@@ -240,6 +350,13 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
             level.valveFluidFill.targetFill = std::clamp(level.valveFluidFill.targetFill, 0.0f, 1.0f);
             level.valveFluidFill.riseRate = fmaxf(0.0f, level.valveFluidFill.riseRate);
         }
+        else if (command == "toxinLeak") {
+            stream >> level.toxinLeak.fluidIndex >> level.toxinLeak.source.x >> level.toxinLeak.source.y >>
+                level.toxinLeak.massPerSecond >> level.toxinLeak.maximumMass >> level.toxinLeak.exposureRate;
+            level.toxinLeak.massPerSecond = fmaxf(0.0f, level.toxinLeak.massPerSecond);
+            level.toxinLeak.maximumMass = fmaxf(0.0f, level.toxinLeak.maximumMass);
+            level.toxinLeak.exposureRate = fmaxf(0.0f, level.toxinLeak.exposureRate);
+        }
         else if (command == "water" || command == "sand" || command == "gel" || command == "gas") {
             FluidField fluid{};
             fluid.type = command == "water" ? FluidType::Water :
@@ -249,9 +366,11 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
                 fluid.particleSpacing >> fluid.initialFill >> fluid.flowSpeed;
             fluid.bounds.width = fmaxf(1.0f, fluid.bounds.width);
             fluid.bounds.height = fmaxf(1.0f, fluid.bounds.height);
-            fluid.particleSpacing = (fluid.type == FluidType::Water || fluid.type == FluidType::Sand) ?
-                std::clamp(fluid.particleSpacing, 1.0f, 12.0f) :
-                std::clamp(fluid.particleSpacing, 6.0f, 48.0f);
+            fluid.particleSpacing = fluid.type == FluidType::Gas ?
+                std::clamp(fluid.particleSpacing, 12.0f, 32.0f) :
+                ((fluid.type == FluidType::Water || fluid.type == FluidType::Sand) ?
+                    std::clamp(fluid.particleSpacing, 1.0f, 12.0f) :
+                    std::clamp(fluid.particleSpacing, 6.0f, 48.0f));
             fluid.initialFill = std::clamp(fluid.initialFill, 0.0f, 1.0f);
             fluid.flowSpeed = std::clamp(fluid.flowSpeed, 0.1f, 4.0f);
             level.fluids.push_back(fluid);
@@ -287,6 +406,7 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
         }
         else if (command == "stoneBlock") {
             StoneBlock block{};
+            block.layer = currentLayer;
             stream >> block.rect.x >> block.rect.y >> block.rect.width >> block.rect.height >> block.mass;
             block.rect.width = fmaxf(1.0f, block.rect.width);
             block.rect.height = fmaxf(1.0f, block.rect.height);
@@ -295,6 +415,7 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
         }
         else if (command == "boulder") {
             Boulder boulder{};
+            boulder.layer = currentLayer;
             stream >> boulder.center.x >> boulder.center.y >> boulder.radius >> boulder.mass;
             boulder.radius = fmaxf(1.0f, boulder.radius);
             boulder.mass = fmaxf(0.1f, boulder.mass);
@@ -302,6 +423,7 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
         }
         else if (command == "physicsWheel") {
             PhysicsWheel wheel{};
+            wheel.layer = currentLayer;
             stream >> wheel.center.x >> wheel.center.y >> wheel.radius >> wheel.mass;
             wheel.radius = fmaxf(1.0f, wheel.radius);
             wheel.mass = fmaxf(0.1f, wheel.mass);
@@ -309,13 +431,57 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
         }
         else if (command == "gear") {
             Gear gear{};
-            stream >> gear.center.x >> gear.center.y >> gear.radius >> gear.mass;
-            gear.radius = fmaxf(1.0f, gear.radius);
-            gear.mass = fmaxf(0.1f, gear.mass);
+            gear.layer = currentLayer;
+            std::string firstValue;
+            stream >> firstValue;
+
+            float legacyX = 0.0f;
+            if (TryParseFloat(firstValue, legacyX)) {
+                // Legacy form: gear <x> <y> <radius> <mass> [vertical|horizontal]
+                gear.center.x = legacyX;
+                stream >> gear.center.y >> gear.radius >> gear.mass;
+                std::string orientation;
+                if (stream >> orientation) gear.orientation = ParseGearOrientation(orientation);
+            }
+            else {
+                // Canonical form: gear <type> <dynamic|mounted> <orientation> <x> <y>
+                // <radius> <mass> <teeth> <rotation> <angularVelocity> <driveSpeed> [clockHand]
+                std::string mounting;
+                std::string orientation;
+                std::string clockHand{"none"};
+                stream >> mounting >> orientation >> gear.center.x >> gear.center.y >> gear.radius >>
+                    gear.mass >> gear.toothCount >> gear.rotation >> gear.angularVelocity >> gear.driveSpeed;
+                if (stream >> clockHand) gear.clockHand = ParseClockHandType(clockHand);
+                gear.visualType = ParseGearVisualType(firstValue);
+                gear.mounting = ParseGearMounting(mounting);
+                gear.orientation = ParseGearOrientation(orientation);
+            }
+
+            SanitizeGear(gear);
+            level.gears.push_back(gear);
+        }
+        else if (command == "mountedGear") {
+            // Backward-compatible alias for clock-tower levels authored before gears
+            // used one unified physics representation.
+            Gear gear{};
+            gear.layer = currentLayer;
+            std::string visualType;
+            std::string orientation;
+            std::string clockHand;
+            stream >> visualType >> orientation >> gear.center.x >> gear.center.y >> gear.radius >>
+                gear.toothCount >> gear.rotation >> gear.driveSpeed >> clockHand;
+            gear.visualType = ParseGearVisualType(visualType);
+            gear.mounting = GearMounting::Mounted;
+            gear.orientation = ParseGearOrientation(orientation);
+            gear.clockHand = ParseClockHandType(clockHand);
+            gear.angularVelocity = gear.driveSpeed;
+            gear.mass = fmaxf(1.8f, gear.radius * 0.08f);
+            SanitizeGear(gear);
             level.gears.push_back(gear);
         }
         else if (command == "flywheel") {
             Flywheel flywheel{};
+            flywheel.layer = currentLayer;
             stream >> flywheel.center.x >> flywheel.center.y >> flywheel.radius >> flywheel.mass >> flywheel.angularVelocity;
             flywheel.radius = fmaxf(1.0f, flywheel.radius);
             flywheel.mass = fmaxf(0.1f, flywheel.mass);
@@ -329,6 +495,7 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
         }
         else if (command == "screw") {
             Screw screw{};
+            screw.layer = currentLayer;
             stream >> screw.center.x >> screw.center.y >> screw.length >> screw.radius >> screw.angle >> screw.spinSpeed;
             screw.length = fmaxf(1.0f, screw.length);
             screw.radius = fmaxf(1.0f, screw.radius);
@@ -368,9 +535,14 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
         else if (command == "ramp") {
             Ramp ramp{};
             stream >> ramp.center.x >> ramp.center.y >> ramp.length >> ramp.thickness >> ramp.angle;
+            if (!(stream >> ramp.segmentCount)) {
+                stream.clear();
+                ramp.segmentCount = 4;
+            }
             ramp.length = fmaxf(1.0f, ramp.length);
             ramp.thickness = fmaxf(1.0f, ramp.thickness);
             ramp.angle = std::clamp(ramp.angle, -80.0f, 80.0f);
+            ramp.segmentCount = std::clamp(ramp.segmentCount, 1, 16);
             level.ramps.push_back(ramp);
         }
         else if (command == "trapDoor") {
@@ -418,6 +590,92 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
             button.rect.height = fmaxf(1.0f, button.rect.height);
             level.buttons.push_back(button);
         }
+        else if (command == "buttonTrapDoor") {
+            ButtonTrapDoorLink link{};
+            stream >> link.buttonIndex >> link.trapDoorIndex >> link.openAngle >> link.speed;
+            link.openAngle = std::clamp(link.openAngle, -80.0f, 80.0f);
+            link.speed = fmaxf(1.0f, link.speed);
+            level.buttonTrapDoorLinks.push_back(link);
+        }
+        else if (command == "buttonLadder") {
+            ButtonLadderLink link{};
+            stream >> link.buttonIndex >> link.ladder.x >> link.ladder.y >> link.ladder.width >> link.ladder.height;
+            link.ladder.width = fmaxf(1.0f, link.ladder.width);
+            link.ladder.height = fmaxf(1.0f, link.ladder.height);
+            level.buttonLadderLinks.push_back(link);
+        }
+        else if (command == "buttonExit") {
+            stream >> level.buttonExitLink.buttonIndex;
+        }
+        else if (command == "portalPair") {
+            PortalPair pair{};
+            stream >> pair.entrance.x >> pair.entrance.y >> pair.entrance.width >> pair.entrance.height >>
+                pair.exit.x >> pair.exit.y >> pair.exit.width >> pair.exit.height;
+            pair.entrance.width = fmaxf(1.0f, pair.entrance.width);
+            pair.entrance.height = fmaxf(1.0f, pair.entrance.height);
+            pair.exit.width = fmaxf(1.0f, pair.exit.width);
+            pair.exit.height = fmaxf(1.0f, pair.exit.height);
+            level.portalPairs.push_back(pair);
+        }
+        else if (command == "buttonFan") {
+            ButtonFanLink link{};
+            stream >> link.buttonIndex >> link.fanIndex >> link.poweredAmount;
+            link.poweredAmount = std::clamp(link.poweredAmount, 0.0f, 1.0f);
+            level.buttonFanLinks.push_back(link);
+        }
+        else if (command == "buttonPlatform") {
+            ButtonPlatformLink link{};
+            stream >> link.buttonIndex >> link.platform.x >> link.platform.y >>
+                link.platform.width >> link.platform.height;
+            link.platform.width = fmaxf(1.0f, link.platform.width);
+            link.platform.height = fmaxf(1.0f, link.platform.height);
+            level.buttonPlatformLinks.push_back(link);
+        }
+        else if (command == "buttonPlatformLoop") {
+            ButtonPlatformLoop loop{};
+            stream >> loop.buttonIndex >> loop.center.x >> loop.center.y >>
+                loop.radius.x >> loop.radius.y >> loop.platformSize.x >> loop.platformSize.y >>
+                loop.speed >> loop.platformCount;
+            loop.radius.x = fmaxf(1.0f, loop.radius.x);
+            loop.radius.y = fmaxf(1.0f, loop.radius.y);
+            loop.platformSize.x = fmaxf(1.0f, loop.platformSize.x);
+            loop.platformSize.y = fmaxf(1.0f, loop.platformSize.y);
+            loop.platformCount = std::clamp(loop.platformCount, 1, 16);
+            loop.active = loop.buttonIndex < 0;
+            UpdateButtonPlatformLoopPositions(loop);
+            level.buttonPlatformLoops.push_back(loop);
+        }
+        else if (command == "platformLoopButton") {
+            PlatformLoopButtonLink link{};
+            Button button{};
+            stream >> link.loopIndex >> link.platformIndex >>
+                button.rect.width >> button.rect.height;
+            button.rect.width = fmaxf(1.0f, button.rect.width);
+            button.rect.height = fmaxf(1.0f, button.rect.height);
+            link.buttonIndex = static_cast<int>(level.buttons.size());
+            level.buttons.push_back(button);
+            level.platformLoopButtonLinks.push_back(link);
+            UpdatePlatformLoopButtonPositions(level);
+        }
+        else if (command == "directionalSpikeHazard") {
+            DirectionalSpikeHazard hazard{};
+            std::string direction;
+            stream >> direction >> hazard.rect.x >> hazard.rect.y >> hazard.rect.width >> hazard.rect.height;
+            hazard.direction = ParseSpikeDirection(direction);
+            hazard.rect.width = fmaxf(1.0f, hazard.rect.width);
+            hazard.rect.height = fmaxf(1.0f, hazard.rect.height);
+            level.directionalSpikeHazards.push_back(hazard);
+        }
+        else if (command == "buttonSpikeHazard") {
+            ButtonSpikeLink link{};
+            std::string direction;
+            stream >> link.buttonIndex >> direction >> link.hazard.rect.x >> link.hazard.rect.y >>
+                link.hazard.rect.width >> link.hazard.rect.height;
+            link.hazard.direction = ParseSpikeDirection(direction);
+            link.hazard.rect.width = fmaxf(1.0f, link.hazard.rect.width);
+            link.hazard.rect.height = fmaxf(1.0f, link.hazard.rect.height);
+            level.buttonSpikeLinks.push_back(link);
+        }
         else if (command == "arrowTrap") {
             ArrowTrap trap{};
             stream >> trap.position.x >> trap.position.y >> trap.direction.x >> trap.direction.y >> trap.interval >> trap.speed;
@@ -446,6 +704,13 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
             enemy.walking = true;
             level.enemies.push_back(enemy);
         }
+        else {
+            GuideObject object{};
+            if (ParseGuideObject(command, stream, object)) {
+                object.layer = currentLayer;
+                level.guideObjects.push_back(object);
+            }
+        }
     }
 
     return level;
@@ -467,29 +732,39 @@ std::vector<Rectangle> BuildSolids(const Level& level) {
         for (Rectangle platform : level.pitPlatforms) {
             solids.push_back(platform);
         }
+        for (const ButtonPlatformLink& link : level.buttonPlatformLinks) {
+            if (link.active) {
+                solids.push_back(link.platform);
+            }
+        }
+        for (const ButtonPlatformLoop& loop : level.buttonPlatformLoops) {
+            if (!loop.active) continue;
+            solids.insert(solids.end(), loop.platforms.begin(), loop.platforms.end());
+        }
     }
 
     if (level.spikeHazard.width > 0.0f && level.spikeHazard.height > 0.0f) {
         float spikeBottom = level.spikeHazard.y + level.spikeHazard.height;
+        float pitTopY = level.script == LevelScript::FloodedFoundry ? 672.0f : level.spikePitTopY;
         solids.push_back({
             level.spikeHazard.x,
             spikeBottom,
             level.spikeHazard.width,
-            static_cast<float>(Constants::ScreenHeight) - spikeBottom
+            level.worldBounds.y + level.worldBounds.height - spikeBottom
         });
         // DrawTilesetPitWalls renders these two masonry strips immediately
         // outside the hazard bounds. Keep physics on those exact pixels too.
         solids.push_back({
             level.spikeHazard.x - PitWallSize,
-            PitTopY,
+            pitTopY,
             PitWallSize,
-            static_cast<float>(Constants::ScreenHeight) - PitTopY
+            level.worldBounds.y + level.worldBounds.height - pitTopY
         });
         solids.push_back({
             level.spikeHazard.x + level.spikeHazard.width,
-            PitTopY,
+            pitTopY,
             PitWallSize,
-            static_cast<float>(Constants::ScreenHeight) - PitTopY
+            level.worldBounds.y + level.worldBounds.height - pitTopY
         });
     }
 
@@ -499,5 +774,88 @@ std::vector<Rectangle> BuildSolids(const Level& level) {
         }
     }
 
+    AppendGuideObjectSolids(solids, level.guideObjects);
+
     return solids;
+}
+
+Vector2 GetButtonPlatformLoopPoint(const ButtonPlatformLoop& loop, float progress) {
+    progress = fmodf(progress, 1.0f);
+    if (progress < 0.0f) progress += 1.0f;
+
+    const float capRadius = fminf(loop.radius.x, loop.radius.y);
+    const float straightHalfLength = fmaxf(0.0f, loop.radius.y - capRadius);
+    const float straightLength = straightHalfLength * 2.0f;
+    const float arcLength = PI * capRadius;
+    const float perimeter = straightLength * 2.0f + arcLength * 2.0f;
+    if (perimeter <= 0.001f) return loop.center;
+
+    // Begin at the middle of the right-hand straight, matching the old loop's
+    // phase-zero position, then travel clockwise around the capsule.
+    float distance = fmodf(progress * perimeter + straightHalfLength, perimeter);
+    if (distance < straightLength) {
+        return {
+            loop.center.x + capRadius,
+            loop.center.y - straightHalfLength + distance
+        };
+    }
+    distance -= straightLength;
+
+    if (distance < arcLength) {
+        const float angle = distance / capRadius;
+        return {
+            loop.center.x + cosf(angle) * capRadius,
+            loop.center.y + straightHalfLength + sinf(angle) * capRadius
+        };
+    }
+    distance -= arcLength;
+
+    if (distance < straightLength) {
+        return {
+            loop.center.x - capRadius,
+            loop.center.y + straightHalfLength - distance
+        };
+    }
+    distance -= straightLength;
+
+    const float angle = PI + distance / capRadius;
+    return {
+        loop.center.x + cosf(angle) * capRadius,
+        loop.center.y - straightHalfLength + sinf(angle) * capRadius
+    };
+}
+
+void UpdateButtonPlatformLoopPositions(ButtonPlatformLoop& loop) {
+    loop.platforms.resize(loop.platformCount);
+    for (int index = 0; index < loop.platformCount; ++index) {
+        const float progress =
+            loop.phase / 360.0f +
+            static_cast<float>(index) / static_cast<float>(loop.platformCount);
+        const Vector2 platformCenter = GetButtonPlatformLoopPoint(loop, progress);
+        loop.platforms[index] = {
+            platformCenter.x - loop.platformSize.x * 0.5f,
+            platformCenter.y - loop.platformSize.y * 0.5f,
+            loop.platformSize.x,
+            loop.platformSize.y
+        };
+    }
+}
+
+void UpdatePlatformLoopButtonPositions(Level& level) {
+    for (const PlatformLoopButtonLink& link : level.platformLoopButtonLinks) {
+        if (link.buttonIndex < 0 || link.buttonIndex >= static_cast<int>(level.buttons.size()) ||
+            link.loopIndex < 0 || link.loopIndex >= static_cast<int>(level.buttonPlatformLoops.size())) {
+            continue;
+        }
+        const ButtonPlatformLoop& loop = level.buttonPlatformLoops[link.loopIndex];
+        if (link.platformIndex < 0 || link.platformIndex >= static_cast<int>(loop.platforms.size())) {
+            continue;
+        }
+        Button& button = level.buttons[link.buttonIndex];
+        const Rectangle platform = loop.platforms[link.platformIndex];
+        button.rect.x = platform.x + (platform.width - button.rect.width) * 0.5f;
+        // Sink the trigger slightly into the platform so a standing player's
+        // feet overlap it after collision resolution.
+        button.rect.y = platform.y - button.rect.height + 4.0f;
+    }
 }

@@ -13,12 +13,17 @@ The game is organized around reusable parts rather than one-off level scripts. T
 - `src/Render.*` owns drawing helpers for machines, hazards, the player, and environment pieces.
 - `src/DevConsole.*` owns the in-game command console input, output history, and overlay rendering.
 - `src/MathUtils.*` owns small shared math helpers.
+- `src/Achievement.*` owns persistent achievement definitions, unlock state, and notification toasts.
 - `src/Constants.h` owns tuning values shared across systems.
 - `prototypes/main_0.cpp` preserves the old raylib alignment prototype outside the active build.
 - `assets/first_party` contains art, audio, and source files created by the project team.
 - `assets/third_party` contains vendor assets kept separate by vendor and pack.
 - `assets/generated` contains generated atlases, conversions, and temporary pipeline outputs.
 - `game_data` contains level, campaign, and other data files.
+
+Levels declare world-space bounds independently of the 1600x900 virtual
+screen. Gameplay uses a smooth player-follow camera clamped to those bounds;
+screen-sized legacy levels remain centered with an identity-equivalent view.
 
 ## Reusable Machine Parts
 
@@ -50,6 +55,7 @@ Initial commands:
 - `power <0..1>`
 - `player`
 - `machine`
+- `achievements [list|unlock <id>|reset]`
 
 ## Game Modes
 

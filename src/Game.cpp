@@ -8,8 +8,11 @@
 #include "Render.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
+#include <initializer_list>
+#include <iterator>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -26,6 +29,451 @@ namespace {
         int height;
         const char* label;
     };
+
+    std::array<DirectionalSpikeHazard, 2> GetPlatformSideSpikes(Rectangle platform) {
+        constexpr float SpikeDepth = 12.0f;
+        return {
+            DirectionalSpikeHazard{
+                {platform.x - SpikeDepth, platform.y, SpikeDepth, platform.height},
+                SpikeDirection::Left
+            },
+            DirectionalSpikeHazard{
+                {platform.x + platform.width, platform.y, SpikeDepth, platform.height},
+                SpikeDirection::Right
+            }
+        };
+    }
+
+    bool IsPlayerRunningIntoPlatformSpikes(
+        const Player& player,
+        const DirectionalSpikeHazard& hazard
+    ) {
+        if (hazard.direction != SpikeDirection::Left &&
+            hazard.direction != SpikeDirection::Right) {
+            return false;
+        }
+
+        // Ignore the player's head and feet so landing on the platform or
+        // striking its underside cannot be mistaken for a side impact.
+        constexpr float VerticalInset = 6.0f;
+        const Rectangle bodyCore{
+            player.rect.x,
+            player.rect.y + VerticalInset,
+            player.rect.width,
+            fmaxf(1.0f, player.rect.height - VerticalInset * 2.0f)
+        };
+        if (!CheckCollisionRecs(bodyCore, hazard.rect)) {
+            return false;
+        }
+
+        constexpr float MinimumImpactSpeed = 20.0f;
+        const float playerCenterX = player.rect.x + player.rect.width * 0.5f;
+        const float hazardCenterX = hazard.rect.x + hazard.rect.width * 0.5f;
+        if (hazard.direction == SpikeDirection::Left) {
+            return player.velocity.x > MinimumImpactSpeed &&
+                playerCenterX <= hazardCenterX;
+        }
+        return player.velocity.x < -MinimumImpactSpeed &&
+            playerCenterX >= hazardCenterX;
+    }
+
+    bool IsPlayerStandingOnMovingPlatform(const Player& player, Rectangle platform) {
+        const float overlapLeft = fmaxf(player.rect.x, platform.x);
+        const float overlapRight = fminf(
+            player.rect.x + player.rect.width,
+            platform.x + platform.width
+        );
+        if (overlapRight - overlapLeft < 4.0f) return false;
+
+        const float footY = player.rect.y + player.rect.height;
+        return player.velocity.y >= -1.0f &&
+            footY >= platform.y - 5.0f &&
+            footY <= platform.y + 7.0f;
+    }
+
+    bool IsBoulderStandingOnMovingPlatform(const Boulder& boulder, Rectangle platform) {
+        const float footY = boulder.center.y + boulder.radius;
+        return boulder.velocity.y >= -1.0f &&
+            boulder.center.x >= platform.x - boulder.radius * 0.25f &&
+            boulder.center.x <= platform.x + platform.width + boulder.radius * 0.25f &&
+            footY >= platform.y - 5.0f &&
+            footY <= platform.y + 7.0f;
+    }
+
+    void AdvanceButtonPlatformLoops(
+        Level& level,
+        float dt,
+        const std::array<Player*, 4>& players
+    ) {
+        std::array<bool, 4> carriedPlayers{};
+        std::vector<bool> carriedBoulders(level.boulders.size(), false);
+
+        for (ButtonPlatformLoop& loop : level.buttonPlatformLoops) {
+            loop.active = loop.buttonIndex < 0 ||
+                (loop.buttonIndex < static_cast<int>(level.buttons.size()) &&
+                    level.buttons[loop.buttonIndex].pressed);
+            if (!loop.active) continue;
+
+            const std::vector<Rectangle> previousPlatforms = loop.platforms;
+            loop.phase = fmodf(loop.phase + loop.speed * dt, 360.0f);
+            UpdateButtonPlatformLoopPositions(loop);
+
+            const int platformCount = std::min(
+                static_cast<int>(previousPlatforms.size()),
+                static_cast<int>(loop.platforms.size())
+            );
+            for (int platformIndex = 0; platformIndex < platformCount; ++platformIndex) {
+                const Rectangle previous = previousPlatforms[platformIndex];
+                const Rectangle current = loop.platforms[platformIndex];
+                const Vector2 displacement{
+                    current.x - previous.x,
+                    current.y - previous.y
+                };
+
+                for (int playerIndex = 0; playerIndex < static_cast<int>(players.size()); ++playerIndex) {
+                    Player* activePlayer = players[playerIndex];
+                    if (activePlayer == nullptr) continue;
+
+                    if (!carriedPlayers[playerIndex] &&
+                        IsPlayerStandingOnMovingPlatform(*activePlayer, previous)) {
+                        activePlayer->rect.x += displacement.x;
+                        activePlayer->rect.y += displacement.y;
+                        activePlayer->onGround = true;
+                        carriedPlayers[playerIndex] = true;
+                        continue;
+                    }
+
+                    // A platform can move into an otherwise stationary player.
+                    // Resolve that intrusion using the platform's movement,
+                    // because the player's own zero velocity gives the regular
+                    // axis solver no direction from which to separate them.
+                    if (CheckCollisionRecs(activePlayer->rect, current) &&
+                        !CheckCollisionRecs(activePlayer->rect, previous)) {
+                        if (fabsf(displacement.x) >= fabsf(displacement.y)) {
+                            activePlayer->rect.x = displacement.x >= 0.0f
+                                ? current.x + current.width
+                                : current.x - activePlayer->rect.width;
+                        }
+                        else if (displacement.y < 0.0f) {
+                            activePlayer->rect.y = current.y - activePlayer->rect.height;
+                            activePlayer->onGround = true;
+                        }
+                        else {
+                            activePlayer->rect.y = current.y + current.height;
+                        }
+                    }
+                }
+
+                for (int boulderIndex = 0;
+                     boulderIndex < static_cast<int>(level.boulders.size());
+                     ++boulderIndex) {
+                    Boulder& boulder = level.boulders[boulderIndex];
+                    if (carriedBoulders[boulderIndex] ||
+                        !IsBoulderStandingOnMovingPlatform(boulder, previous)) {
+                        continue;
+                    }
+                    boulder.center.x += displacement.x;
+                    boulder.center.y += displacement.y;
+                    boulder.onGround = true;
+                    carriedBoulders[boulderIndex] = true;
+                }
+            }
+        }
+
+        UpdatePlatformLoopButtonPositions(level);
+    }
+
+    void DrawPlatformRailTrack(const ButtonPlatformLoop& loop) {
+        constexpr int SegmentCount = 72;
+        const Color railEdge{39, 52, 61, 255};
+        const Color railSurface{126, 157, 171, 255};
+        const Color tieColor{78, 96, 104, 255};
+
+        const auto railPointsAt = [&](int segment) {
+            const float progress =
+                static_cast<float>(segment) / static_cast<float>(SegmentCount);
+            const Vector2 centerPoint = GetButtonPlatformLoopPoint(loop, progress);
+            const Vector2 nextPoint = GetButtonPlatformLoopPoint(
+                loop,
+                progress + 0.001f
+            );
+            Vector2 tangent{
+                nextPoint.x - centerPoint.x,
+                nextPoint.y - centerPoint.y
+            };
+            const float tangentLength = fmaxf(0.001f, hypotf(tangent.x, tangent.y));
+            const Vector2 normal{
+                tangent.y / tangentLength,
+                -tangent.x / tangentLength
+            };
+            return std::array<Vector2, 2>{
+                Vector2{centerPoint.x + normal.x * 6.0f, centerPoint.y + normal.y * 6.0f},
+                Vector2{centerPoint.x - normal.x * 6.0f, centerPoint.y - normal.y * 6.0f}
+            };
+        };
+
+        // Two fixed steel rails follow a capsule-shaped route: straight sides
+        // joined by semicircular end caps. The track has no moving tread.
+        for (int segment = 0; segment < SegmentCount; ++segment) {
+            const auto start = railPointsAt(segment);
+            const auto end = railPointsAt(segment + 1);
+            for (int rail = 0; rail < 2; ++rail) {
+                DrawLineEx(start[rail], end[rail], 5.0f, railEdge);
+                DrawLineEx(start[rail], end[rail], 2.2f, railSurface);
+            }
+            if (segment % 6 == 0) {
+                DrawLineEx(start[0], start[1], 3.0f, tieColor);
+            }
+        }
+    }
+
+    void DrawElectricalWire(
+        std::initializer_list<Vector2> points,
+        float thickness,
+        Color wireColor,
+        bool active
+    ) {
+        if (points.size() < 2) return;
+
+        auto previous = points.begin();
+        for (auto point = std::next(previous); point != points.end(); ++point) {
+            DrawLineEx(*previous, *point, thickness, wireColor);
+            previous = point;
+        }
+
+        if (!active) return;
+
+        float wireLength = 0.0f;
+        previous = points.begin();
+        for (auto point = std::next(previous); point != points.end(); ++point) {
+            wireLength += hypotf(point->x - previous->x, point->y - previous->y);
+            previous = point;
+        }
+        if (wireLength <= 0.0f) return;
+
+        constexpr float DotSpacing = 30.0f;
+        constexpr float DotSpeed = 72.0f;
+        const float firstDotDistance =
+            fmodf(static_cast<float>(GetTime()) * DotSpeed, DotSpacing);
+
+        for (float dotDistance = firstDotDistance;
+             dotDistance <= wireLength;
+             dotDistance += DotSpacing) {
+            float traversed = 0.0f;
+            previous = points.begin();
+            for (auto point = std::next(previous); point != points.end(); ++point) {
+                const float segmentLength =
+                    hypotf(point->x - previous->x, point->y - previous->y);
+                if (dotDistance <= traversed + segmentLength && segmentLength > 0.0f) {
+                    const float segmentProgress =
+                        (dotDistance - traversed) / segmentLength;
+                    const Vector2 position{
+                        previous->x + (point->x - previous->x) * segmentProgress,
+                        previous->y + (point->y - previous->y) * segmentProgress
+                    };
+                    // Keep energized current visually distinct from the blue
+                    // insulation, regardless of which circuit is carrying it.
+                    DrawCircleV(position, 4.2f, Fade(YELLOW, 0.32f));
+                    DrawCircleV(position, 2.2f, YELLOW);
+                    break;
+                }
+                traversed += segmentLength;
+                previous = point;
+            }
+        }
+    }
+
+    void DrawPortalLiftWiring(const Level& level) {
+        if (level.script != LevelScript::PortalLift || level.buttons.empty() ||
+            level.buttonPlatformLoops.empty()) {
+            return;
+        }
+
+        const ButtonPlatformLoop& loop = level.buttonPlatformLoops.front();
+        const Vector2 trackJunction{
+            loop.center.x + loop.radius.x + 8.0f,
+            loop.center.y
+        };
+        const Button& lightButton = level.buttons.front();
+        const Vector2 lightButtonCenter{
+            lightButton.rect.x + lightButton.rect.width * 0.5f,
+            lightButton.rect.y + lightButton.rect.height * 0.5f
+        };
+        const Color lightWireColor =
+            lightButton.pressed ? SKYBLUE : Fade(DARKBLUE, 0.65f);
+        const Rectangle chamber = level.darknessAreas.empty()
+            ? Rectangle{
+                loop.center.x - loop.radius.x - 24.0f,
+                level.worldBounds.y,
+                loop.radius.x * 2.0f + 48.0f,
+                level.worldBounds.height
+            }
+            : level.darknessAreas.front();
+        const float machineRiserX = chamber.x + chamber.width + 24.0f;
+        const float lowerBusY = level.worldBounds.y + level.worldBounds.height - 40.0f;
+        const float exitUnderShelfY = 690.0f;
+        float buttonServiceX = 1060.0f;
+        if (!level.ramps.empty()) {
+            const Ramp& arrivalRamp = level.ramps.front();
+            const float angle = arrivalRamp.angle * DEG2RAD;
+            const float rampHalfWidth =
+                fabsf(cosf(angle)) * arrivalRamp.length * 0.5f +
+                fabsf(sinf(angle)) * arrivalRamp.thickness * 0.5f;
+            buttonServiceX = arrivalRamp.center.x + rampHalfWidth + 18.0f;
+        }
+        const Vector2 lampConnection{
+            loop.center.x + 15.0f,
+            chamber.y + 32.0f
+        };
+        const Vector2 lampApproach{
+            lampConnection.x + 18.0f,
+            lampConnection.y + 58.0f
+        };
+
+        // Circuit one is completely independent. It leaves the landing above
+        // the catch-basin floor, passes beneath the ramp, then rises from below
+        // and enters the right side of the lamp's junction box.
+        DrawElectricalWire(
+            {
+                lightButtonCenter,
+                {buttonServiceX, lightButtonCenter.y},
+                {buttonServiceX, 390.0f},
+                {machineRiserX, 390.0f},
+                {machineRiserX, lampApproach.y},
+                lampApproach,
+                {lampApproach.x, lampConnection.y},
+                lampConnection
+            },
+            3.0f,
+            lightWireColor,
+            lightButton.pressed
+        );
+
+        const auto buttonLatched = [&](int buttonIndex) {
+            return std::any_of(
+                level.platformLoopButtonLinks.begin(),
+                level.platformLoopButtonLinks.end(),
+                [&](const PlatformLoopButtonLink& link) {
+                    return link.buttonIndex == buttonIndex && link.activated;
+                }
+            );
+        };
+        for (const ButtonFanLink& link : level.buttonFanLinks) {
+            if (link.fanIndex < 0 || link.fanIndex >= static_cast<int>(level.fans.size())) continue;
+            const bool powered = buttonLatched(link.buttonIndex);
+            const Color circuitColor = powered ? SKYBLUE : Fade(DARKBLUE, 0.65f);
+            const Vector2 fanCenter = level.fans[link.fanIndex].center;
+
+            // Circuit two begins at the rail junction, where the moving button
+            // latches the fan and exit systems. It remains physically separate
+            // from the lighting circuit above.
+            DrawElectricalWire(
+                {
+                    trackJunction,
+                    {machineRiserX, trackJunction.y},
+                    {machineRiserX, lowerBusY},
+                    {fanCenter.x, lowerBusY},
+                    fanCenter
+                },
+                4.0f,
+                circuitColor,
+                powered
+            );
+            if (level.buttonExitLink.buttonIndex == link.buttonIndex &&
+                level.exitTrigger.width > 0.0f && level.exitTrigger.height > 0.0f) {
+                const Vector2 exitConnection{
+                    level.exitTrigger.x,
+                    level.exitTrigger.y + 35.0f
+                };
+                DrawElectricalWire(
+                    {
+                        trackJunction,
+                        {machineRiserX, trackJunction.y},
+                        {machineRiserX, exitUnderShelfY},
+                        {exitConnection.x, exitUnderShelfY},
+                        exitConnection
+                    },
+                    3.0f,
+                    circuitColor,
+                    powered
+                );
+            }
+        }
+    }
+
+    void DrawPortalLiftChamberLamp(const Level& level, float power) {
+        if (level.script != LevelScript::PortalLift || level.darknessAreas.empty()) return;
+
+        const Rectangle chamber = level.darknessAreas.front();
+        const float centerX = level.buttonPlatformLoops.empty()
+            ? chamber.x + chamber.width * 0.5f
+            : level.buttonPlatformLoops.front().center.x;
+        const float ceilingBottom = chamber.y;
+        const float lightAmount = Clamp01(power);
+        if (lightAmount <= 0.02f) return;
+
+        const float housingTop = ceilingBottom + 31.0f;
+        const float shadeBottom = housingTop + 22.0f;
+        const float bulbY = shadeBottom + 8.0f;
+        const Color mountingSteel{55, 69, 76, 255};
+        const Color steelEdge{21, 29, 34, 255};
+        const Color steelHighlight{132, 158, 166, 255};
+        const Color warmLight{255, 226, 116, 255};
+
+        // A ceiling conduit, bolted junction box, and heavy pressed-steel shade
+        // give the chamber light an industrial silhouette without a cage.
+        DrawRectangleRec(
+            {centerX - 4.0f, ceilingBottom, 8.0f, housingTop - ceilingBottom},
+            mountingSteel
+        );
+        DrawRectangleLinesEx(
+            {centerX - 4.0f, ceilingBottom, 8.0f, housingTop - ceilingBottom},
+            2.0f,
+            steelEdge
+        );
+        Rectangle junctionBox{centerX - 15.0f, housingTop - 8.0f, 30.0f, 18.0f};
+        DrawRectangleRec(junctionBox, mountingSteel);
+        DrawRectangleLinesEx(junctionBox, 3.0f, steelEdge);
+        DrawCircleV({junctionBox.x + 5.0f, junctionBox.y + 5.0f}, 2.0f, steelHighlight);
+        DrawCircleV(
+            {junctionBox.x + junctionBox.width - 5.0f, junctionBox.y + 5.0f},
+            2.0f,
+            steelHighlight
+        );
+
+        DrawTriangle(
+            {centerX - 28.0f, shadeBottom},
+            {centerX + 28.0f, shadeBottom},
+            {centerX, housingTop + 4.0f},
+            mountingSteel
+        );
+        DrawLineEx(
+            {centerX - 28.0f, shadeBottom},
+            {centerX + 28.0f, shadeBottom},
+            5.0f,
+            steelEdge
+        );
+        DrawLineEx(
+            {centerX - 19.0f, shadeBottom - 4.0f},
+            {centerX + 19.0f, shadeBottom - 4.0f},
+            2.0f,
+            steelHighlight
+        );
+
+        DrawCircleV({centerX, bulbY}, 10.0f, warmLight);
+        DrawCircleV(
+            {centerX, bulbY},
+            19.0f,
+            Fade(warmLight, 0.32f * lightAmount)
+        );
+
+        DrawTriangle(
+            {centerX - 88.0f, chamber.y + chamber.height},
+            {centerX + 88.0f, chamber.y + chamber.height},
+            {centerX, bulbY + 10.0f},
+            Fade(warmLight, lightAmount * 0.12f)
+        );
+    }
 
     constexpr ResolutionPreset kResolutionPresets[] = {
         {1024, 576, "1024x576"},
@@ -48,6 +496,13 @@ namespace {
     constexpr int kFrameRateCount = static_cast<int>(sizeof(kFrameRateValues) / sizeof(kFrameRateValues[0]));
     constexpr int kUiScaleCount = static_cast<int>(sizeof(kUiScaleValues) / sizeof(kUiScaleValues[0]));
     constexpr int kSettingsControlCount = 8;
+    constexpr int kCharacterCount = 4;
+    constexpr const char* kCharacterNames[kCharacterCount] = {
+        "Character 1", "Character 2", "Character 3", "Character 4"
+    };
+    constexpr Color kPlayerSelectColors[4] = {
+        ORANGE, SKYBLUE, LIME, VIOLET
+    };
 
     bool gPixelPerfectScaling = true;
     float gUiScale = 1.0f;
@@ -55,14 +510,17 @@ namespace {
     struct SettingsMenuLayout {
         Rectangle panel;
         std::array<Rectangle, 4> tabs;
+        std::array<Rectangle, 4> playerTabs;
+        std::array<Rectangle, 2> inputTabs;
         std::array<Rectangle, kSettingsControlCount> controls;
+        std::array<Rectangle, kSettingsControlCount> controlRows;
         Rectangle applyButton;
         Rectangle closeButton;
     };
 
     struct DropdownLayout {
         Rectangle panel;
-        std::array<Rectangle, kResolutionPresetCount> options;
+        std::vector<Rectangle> options;
     };
 
     SettingsMenuLayout GetSettingsMenuLayout() {
@@ -90,6 +548,20 @@ namespace {
                 tabWidth,
                 tabHeight
             };
+            layout.playerTabs[i] = {
+                panelX + panelPadding + i * (tabWidth + tabGap),
+                panelY + 110.0f,
+                tabWidth,
+                30.0f
+            };
+        }
+        for (int i = 0; i < static_cast<int>(layout.inputTabs.size()); ++i) {
+            layout.inputTabs[i] = {
+                panelX + panelPadding + i * (controlWidth + controlGap),
+                panelY + 146.0f,
+                controlWidth,
+                30.0f
+            };
         }
         for (int i = 0; i < kSettingsControlCount; ++i) {
             const int column = i % 2;
@@ -97,6 +569,12 @@ namespace {
             layout.controls[i] = {
                 panelX + panelPadding + column * (controlWidth + controlGap),
                 panelY + 122.0f + row * (controlHeight + rowGap),
+                controlWidth,
+                controlHeight
+            };
+            layout.controlRows[i] = {
+                panelX + panelPadding + column * (controlWidth + controlGap),
+                panelY + 184.0f + row * (controlHeight + rowGap),
                 controlWidth,
                 controlHeight
             };
@@ -110,15 +588,18 @@ namespace {
         constexpr float padding = 6.0f;
         constexpr float gap = 4.0f;
         constexpr float optionHeight = 34.0f;
+        optionCount = std::max(0, optionCount);
+        columns = std::max(1, columns);
         const int rows = (optionCount + columns - 1) / columns;
         const float optionWidth = (anchor.width - padding * 2.0f - gap * (columns - 1)) / columns;
 
         DropdownLayout layout{};
+        layout.options.resize(optionCount);
         layout.panel = {
             anchor.x,
             anchor.y + anchor.height + 4.0f,
             anchor.width,
-            padding * 2.0f + rows * optionHeight + (rows - 1) * gap
+            padding * 2.0f + rows * optionHeight + std::max(0, rows - 1) * gap
         };
         for (int i = 0; i < optionCount; ++i) {
             const int column = i % columns;
@@ -175,11 +656,18 @@ namespace {
         return CheckCollisionRecs(a, expanded);
     }
 
-    std::string GetInteractPrompt(bool player1Near, bool player2Near, bool player3Near, const char* action) {
+    std::string GetInteractPrompt(
+        bool player1Near,
+        bool player2Near,
+        bool player3Near,
+        bool player4Near,
+        const char* action
+    ) {
         std::string keys;
         if (player1Near) keys = "E";
         if (player2Near) keys += keys.empty() ? "U" : " / U";
         if (player3Near) keys += keys.empty() ? "Right Ctrl" : " / Right Ctrl";
+        if (player4Near) keys += keys.empty() ? "Numpad 0" : " / Numpad 0";
         std::string prompt = action;
         if (!prompt.empty()) prompt += " ";
         return prompt + (keys.empty() ? "E" : keys);
@@ -263,6 +751,117 @@ namespace {
         return enabled ? "On" : "Off";
     }
 
+    std::string KeyLabel(KeyboardKey key) {
+        if (key >= KEY_A && key <= KEY_Z) {
+            return std::string(1, static_cast<char>('A' + key - KEY_A));
+        }
+        if (key >= KEY_ZERO && key <= KEY_NINE) {
+            return std::string(1, static_cast<char>('0' + key - KEY_ZERO));
+        }
+        if (key >= KEY_F1 && key <= KEY_F12) {
+            return "F" + std::to_string(key - KEY_F1 + 1);
+        }
+        if (key >= KEY_KP_0 && key <= KEY_KP_9) {
+            return "Numpad " + std::to_string(key - KEY_KP_0);
+        }
+
+        switch (key) {
+        case KEY_NULL: return "Unbound";
+        case KEY_SPACE: return "Space";
+        case KEY_ESCAPE: return "Escape";
+        case KEY_ENTER: return "Enter";
+        case KEY_TAB: return "Tab";
+        case KEY_BACKSPACE: return "Backspace";
+        case KEY_INSERT: return "Insert";
+        case KEY_DELETE: return "Delete";
+        case KEY_RIGHT: return "Right";
+        case KEY_LEFT: return "Left";
+        case KEY_DOWN: return "Down";
+        case KEY_UP: return "Up";
+        case KEY_PAGE_UP: return "Page Up";
+        case KEY_PAGE_DOWN: return "Page Down";
+        case KEY_HOME: return "Home";
+        case KEY_END: return "End";
+        case KEY_CAPS_LOCK: return "Caps Lock";
+        case KEY_SCROLL_LOCK: return "Scroll Lock";
+        case KEY_NUM_LOCK: return "Num Lock";
+        case KEY_PRINT_SCREEN: return "Print Screen";
+        case KEY_PAUSE: return "Pause";
+        case KEY_LEFT_SHIFT: return "Left Shift";
+        case KEY_LEFT_CONTROL: return "Left Ctrl";
+        case KEY_LEFT_ALT: return "Left Alt";
+        case KEY_LEFT_SUPER: return "Left Super";
+        case KEY_RIGHT_SHIFT: return "Right Shift";
+        case KEY_RIGHT_CONTROL: return "Right Ctrl";
+        case KEY_RIGHT_ALT: return "Right Alt";
+        case KEY_RIGHT_SUPER: return "Right Super";
+        case KEY_MENU: return "Menu";
+        case KEY_APOSTROPHE: return "Apostrophe";
+        case KEY_COMMA: return "Comma";
+        case KEY_MINUS: return "Minus";
+        case KEY_PERIOD: return "Period";
+        case KEY_SLASH: return "Slash";
+        case KEY_SEMICOLON: return "Semicolon";
+        case KEY_EQUAL: return "Equals";
+        case KEY_LEFT_BRACKET: return "Left Bracket";
+        case KEY_BACKSLASH: return "Backslash";
+        case KEY_RIGHT_BRACKET: return "Right Bracket";
+        case KEY_GRAVE: return "Grave";
+        case KEY_KP_DECIMAL: return "Numpad Decimal";
+        case KEY_KP_DIVIDE: return "Numpad Divide";
+        case KEY_KP_MULTIPLY: return "Numpad Multiply";
+        case KEY_KP_SUBTRACT: return "Numpad Subtract";
+        case KEY_KP_ADD: return "Numpad Add";
+        case KEY_KP_ENTER: return "Numpad Enter";
+        case KEY_KP_EQUAL: return "Numpad Equals";
+        default: return "Key " + std::to_string(static_cast<int>(key));
+        }
+    }
+
+    const char* GamepadButtonLabel(GamepadButton button) {
+        switch (button) {
+        case GAMEPAD_BUTTON_RIGHT_FACE_UP: return "Y / Triangle";
+        case GAMEPAD_BUTTON_RIGHT_FACE_RIGHT: return "B / Circle";
+        case GAMEPAD_BUTTON_RIGHT_FACE_DOWN: return "A / Cross";
+        case GAMEPAD_BUTTON_RIGHT_FACE_LEFT: return "X / Square";
+        case GAMEPAD_BUTTON_LEFT_TRIGGER_1: return "Left Bumper";
+        case GAMEPAD_BUTTON_LEFT_TRIGGER_2: return "Left Trigger";
+        case GAMEPAD_BUTTON_RIGHT_TRIGGER_1: return "Right Bumper";
+        case GAMEPAD_BUTTON_RIGHT_TRIGGER_2: return "Right Trigger";
+        case GAMEPAD_BUTTON_MIDDLE_LEFT: return "Back / Select";
+        case GAMEPAD_BUTTON_MIDDLE: return "Guide";
+        case GAMEPAD_BUTTON_MIDDLE_RIGHT: return "Start";
+        case GAMEPAD_BUTTON_LEFT_THUMB: return "Left Stick";
+        case GAMEPAD_BUTTON_RIGHT_THUMB: return "Right Stick";
+        default: return "Unbound";
+        }
+    }
+
+    std::string ControllerDeviceLabel(int gamepad) {
+        if (gamepad < 0) return "Not Assigned";
+        return "Controller " + std::to_string(gamepad + 1);
+    }
+
+    int AvailableGamepad(const PlayerControllerSettings& settings) {
+        return settings.gamepad >= 0 && settings.gamepad < 4 && IsGamepadAvailable(settings.gamepad)
+            ? settings.gamepad
+            : -1;
+    }
+
+    constexpr std::array<GamepadButton, 11> kBindableGamepadButtons{{
+        GAMEPAD_BUTTON_RIGHT_FACE_UP,
+        GAMEPAD_BUTTON_RIGHT_FACE_RIGHT,
+        GAMEPAD_BUTTON_RIGHT_FACE_DOWN,
+        GAMEPAD_BUTTON_RIGHT_FACE_LEFT,
+        GAMEPAD_BUTTON_LEFT_TRIGGER_1,
+        GAMEPAD_BUTTON_LEFT_TRIGGER_2,
+        GAMEPAD_BUTTON_RIGHT_TRIGGER_1,
+        GAMEPAD_BUTTON_RIGHT_TRIGGER_2,
+        GAMEPAD_BUTTON_MIDDLE_LEFT,
+        GAMEPAD_BUTTON_LEFT_THUMB,
+        GAMEPAD_BUTTON_RIGHT_THUMB
+    }};
+
     Color AccessibleDangerColor(ColorblindSetting setting) {
         switch (setting) {
         case ColorblindSetting::Protanopia: return Color{62, 174, 255, 255};
@@ -309,6 +908,165 @@ namespace {
         if (!line.empty() && y + fontSize <= maxY) {
             DrawText(line.c_str(), static_cast<int>(bounds.x), y, fontSize, color);
         }
+    }
+
+    struct HoveredObject {
+        const char* name{nullptr};
+        const char* description{nullptr};
+        float score{INFINITY};
+    };
+
+    Rectangle ExpandedHoverBounds(Rectangle bounds) {
+        constexpr float minimumSize = 20.0f;
+        if (bounds.width < minimumSize) {
+            bounds.x -= (minimumSize - bounds.width) * 0.5f;
+            bounds.width = minimumSize;
+        }
+        if (bounds.height < minimumSize) {
+            bounds.y -= (minimumSize - bounds.height) * 0.5f;
+            bounds.height = minimumSize;
+        }
+        return bounds;
+    }
+
+    Rectangle RotatedObjectBounds(Vector2 center, float length, float thickness, float angleDegrees) {
+        float angle = angleDegrees * DEG2RAD;
+        float cosine = fabsf(cosf(angle));
+        float sine = fabsf(sinf(angle));
+        float width = cosine * length + sine * thickness;
+        float height = sine * length + cosine * thickness;
+        return {center.x - width * 0.5f, center.y - height * 0.5f, width, height};
+    }
+
+    float PointSegmentDistanceSquared(Vector2 point, Vector2 start, Vector2 end) {
+        Vector2 segment{end.x - start.x, end.y - start.y};
+        float lengthSquared = segment.x * segment.x + segment.y * segment.y;
+        if (lengthSquared <= 0.0001f) {
+            float dx = point.x - start.x;
+            float dy = point.y - start.y;
+            return dx * dx + dy * dy;
+        }
+        float amount = ((point.x - start.x) * segment.x + (point.y - start.y) * segment.y) / lengthSquared;
+        amount = std::clamp(amount, 0.0f, 1.0f);
+        float dx = point.x - (start.x + segment.x * amount);
+        float dy = point.y - (start.y + segment.y * amount);
+        return dx * dx + dy * dy;
+    }
+
+    bool IsPointNearPolyline(Vector2 point, const std::vector<Vector2>& points, float radius) {
+        if (points.empty()) return false;
+        if (points.size() == 1) return PointSegmentDistanceSquared(point, points.front(), points.front()) <= radius * radius;
+        for (size_t i = 1; i < points.size(); ++i) {
+            if (PointSegmentDistanceSquared(point, points[i - 1], points[i]) <= radius * radius) return true;
+        }
+        return false;
+    }
+
+    void DrawHoveredObjectTooltip(const Level& currentLevel, Camera2D camera) {
+        Vector2 mouseScreen = GetUiMousePosition();
+        Vector2 mouseWorld = GetScreenToWorld2D(mouseScreen, camera);
+        HoveredObject hovered{};
+
+        auto consider = [&](Rectangle rawBounds, const char* name, const char* description, float scoreScale = 1.0f) {
+            Rectangle bounds = ExpandedHoverBounds(rawBounds);
+            if (!CheckCollisionPointRec(mouseWorld, bounds)) return;
+            float score = fmaxf(1.0f, bounds.width * bounds.height) * scoreScale;
+            if (score < hovered.score) hovered = {name, description, score};
+        };
+        auto considerCircle = [&](Vector2 center, float radius, const char* name, const char* description) {
+            float hitRadius = fmaxf(radius, 10.0f);
+            float dx = mouseWorld.x - center.x;
+            float dy = mouseWorld.y - center.y;
+            if (dx * dx + dy * dy <= hitRadius * hitRadius) {
+                float score = PI * hitRadius * hitRadius;
+                if (score < hovered.score) hovered = {name, description, score};
+            }
+        };
+
+        for (const GuideObject& object : currentLevel.guideObjects) {
+            if (!object.active || object.collected) continue;
+            Rectangle bounds = GetGuideObjectBounds(object);
+            if (object.type == GuideObjectType::RocketThruster || object.type == GuideObjectType::SteamVent) {
+                Vector2 visualCenter{
+                    object.transform.position.x - object.direction.x * 20.0f,
+                    object.transform.position.y - object.direction.y * 20.0f
+                };
+                bounds = RotatedObjectBounds(visualCenter, 64.0f, fmaxf(28.0f, object.width),
+                    atan2f(object.direction.y, object.direction.x) * RAD2DEG);
+            }
+            consider(bounds, GetGuideObjectName(object.type), GetGuideObjectDescription(object.type));
+        }
+
+        for (const StoneBlock& object : currentLevel.stoneBlocks) consider(object.rect, "Stone Block", "A heavy movable block used to hold buttons down or counterbalance mechanisms.");
+        for (const Boulder& object : currentLevel.boulders) considerCircle(object.center, object.radius, "Boulder", "A heavy round stone that rolls down slopes and transfers strong momentum.");
+        for (const PhysicsWheel& object : currentLevel.physicsWheels) considerCircle(object.center, object.radius, "Physics Wheel", "A freely moving wheel that rolls, spins, and collides with other physics objects.");
+        for (const Gear& object : currentLevel.gears) {
+            const bool mounted = object.mounting == GearMounting::Mounted;
+            const char* description = object.clockHand != ClockHandType::None
+                ? "A motorized physics gear constrained to the wall. Its brake also stops the corresponding clock hand."
+                : (mounted
+                    ? "A rotational physics gear constrained to a fixed axle. It transfers torque through touching teeth."
+                    : "A free physics gear that falls, rolls, collides, meshes with other gears, and can engage a screw.");
+            considerCircle(object.center, object.radius * GearOuterRadiusScale,
+                mounted ? "Mounted Physics Gear" : "Physics Gear", description);
+        }
+        for (const Flywheel& object : currentLevel.flywheels) considerCircle(object.center, object.radius, "Flywheel", "A heavy rotating wheel that stores rotational energy and smooths changes in speed.");
+        for (const SteeringWheel& object : currentLevel.steeringWheels) considerCircle(object.center, object.radius, "Steering Wheel", "A hand wheel used to turn valves and other player-operated mechanisms.");
+        for (const Screw& object : currentLevel.screws) consider(RotatedObjectBounds(object.center, object.length, object.radius * 2.4f, object.angle), "Screw", "A rotating helical shaft that converts rotation into linear force and can engage a gear.");
+        for (const Fan& object : currentLevel.fans) considerCircle(object.center, 28.0f, "Fan", "A powered fan that creates directional wind and pushes exposed objects.");
+        for (const Pinwheel& object : currentLevel.pinwheels) considerCircle(object.center, object.radius, "Pinwheel", "A lightweight rotor that spins faster when stronger wind passes over it.");
+        for (const Ramp& object : currentLevel.ramps) consider(RotatedObjectBounds(object.center, object.length, object.thickness, object.angle), "Ramp", "A fixed inclined plane that lets objects gain or lose height gradually.");
+        for (const SeeSaw& object : currentLevel.seeSaws) consider(RotatedObjectBounds(object.pivot, object.length, fmaxf(object.thickness, 36.0f), object.angle), "See-Saw", "A lever balanced on a central fulcrum; weight on one side raises the other.");
+        for (const TrapDoor& object : currentLevel.trapDoors) {
+            float angle = object.angle * DEG2RAD;
+            Vector2 center{object.hinge.x + cosf(angle) * object.length * 0.5f, object.hinge.y + sinf(angle) * object.length * 0.5f};
+            consider(RotatedObjectBounds(center, object.length + 18.0f, fmaxf(object.thickness, 28.0f), object.angle), "Trap Door", "A hinged floor door with attachment rings that ropes and chains can pull open.");
+        }
+        for (const Button& object : currentLevel.buttons) consider(object.rect, "Button", "A pressure switch activated by a player or physics object resting on it.");
+        for (const ArrowTrap& object : currentLevel.arrowTraps) consider({object.position.x - 19.0f, object.position.y - 19.0f, 38.0f, 38.0f}, "Arrow Trap", "A timed hazard that repeatedly fires arrows in its facing direction.");
+        for (const BreakableTile& object : currentLevel.breakableTiles) {
+            if (!object.broken) consider(object.rect, "Breakable Tile", "Looks like ordinary flooring, then cracks and collapses after being stepped on.");
+        }
+
+        for (const Chain& object : currentLevel.chains) {
+            const std::vector<Vector2>& points = object.points.empty() ? std::vector<Vector2>{object.start, object.end} : object.points;
+            float radius = fmaxf(10.0f, object.collisionRadius * object.scale + 3.0f);
+            if (IsPointNearPolyline(mouseWorld, points, radius) && radius * radius < hovered.score) {
+                hovered = {"Chain", "A heavy flexible linkage whose ends can be carried and attached to compatible anchor points.", radius * radius};
+            }
+        }
+        for (const PhysicsRope& object : currentLevel.physicsRopes) {
+            const std::vector<Vector2>& points = object.points.empty() ? std::vector<Vector2>{object.start, object.end} : object.points;
+            float radius = fmaxf(9.0f, object.thickness + 5.0f);
+            if (IsPointNearPolyline(mouseWorld, points, radius) && radius * radius < hovered.score) {
+                hovered = {"Physics Rope", "A flexible rope that bends, swings, collides, and can attach to compatible anchor points.", radius * radius};
+            }
+        }
+
+        for (Vector2 pulley : currentLevel.pulleys) considerCircle(pulley, 48.0f, "Pulley", "A grooved wheel that redirects rope tension and changes the direction of a pulling force.");
+        for (const HangingWeight& object : currentLevel.weights) consider(object.rect, "Hanging Weight", "A suspended mass that provides a downward force and can act as a counterweight.");
+        for (const RotaryLatch& object : currentLevel.rotaryLatches) considerCircle(object.center, object.radius, "Rotary Latch", "A turnable lock that secures its mechanism when aligned to the target angle.");
+        considerCircle(currentLevel.valve.center, currentLevel.valve.radius, "Valve", "A hand-operated control that regulates the connected fluid or gas flow.");
+        if (currentLevel.exitTrigger.width > 0.0f && currentLevel.exitTrigger.height > 0.0f) {
+            consider(currentLevel.exitTrigger, "Exit Door", "The level exit. It opens after the required mechanism or objective is completed.", 2.0f);
+        }
+
+        if (hovered.name == nullptr) return;
+
+        constexpr float panelWidth = 430.0f;
+        constexpr float panelHeight = 112.0f;
+        float panelX = mouseScreen.x + 20.0f;
+        float panelY = mouseScreen.y + 20.0f;
+        if (panelX + panelWidth > Constants::ScreenWidth - 10.0f) panelX = mouseScreen.x - panelWidth - 20.0f;
+        if (panelY + panelHeight > Constants::ScreenHeight - 10.0f) panelY = mouseScreen.y - panelHeight - 20.0f;
+        panelX = std::clamp(panelX, 10.0f, Constants::ScreenWidth - panelWidth - 10.0f);
+        panelY = std::clamp(panelY, 10.0f, Constants::ScreenHeight - panelHeight - 10.0f);
+        Rectangle panel{panelX, panelY, panelWidth, panelHeight};
+        DrawRectangleRounded(panel, 0.07f, 4, Color{23, 29, 34, 244});
+        DrawRectangleRoundedLinesEx(panel, 0.07f, 4, 2.0f, Color{218, 145, 42, 255});
+        DrawRectangle(static_cast<int>(panel.x + 13.0f), static_cast<int>(panel.y + 15.0f), 4, 27, Color{218, 145, 42, 255});
+        DrawText(hovered.name, static_cast<int>(panel.x + 27.0f), static_cast<int>(panel.y + 14.0f), 22, RAYWHITE);
+        DrawWrappedText(hovered.description, {panel.x + 16.0f, panel.y + 53.0f, panel.width - 32.0f, 48.0f}, 17, 4, Color{202, 210, 214, 255});
     }
 
     std::vector<std::string> SplitCommandLine(const std::string& line) {
@@ -445,6 +1203,169 @@ namespace {
 
     bool HasArea(Rectangle rect) {
         return rect.width > 0.0f && rect.height > 0.0f;
+    }
+
+    constexpr float ClockMidnightAngle = 270.0f;
+    constexpr float ClockHandTolerance = 8.0f;
+    constexpr float ClockGearInteractionReach = 32.0f;
+
+    float ClockAngleDifference(float a, float b) {
+        float difference = fmodf(a - b + 180.0f, 360.0f);
+        if (difference < 0.0f) difference += 360.0f;
+        return difference - 180.0f;
+    }
+
+    bool IsClockGearAligned(const Gear& gear) {
+        return fabsf(ClockAngleDifference(gear.rotation, ClockMidnightAngle)) <= ClockHandTolerance;
+    }
+
+    bool IsClockGearLocked(const Gear& gear) {
+        return gear.clockHand != ClockHandType::None && gear.stopped && IsClockGearAligned(gear);
+    }
+
+    bool IsPlayerInsideClockGearProxy(const Gear& gear, const Player& player) {
+        // Interaction proxies intentionally bridge visual layers. They never become
+        // collision geometry, so a middleground player can operate a background brake.
+        return CheckCollisionCircleRec(gear.center, gear.radius + ClockGearInteractionReach, player.rect);
+    }
+
+    const Gear* FindClockHandGear(const Level& level, ClockHandType hand) {
+        for (const Gear& gear : level.gears) {
+            if (gear.clockHand == hand) return &gear;
+        }
+        return nullptr;
+    }
+
+    int CountClockHandGears(const Level& level) {
+        return static_cast<int>(std::count_if(level.gears.begin(), level.gears.end(), [](const Gear& gear) {
+            return gear.clockHand != ClockHandType::None;
+        }));
+    }
+
+    int CountLockedClockHands(const Level& level) {
+        return static_cast<int>(std::count_if(level.gears.begin(), level.gears.end(), IsClockGearLocked));
+    }
+
+    const char* ClockHandName(ClockHandType hand) {
+        switch (hand) {
+        case ClockHandType::Hour: return "HOUR";
+        case ClockHandType::Minute: return "MINUTE";
+        case ClockHandType::Second: return "SECOND";
+        case ClockHandType::None: break;
+        }
+        return "CLOCK";
+    }
+
+    void DrawClocktowerMovementFrame(const Level& level) {
+        if (level.clockFaceRadius <= 0.0f) return;
+
+        const Vector2 center = level.clockFaceCenter;
+        const Color bridgeDark{38, 30, 24, 255};
+        const Color bridgeBase{112, 78, 42, 255};
+        const Color bridgeLight{181, 132, 62, 255};
+        const Color steel{117, 126, 126, 255};
+
+        // These planted arbor lines mirror the going, motion-work, and strike
+        // trains declared in clocktower_core.level. The gears cover most of each
+        // bridge, leaving the connected brass skeleton seen in real movements.
+        if (level.gears.size() < 25) return;
+        const std::array<size_t, 6> goingTrain{{0, 2, 4, 6, 7, 8}};
+        const std::array<size_t, 7> strikeTrain{{15, 17, 19, 20, 22, 23, 24}};
+        const std::array<size_t, 4> motionWork{{11, 9, 13, 14}};
+
+        const auto drawBridge = [&](const auto& arbors) {
+            for (size_t index = 1; index < arbors.size(); ++index) {
+                const Vector2 previous = level.gears[arbors[index - 1]].center;
+                const Vector2 current = level.gears[arbors[index]].center;
+                DrawLineEx(previous, current, 22.0f, Fade(BLACK, 0.38f));
+                DrawLineEx(previous, current, 16.0f, bridgeDark);
+                DrawLineEx(previous, current, 11.0f, bridgeBase);
+                DrawLineEx(previous, current, 2.0f, Fade(bridgeLight, 0.72f));
+            }
+            for (size_t gearIndex : arbors) {
+                const Vector2 arbor = level.gears[gearIndex].center;
+                DrawCircleV({arbor.x + 3.0f, arbor.y + 4.0f}, 10.0f, Fade(BLACK, 0.42f));
+                DrawCircleV(arbor, 9.0f, bridgeDark);
+                DrawCircleV(arbor, 6.0f, steel);
+                DrawLineEx({arbor.x - 3.0f, arbor.y + 2.0f},
+                    {arbor.x + 3.0f, arbor.y - 2.0f}, 1.5f, bridgeDark);
+            }
+        };
+
+        DrawCircleV(center, level.clockFaceRadius + 31.0f, Fade(BLACK, 0.26f));
+        DrawRing(center, level.clockFaceRadius + 20.0f, level.clockFaceRadius + 27.0f,
+            0.0f, 360.0f, 96, bridgeBase);
+        drawBridge(goingTrain);
+        drawBridge(strikeTrain);
+        drawBridge(motionWork);
+    }
+
+    void DrawClocktowerFace(const Level& level) {
+        if (level.clockFaceRadius <= 0.0f) return;
+
+        const Vector2 center = level.clockFaceCenter;
+        const float radius = level.clockFaceRadius;
+        const Color brass{194, 145, 55, 255};
+        const Color face{224, 214, 181, 255};
+        const Color ink{29, 35, 37, 255};
+        // An open center keeps the movement and its motion work visible while
+        // retaining one readable clock face as an opaque chapter ring.
+        DrawRing(center, radius + 9.0f, radius + 14.0f, 0.0f, 360.0f, 96, BLACK);
+        DrawRing(center, radius, radius + 9.0f, 0.0f, 360.0f, 96, brass);
+        DrawCircleV(center, radius - 34.0f, Color{18, 25, 28, 112});
+        DrawRing(center, radius - 34.0f, radius, 0.0f, 360.0f, 96, face);
+        DrawRing(center, radius - 11.0f, radius - 5.0f, 0.0f, 360.0f, 96, ink);
+
+        for (int mark = 0; mark < 60; ++mark) {
+            const float angle = (static_cast<float>(mark) * 6.0f - 90.0f) * DEG2RAD;
+            const float innerRadius = radius - (mark % 5 == 0 ? 27.0f : 18.0f);
+            Vector2 inner{center.x + cosf(angle) * innerRadius, center.y + sinf(angle) * innerRadius};
+            Vector2 outer{center.x + cosf(angle) * (radius - 8.0f), center.y + sinf(angle) * (radius - 8.0f)};
+            DrawLineEx(inner, outer, mark % 5 == 0 ? 5.0f : 2.0f, ink);
+        }
+
+        DrawText("XII", static_cast<int>(center.x - 22.0f), static_cast<int>(center.y - radius + 37.0f), 30, ink);
+        DrawText("III", static_cast<int>(center.x + radius - 62.0f), static_cast<int>(center.y - 15.0f), 30, ink);
+        DrawText("VI", static_cast<int>(center.x - 15.0f), static_cast<int>(center.y + radius - 69.0f), 30, ink);
+        DrawText("IX", static_cast<int>(center.x - radius + 36.0f), static_cast<int>(center.y - 15.0f), 30, ink);
+
+        const auto drawHand = [&](ClockHandType hand, float length, float thickness, Color color) {
+            const Gear* gear = FindClockHandGear(level, hand);
+            const float angleDegrees = gear != nullptr ? gear->rotation : ClockMidnightAngle;
+            const float angle = angleDegrees * DEG2RAD;
+            Vector2 end{center.x + cosf(angle) * length, center.y + sinf(angle) * length};
+            Vector2 tail{center.x - cosf(angle) * 22.0f, center.y - sinf(angle) * 22.0f};
+            DrawLineEx(tail, end, thickness + 3.0f, BLACK);
+            DrawLineEx(tail, end, thickness, color);
+        };
+        drawHand(ClockHandType::Hour, radius * 0.48f, 11.0f, Color{54, 63, 66, 255});
+        drawHand(ClockHandType::Minute, radius * 0.69f, 7.0f, Color{43, 52, 55, 255});
+        drawHand(ClockHandType::Second, radius * 0.82f, 3.0f, Color{174, 47, 39, 255});
+        DrawCircleV(center, 13.0f, BLACK);
+        DrawCircleV(center, 8.0f, brass);
+    }
+
+    Rectangle GetRevealedLadderRect(const ButtonLadderLink& link) {
+        const float progress = Clamp01(link.revealProgress);
+        const float revealedHeight = link.ladder.height * progress;
+        return {
+            link.ladder.x,
+            link.ladder.y + link.ladder.height - revealedHeight,
+            link.ladder.width,
+            revealedHeight
+        };
+    }
+
+    bool IsOnAnyLadder(const Level& level, Rectangle rect) {
+        if (std::any_of(level.ladders.begin(), level.ladders.end(), [rect](Rectangle ladder) {
+            return CheckCollisionRecs(rect, ladder);
+        })) {
+            return true;
+        }
+        return std::any_of(level.buttonLadderLinks.begin(), level.buttonLadderLinks.end(),
+            [rect](const ButtonLadderLink& link) {
+                return link.activated && CheckCollisionRecs(rect, GetRevealedLadderRect(link));
+            });
     }
 
     bool HasWaterPit(const Level& level) {
@@ -639,6 +1560,32 @@ namespace {
         return false;
     }
 
+    bool IsPlayerHeadSubmerged(const Player& player, const Level& level) {
+        const float headY = player.rect.y + fminf(8.0f, player.rect.height * 0.20f);
+        const Vector2 headSamples[]{
+            {player.rect.x + player.rect.width * 0.25f, headY},
+            {player.rect.x + player.rect.width * 0.50f, headY},
+            {player.rect.x + player.rect.width * 0.75f, headY}
+        };
+
+        if (HasWaterPit(level)) {
+            const Rectangle waterRect = GetFilledWaterRect(level.waterPit);
+            for (Vector2 point : headSamples) {
+                if (waterRect.height > 0.0f && CheckCollisionPointRec(point, waterRect)) {
+                    return true;
+                }
+            }
+        }
+
+        int submergedSamples = 0;
+        for (Vector2 point : headSamples) {
+            if (SampleFluid(level.fluids, FluidType::Water, point).density >= 0.14f) {
+                submergedSamples++;
+            }
+        }
+        return submergedSamples >= 2;
+    }
+
     float GetWaterFillProgress(const WaterPit& waterPit) {
         float totalTravel = waterPit.bounds.y + waterPit.bounds.height - waterPit.targetSurfaceY;
         if (totalTravel <= 0.0f) {
@@ -675,14 +1622,34 @@ namespace {
 
     bool HasSolidTouchingTop(Rectangle rect, const std::vector<Rectangle>& solids) {
         constexpr float Epsilon = 0.5f;
-        constexpr float MinimumCoveredWidth = 48.0f;
+        std::vector<std::pair<float, float>> coveredIntervals;
         for (const Rectangle& other : solids) {
-            if (fabsf((other.y + other.height) - rect.y) <= Epsilon && HorizontalOverlapWidth(rect, other) >= MinimumCoveredWidth) {
-                return true;
-            }
+            if (fabsf((other.y + other.height) - rect.y) > Epsilon) continue;
+            float start = fmaxf(rect.x, other.x);
+            float end = fminf(rect.x + rect.width, other.x + other.width);
+            if (end > start + Epsilon) coveredIntervals.emplace_back(start, end);
         }
 
-        return false;
+        if (coveredIntervals.empty()) return false;
+        std::sort(coveredIntervals.begin(), coveredIntervals.end());
+        float coveredWidth = 0.0f;
+        float start = coveredIntervals.front().first;
+        float end = coveredIntervals.front().second;
+        for (size_t index = 1; index < coveredIntervals.size(); index++) {
+            if (coveredIntervals[index].first <= end + Epsilon) {
+                end = fmaxf(end, coveredIntervals[index].second);
+            }
+            else {
+                coveredWidth += end - start;
+                start = coveredIntervals[index].first;
+                end = coveredIntervals[index].second;
+            }
+        }
+        coveredWidth += end - start;
+
+        // A small machine or barricade resting on a floor should not turn the
+        // entire floor span into an untextured interior fill.
+        return coveredWidth >= rect.width * 0.80f;
     }
 
     bool IsCeilingSolid(Rectangle rect) {
@@ -728,7 +1695,7 @@ namespace {
     }
 
     Rectangle GetGearBounds(const Gear& gear) {
-        float radius = gear.radius * 1.12f;
+        float radius = gear.radius * GearOuterRadiusScale;
         return {gear.center.x - radius, gear.center.y - radius, radius * 2.0f, radius * 2.0f};
     }
 
@@ -743,6 +1710,20 @@ namespace {
 
     float GetGearPushScale(const Gear& gear) {
         return 1.05f / fmaxf(1.0f, gear.mass);
+    }
+
+    void ApplyGearMotorAndBrake(Gear& gear, float dt) {
+        if (gear.stopped) {
+            gear.angularVelocity = 0.0f;
+            return;
+        }
+        if (fabsf(gear.driveSpeed) <= 0.001f) {
+            return;
+        }
+
+        const float motorAcceleration = 900.0f / sqrtf(fmaxf(0.1f, gear.mass));
+        gear.angularVelocity = ApproachFloat(gear.angularVelocity, gear.driveSpeed,
+            motorAcceleration * dt);
     }
 
     float GetFlywheelPushScale(const Flywheel& flywheel) {
@@ -1000,7 +1981,7 @@ namespace {
 
     void ResolveGearCollisions(Gear& gear, const std::vector<Rectangle>& solids) {
         for (const Rectangle& solid : solids) {
-            ResolveRoundBodyWithRect(gear, solid, gear.radius * 1.12f);
+            ResolveRoundBodyWithRect(gear, solid, gear.radius * GearOuterRadiusScale);
         }
     }
 
@@ -1231,6 +2212,73 @@ namespace {
         return false;
     }
 
+    bool ResolvePlayerRampStanding(
+        Player& player,
+        float previousFootY,
+        const std::vector<Ramp>& ramps,
+        float dt
+    ) {
+        if (player.velocity.y < 0.0f) return false;
+
+        const float footX = RectCenterX(player.rect);
+        const float footY = player.rect.y + player.rect.height;
+
+        for (const Ramp& ramp : ramps) {
+            const float angle = ramp.angle * DEG2RAD;
+            const float halfLength = ramp.length * 0.5f;
+            const float halfThickness = ramp.thickness * 0.5f;
+            const float axisX = cosf(angle);
+            const float normalX = -sinf(angle);
+            const float firstX =
+                ramp.center.x - axisX * halfLength - normalX * halfThickness;
+            const float secondX =
+                ramp.center.x + axisX * halfLength - normalX * halfThickness;
+            constexpr float CornerInset = 2.0f;
+            const float minimumX = fminf(firstX, secondX) + CornerInset;
+            const float maximumX = fmaxf(firstX, secondX) - CornerInset;
+            if (footX < minimumX || footX > maximumX) continue;
+
+            const float surfaceY = GetRampSurfaceY(ramp, footX);
+            const float slopeTravel =
+                fabsf(player.velocity.x * dt * tanf(angle));
+            const float downwardTravel =
+                fmaxf(0.0f, player.velocity.y * dt);
+            const float contactTolerance = std::clamp(
+                downwardTravel + slopeTravel + 4.0f,
+                6.0f,
+                36.0f
+            );
+
+            // Only accept contact when the feet crossed (or closely followed)
+            // the top surface this frame. This prevents a corner or underside
+            // overlap from snapping the player a large distance onto the ramp.
+            if (previousFootY <= surfaceY + 4.0f &&
+                footY >= surfaceY - contactTolerance &&
+                footY <= surfaceY + contactTolerance) {
+                player.rect.y = surfaceY - player.rect.height;
+                player.velocity.y = 0.0f;
+                player.onGround = true;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool TryGetStandingRampAngle(Rectangle rect, const std::vector<Ramp>& ramps, float& angle) {
+        const float footX = RectCenterX(rect);
+        const float footY = rect.y + rect.height;
+        for (const Ramp& ramp : ramps) {
+            if (!IsPointOverRamp(ramp, footX)) continue;
+            const float surfaceY = GetRampSurfaceY(ramp, footX);
+            if (footY >= surfaceY - 5.0f && footY <= surfaceY + 8.0f) {
+                angle = ramp.angle;
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool ResolveTrapDoorStanding(Rectangle& rect, Vector2& velocity, bool& onGround, const std::vector<TrapDoor>& trapDoors) {
         if (velocity.y < 0.0f) {
             return false;
@@ -1256,24 +2304,53 @@ namespace {
         return false;
     }
 
-    bool ResolveBoulderRampStanding(Boulder& boulder, const std::vector<Ramp>& ramps, float dt) {
+    bool ResolveBoulderRampStanding(
+        Boulder& boulder,
+        const std::vector<Ramp>& ramps,
+        float dt,
+        float previousFootY
+    ) {
         if (boulder.velocity.y < 0.0f) {
             return false;
         }
 
-        float footX = boulder.center.x;
-        float footY = boulder.center.y + boulder.radius;
+        const float footX = boulder.center.x;
+        const float footY = boulder.center.y + boulder.radius;
         for (const Ramp& ramp : ramps) {
-            if (!IsPointOverRamp(ramp, footX)) {
+            const float angle = ramp.angle * DEG2RAD;
+            const float halfLength = ramp.length * 0.5f;
+            const float halfThickness = ramp.thickness * 0.5f;
+            const float axisX = cosf(angle);
+            const float normalX = -sinf(angle);
+            const float firstX =
+                ramp.center.x - axisX * halfLength - normalX * halfThickness;
+            const float secondX =
+                ramp.center.x + axisX * halfLength - normalX * halfThickness;
+            constexpr float CornerInset = 2.0f;
+            if (footX < fminf(firstX, secondX) + CornerInset ||
+                footX > fmaxf(firstX, secondX) - CornerInset) {
                 continue;
             }
 
-            float surfaceY = GetRampSurfaceY(ramp, footX);
-            if (footY >= surfaceY - 18.0f && footY <= surfaceY + 28.0f) {
+            const float surfaceY = GetRampSurfaceY(ramp, footX);
+            const float slopeTravel =
+                fabsf(boulder.velocity.x * dt * tanf(angle));
+            const float downwardTravel =
+                fmaxf(0.0f, boulder.velocity.y * dt);
+            const float contactTolerance = std::clamp(
+                downwardTravel + slopeTravel + 4.0f,
+                6.0f,
+                40.0f
+            );
+            if (previousFootY <= surfaceY + 4.0f &&
+                footY >= surfaceY - contactTolerance &&
+                footY <= surfaceY + contactTolerance) {
                 boulder.center.y = surfaceY - boulder.radius;
                 boulder.velocity.y = 0.0f;
                 boulder.onGround = true;
-                AccelerateDownSlope(boulder.velocity, ramp.angle, dt, 0.34f);
+                // The impulse must clear the boulder's low-speed resting cutoff
+                // on the first frame or it will be reset to zero forever.
+                AccelerateDownSlope(boulder.velocity, ramp.angle, dt, 0.82f);
                 return true;
             }
         }
@@ -1533,10 +2610,11 @@ namespace {
         return dx * dx + dy * dy <= combinedRadius * combinedRadius;
     }
 
-    void ApplyScrewConveyor(Rectangle rect, Vector2& velocity, float mass, const std::vector<Screw>& screws, float dt) {
+    void ApplyScrewConveyor(Rectangle rect, Vector2& velocity, float mass, WorldLayer layer,
+                            const std::vector<Screw>& screws, float dt) {
         float inverseMass = 1.0f / fmaxf(1.0f, mass);
         for (const Screw& screw : screws) {
-            if (!IsRectTouchingScrew(rect, screw)) {
+            if (layer != screw.layer || !IsRectTouchingScrew(rect, screw)) {
                 continue;
             }
 
@@ -1549,7 +2627,7 @@ namespace {
     void ApplyScrewConveyor(Boulder& boulder, float radius, const std::vector<Screw>& screws, float dt) {
         float inverseMass = 1.0f / fmaxf(1.0f, boulder.mass);
         for (const Screw& screw : screws) {
-            if (!IsCircleTouchingScrew(boulder.center, radius, screw)) {
+            if (boulder.layer != screw.layer || !IsCircleTouchingScrew(boulder.center, radius, screw)) {
                 continue;
             }
 
@@ -1564,7 +2642,7 @@ namespace {
     void ApplyScrewConveyor(RoundBody& body, float radius, const std::vector<Screw>& screws, float dt) {
         float inverseMass = 1.0f / fmaxf(1.0f, body.mass);
         for (const Screw& screw : screws) {
-            if (!IsCircleTouchingScrew(body.center, radius, screw)) {
+            if (body.layer != screw.layer || !IsCircleTouchingScrew(body.center, radius, screw)) {
                 continue;
             }
 
@@ -1580,7 +2658,12 @@ namespace {
             return 0.0f;
         }
 
-        Vector2 offset{point.x - fan.center.x, point.y - fan.center.y};
+        constexpr float OutletOffset = 18.0f;
+        const Vector2 windOrigin{
+            fan.center.x + fan.direction.x * OutletOffset,
+            fan.center.y + fan.direction.y * OutletOffset
+        };
+        Vector2 offset{point.x - windOrigin.x, point.y - windOrigin.y};
         float along = offset.x * fan.direction.x + offset.y * fan.direction.y;
         if (along < 0.0f || along > fan.length) {
             return 0.0f;
@@ -1751,6 +2834,40 @@ namespace {
         }
     }
 
+    Rectangle GetFlexibleBounds(
+        const std::vector<Vector2>& points,
+        Vector2 fallbackStart,
+        Vector2 fallbackEnd,
+        float padding
+    ) {
+        float minX = fminf(fallbackStart.x, fallbackEnd.x);
+        float maxX = fmaxf(fallbackStart.x, fallbackEnd.x);
+        float minY = fminf(fallbackStart.y, fallbackEnd.y);
+        float maxY = fmaxf(fallbackStart.y, fallbackEnd.y);
+        for (Vector2 point : points) {
+            minX = fminf(minX, point.x);
+            maxX = fmaxf(maxX, point.x);
+            minY = fminf(minY, point.y);
+            maxY = fmaxf(maxY, point.y);
+        }
+        return {
+            minX - padding,
+            minY - padding,
+            fmaxf(1.0f, maxX - minX + padding * 2.0f),
+            fmaxf(1.0f, maxY - minY + padding * 2.0f)
+        };
+    }
+
+    Rectangle GetChainBounds(const Chain& chain, float padding = 0.0f) {
+        return GetFlexibleBounds(chain.points, chain.start, chain.end,
+            padding + fmaxf(2.0f, chain.collisionRadius * chain.scale));
+    }
+
+    Rectangle GetPhysicsRopeBounds(const PhysicsRope& rope, float padding = 0.0f) {
+        return GetFlexibleBounds(rope.points, rope.start, rope.end,
+            padding + fmaxf(1.0f, rope.thickness * 0.5f));
+    }
+
     void AppendFlexibleObjectColliders(std::vector<Rectangle>& colliders, const Level& level) {
         for (const Chain& chain : level.chains) {
             AppendChainPointColliders(colliders, chain);
@@ -1765,10 +2882,21 @@ namespace {
         const Player* player,
         const Player* player2,
         const Player* player3,
+        const Player* player4,
         int ignoredChain,
         int ignoredRope
     ) {
         std::vector<Rectangle> colliders = BuildSolids(level);
+        Rectangle flexibleQueryBounds{};
+        bool hasFlexibleQuery = false;
+        if (ignoredChain >= 0 && ignoredChain < static_cast<int>(level.chains.size())) {
+            flexibleQueryBounds = GetChainBounds(level.chains[ignoredChain], 48.0f);
+            hasFlexibleQuery = true;
+        }
+        else if (ignoredRope >= 0 && ignoredRope < static_cast<int>(level.physicsRopes.size())) {
+            flexibleQueryBounds = GetPhysicsRopeBounds(level.physicsRopes[ignoredRope], 48.0f);
+            hasFlexibleQuery = true;
+        }
         if (player != nullptr) {
             colliders.push_back(player->rect);
         }
@@ -1778,24 +2906,32 @@ namespace {
         if (player3 != nullptr) {
             colliders.push_back(player3->rect);
         }
+        if (player4 != nullptr) {
+            colliders.push_back(player4->rect);
+        }
 
         for (const StoneBlock& block : level.stoneBlocks) {
+            if (!IsPlayerCollisionLayer(block.layer)) continue;
             colliders.push_back(block.rect);
         }
 
         for (const Boulder& boulder : level.boulders) {
+            if (!IsPlayerCollisionLayer(boulder.layer)) continue;
             colliders.push_back(GetBoulderBounds(boulder));
         }
 
         for (const PhysicsWheel& wheel : level.physicsWheels) {
+            if (!IsPlayerCollisionLayer(wheel.layer)) continue;
             colliders.push_back(GetWheelBounds(wheel));
         }
 
         for (const Gear& gear : level.gears) {
+            if (!IsPlayerCollisionLayer(gear.layer)) continue;
             colliders.push_back(GetGearBounds(gear));
         }
 
         for (const Flywheel& flywheel : level.flywheels) {
+            if (!IsPlayerCollisionLayer(flywheel.layer)) continue;
             colliders.push_back(GetFlywheelBounds(flywheel));
         }
 
@@ -1816,6 +2952,7 @@ namespace {
         }
 
         for (const Screw& screw : level.screws) {
+            if (!IsPlayerCollisionLayer(screw.layer)) continue;
             AppendScrewColliders(colliders, screw);
         }
 
@@ -1824,12 +2961,14 @@ namespace {
         }
 
         for (int i = 0; i < static_cast<int>(level.chains.size()); i++) {
-            if (i != ignoredChain) {
+            if (i != ignoredChain &&
+                (!hasFlexibleQuery || CheckCollisionRecs(flexibleQueryBounds, GetChainBounds(level.chains[i])))) {
                 AppendChainPointColliders(colliders, level.chains[i]);
             }
         }
         for (int i = 0; i < static_cast<int>(level.physicsRopes.size()); i++) {
-            if (i != ignoredRope) {
+            if (i != ignoredRope &&
+                (!hasFlexibleQuery || CheckCollisionRecs(flexibleQueryBounds, GetPhysicsRopeBounds(level.physicsRopes[i])))) {
                 AppendPhysicsRopePointColliders(colliders, level.physicsRopes[i]);
             }
         }
@@ -1899,28 +3038,43 @@ namespace {
         const Level& level,
         const Player* player1,
         const Player* player2,
-        const Player* player3
+        const Player* player3,
+        const Player* player4,
+        bool includeActors
     ) {
         std::vector<Rectangle> obstacles = BuildSolids(level);
-        if (player1 != nullptr) obstacles.push_back(GetCharacterFluidBounds(player1->rect));
-        if (player2 != nullptr) obstacles.push_back(GetCharacterFluidBounds(player2->rect));
-        if (player3 != nullptr) obstacles.push_back(GetCharacterFluidBounds(player3->rect));
+        if (includeActors) {
+            if (player1 != nullptr) obstacles.push_back(GetCharacterFluidBounds(player1->rect));
+            if (player2 != nullptr) obstacles.push_back(GetCharacterFluidBounds(player2->rect));
+            if (player3 != nullptr) obstacles.push_back(GetCharacterFluidBounds(player3->rect));
+            if (player4 != nullptr) obstacles.push_back(GetCharacterFluidBounds(player4->rect));
+        }
 
-        for (const StoneBlock& block : level.stoneBlocks) obstacles.push_back(block.rect);
+        for (const StoneBlock& block : level.stoneBlocks) {
+            if (IsPlayerCollisionLayer(block.layer)) obstacles.push_back(block.rect);
+        }
         for (const Boulder& boulder : level.boulders) {
+            if (!IsPlayerCollisionLayer(boulder.layer)) continue;
             AppendCircularFluidObstacle(obstacles, boulder.center, boulder.radius);
         }
         for (const PhysicsWheel& wheel : level.physicsWheels) {
+            if (!IsPlayerCollisionLayer(wheel.layer)) continue;
             AppendCircularFluidObstacle(obstacles, wheel.center, wheel.radius);
         }
         for (const Gear& gear : level.gears) {
-            AppendCircularFluidObstacle(obstacles, gear.center, gear.radius * 1.12f);
+            if (!IsPlayerCollisionLayer(gear.layer)) continue;
+            AppendCircularFluidObstacle(obstacles, gear.center, gear.radius * GearOuterRadiusScale);
         }
         for (const Flywheel& flywheel : level.flywheels) {
+            if (!IsPlayerCollisionLayer(flywheel.layer)) continue;
             AppendCircularFluidObstacle(obstacles, flywheel.center, flywheel.radius);
         }
         for (const HangingWeight& weight : level.weights) obstacles.push_back(weight.rect);
-        for (const Enemy& enemy : level.enemies) obstacles.push_back(GetCharacterFluidBounds(enemy.rect));
+        if (includeActors) {
+            for (const Enemy& enemy : level.enemies) {
+                obstacles.push_back(GetCharacterFluidBounds(enemy.rect));
+            }
+        }
         for (const Fan& fan : level.fans) {
             obstacles.push_back({fan.center.x - 22.0f, fan.center.y - 22.0f, 44.0f, 44.0f});
         }
@@ -1941,6 +3095,27 @@ namespace {
         }
 
         return obstacles;
+    }
+
+    std::vector<Rectangle> FilterFluidObstacles(
+        const FluidField& fluid,
+        const std::vector<Rectangle>& obstacles
+    ) {
+        const float padding = fmaxf(16.0f, fmaxf(fluid.cellSize, fluid.particleRadius) * 2.0f);
+        const Rectangle influenceBounds{
+            fluid.bounds.x - padding,
+            fluid.bounds.y - padding,
+            fluid.bounds.width + padding * 2.0f,
+            fluid.bounds.height + padding * 2.0f
+        };
+        std::vector<Rectangle> nearby;
+        nearby.reserve(obstacles.size());
+        for (Rectangle obstacle : obstacles) {
+            if (CheckCollisionRecs(influenceBounds, obstacle)) {
+                nearby.push_back(obstacle);
+            }
+        }
+        return nearby;
     }
 
     float MoveTowardsFloat(float current, float target, float maxDelta) {
@@ -1987,20 +3162,23 @@ void Game::ResetPendingSettings() {
     pendingMusicVolume = musicVolume;
     pendingSoundEffectsVolume = soundEffectsVolume;
     pendingAudioMuted = audioMuted;
-    pendingPlayer1Bindings = player1Bindings;
-    pendingControllerEnabled = controllerEnabled;
-    pendingControllerVibrationEnabled = controllerVibrationEnabled;
+    pendingPlayerBindings = playerBindings;
+    pendingControllerSettings = controllerSettings;
     pendingScreenShakeSetting = screenShakeSetting;
     pendingReducedFlashing = reducedFlashing;
     pendingHighContrast = highContrast;
+    pendingObjectTooltipsEnabled = objectTooltipsEnabled;
     pendingColorblindSetting = colorblindSetting;
     settingsDropdown = SettingsDropdown::None;
     settingsBindingCapture = -1;
+    settingsGamepadBindingCapture = -1;
 }
 
 void Game::OpenSettingsPopup() {
     ResetPendingSettings();
     settingsPage = SettingsPage::Display;
+    settingsSelectedPlayer = 0;
+    settingsControlsInputView = ControlsInputView::Keyboard;
     settingsPopupOpen = true;
     menuMessage.clear();
 }
@@ -2021,12 +3199,12 @@ void Game::ApplyPendingSettings() {
     musicVolume = std::clamp(pendingMusicVolume, 0.0f, 1.0f);
     soundEffectsVolume = std::clamp(pendingSoundEffectsVolume, 0.0f, 1.0f);
     audioMuted = pendingAudioMuted;
-    player1Bindings = pendingPlayer1Bindings;
-    controllerEnabled = pendingControllerEnabled;
-    controllerVibrationEnabled = pendingControllerVibrationEnabled;
+    playerBindings = pendingPlayerBindings;
+    controllerSettings = pendingControllerSettings;
     screenShakeSetting = pendingScreenShakeSetting;
     reducedFlashing = pendingReducedFlashing;
     highContrast = pendingHighContrast;
+    objectTooltipsEnabled = pendingObjectTooltipsEnabled;
     colorblindSetting = pendingColorblindSetting;
 
     gPixelPerfectScaling = pixelPerfectScaling;
@@ -2057,9 +3235,19 @@ void Game::ApplyPendingSettings() {
         const Player* activePlayer1 = playerAlive ? &player : nullptr;
         const Player* activePlayer2 = multiplayerEnabled && player2Alive ? &player2 : nullptr;
         const Player* activePlayer3 = threePlayerEnabled && player3Alive ? &player3 : nullptr;
-        std::vector<Rectangle> obstacles = BuildFluidObstacles(level, activePlayer1, activePlayer2, activePlayer3);
+        const Player* activePlayer4 = fourPlayerEnabled && player4Alive ? &player4 : nullptr;
+        std::vector<Rectangle> obstacles =
+            BuildFluidObstacles(level, activePlayer1, activePlayer2, activePlayer3, activePlayer4, true);
+        std::vector<Rectangle> gasObstacles =
+            BuildFluidObstacles(level, nullptr, nullptr, nullptr, nullptr, false);
         for (FluidField& fluid : level.fluids) {
-            InitializeFluidField(fluid, obstacles, SelectedFluidMode(advancedFluidSimulation));
+            const std::vector<Rectangle>& relevantObstacles =
+                fluid.type == FluidType::Gas ? gasObstacles : obstacles;
+            InitializeFluidField(
+                fluid,
+                FilterFluidObstacles(fluid, relevantObstacles),
+                SelectedFluidMode(advancedFluidSimulation)
+            );
         }
     }
 }
@@ -2070,13 +3258,106 @@ void Game::Load() {
     SetExitKey(KEY_NULL);
     SetTargetFPS(60);
     InitAudioDevice();
-    if (IsAudioDeviceReady()) SetMasterVolume(masterVolume);
+    if (IsAudioDeviceReady()) {
+        SetMasterVolume(masterVolume);
+        titleMusic = LoadMusicStream(
+            "assets/third_party/Clark Audio/Clark Audio - MERCURY Beta/processed/"
+            "power_pulley_panic_title_theme.wav"
+        );
+        titleMusicLoaded = IsMusicValid(titleMusic);
+        if (titleMusicLoaded) {
+            titleMusic.looping = true;
+            SetMusicVolume(titleMusic, musicVolume);
+        }
+        levelSelectMusic = LoadMusicStream(
+            "assets/third_party/Clark Audio/Clark Audio - MERCURY Beta/processed/"
+            "power_pulley_panic_level_select_theme.wav"
+        );
+        levelSelectMusicLoaded = IsMusicValid(levelSelectMusic);
+        if (levelSelectMusicLoaded) {
+            levelSelectMusic.looping = true;
+            SetMusicVolume(levelSelectMusic, musicVolume);
+        }
+        levelOneMusic = LoadMusicStream(
+            "assets/third_party/Clark Audio/Clark Audio - MERCURY Beta/processed/"
+            "power_pulley_panic_level_01_gatehouse.wav"
+        );
+        levelOneMusicLoaded = IsMusicValid(levelOneMusic);
+        if (levelOneMusicLoaded) {
+            levelOneMusic.looping = true;
+            SetMusicVolume(levelOneMusic, musicVolume);
+        }
+        levelTwoMusic = LoadMusicStream(
+            "assets/third_party/Clark Audio/Clark Audio - MERCURY Beta/processed/"
+            "power_pulley_panic_level_02_rotary_latch_lab.wav"
+        );
+        levelTwoMusicLoaded = IsMusicValid(levelTwoMusic);
+        if (levelTwoMusicLoaded) {
+            levelTwoMusic.looping = true;
+            SetMusicVolume(levelTwoMusic, musicVolume);
+        }
+        levelThreeMusic = LoadMusicStream(
+            "assets/third_party/Clark Audio/Clark Audio - MERCURY Beta/processed/"
+            "power_pulley_panic_level_03_flooded_lower_works.wav"
+        );
+        levelThreeMusicLoaded = IsMusicValid(levelThreeMusic);
+        if (levelThreeMusicLoaded) {
+            levelThreeMusic.looping = true;
+            SetMusicVolume(levelThreeMusic, musicVolume);
+        }
+        levelFourMusic = LoadMusicStream(
+            "assets/third_party/Clark Audio/Clark Audio - MERCURY Beta/processed/"
+            "power_pulley_panic_level_04_counterweight_row.wav"
+        );
+        levelFourMusicLoaded = IsMusicValid(levelFourMusic);
+        if (levelFourMusicLoaded) {
+            levelFourMusic.looping = true;
+            SetMusicVolume(levelFourMusic, musicVolume);
+        }
+        levelFiveMusic = LoadMusicStream(
+            "assets/third_party/Clark Audio/Clark Audio - MERCURY Beta/processed/"
+            "power_pulley_panic_level_05_neurotoxin_annex.wav"
+        );
+        levelFiveMusicLoaded = IsMusicValid(levelFiveMusic);
+        if (levelFiveMusicLoaded) {
+            levelFiveMusic.looping = true;
+            SetMusicVolume(levelFiveMusic, musicVolume);
+        }
+        levelSixMusic = LoadMusicStream(
+            "assets/third_party/Clark Audio/Clark Audio - MERCURY Beta/processed/"
+            "power_pulley_panic_level_06_clocktower_core.wav"
+        );
+        levelSixMusicLoaded = IsMusicValid(levelSixMusic);
+        if (levelSixMusicLoaded) {
+            levelSixMusic.looping = true;
+            SetMusicVolume(levelSixMusic, musicVolume);
+        }
+        wendiLevelOneMusic = LoadMusicStream(
+            "assets/first_party/audio/"
+            "power_pulley_panic_wendi_01_three_step_tumble.wav"
+        );
+        wendiLevelOneMusicLoaded = IsMusicValid(wendiLevelOneMusic);
+        if (wendiLevelOneMusicLoaded) {
+            wendiLevelOneMusic.looping = true;
+            SetMusicVolume(wendiLevelOneMusic, musicVolume);
+        }
+        portalLiftMusic = LoadMusicStream(
+            "assets/first_party/music/"
+            "power_pulley_panic_wendi_02_portal_lift.wav"
+        );
+        portalLiftMusicLoaded = IsMusicValid(portalLiftMusic);
+        if (portalLiftMusicLoaded) {
+            portalLiftMusic.looping = true;
+            SetMusicVolume(portalLiftMusic, musicVolume);
+        }
+    }
     sceneTarget = LoadRenderTexture(Constants::ScreenWidth, Constants::ScreenHeight);
     if (sceneTarget.id > 0) SetTextureFilter(sceneTarget.texture, TEXTURE_FILTER_POINT);
     selectedResolutionIndex = FindResolutionPresetIndex(Constants::ScreenWidth, Constants::ScreenHeight);
     ResetPendingSettings();
 
     playerSpritesTexture = LoadTexture("assets/first_party/characters/Player_Sprites.png");
+    playerFourSpritesTexture = LoadTexture("assets/first_party/characters/knight.png");
     skullTexture = LoadTexture("assets/first_party/characters/skull.png");
     industrialTiles = LoadTexture("assets/third_party/AtomicRealm/[FREE] Industrial Tileset/raw/FREE/5. Industrial Tileset - Starter Pack 32p/1_Industrial_Tileset_1.png");
     industrialBackground = LoadTexture("assets/third_party/AtomicRealm/[FREE] Industrial Tileset/raw/FREE/5. Industrial Tileset - Starter Pack 32p/2_Industrial_Tileset_1_Background.png");
@@ -2086,15 +3367,83 @@ void Game::Load() {
     enemyPlaceholderTexture = LoadTexture("assets/third_party/AtomicRealm/[FREE] Industrial Tileset/raw/FREE/6. Character Animations 32p/Anim_Robot_Walk1_v1.1_spritesheet.png");
 
     if (playerSpritesTexture.id > 0) SetTextureFilter(playerSpritesTexture, TEXTURE_FILTER_POINT);
+    if (playerFourSpritesTexture.id > 0) SetTextureFilter(playerFourSpritesTexture, TEXTURE_FILTER_POINT);
     if (skullTexture.id > 0) SetTextureFilter(skullTexture, TEXTURE_FILTER_POINT);
     if (industrialTiles.id > 0) SetTextureFilter(industrialTiles, TEXTURE_FILTER_POINT);
     if (industrialBackground.id > 0) SetTextureFilter(industrialBackground, TEXTURE_FILTER_POINT);
     if (industrialFarBackground.id > 0) SetTextureFilter(industrialFarBackground, TEXTURE_FILTER_POINT);
     if (chainLinksTexture.id > 0) SetTextureFilter(chainLinksTexture, TEXTURE_FILTER_POINT);
     if (enemyPlaceholderTexture.id > 0) SetTextureFilter(enemyPlaceholderTexture, TEXTURE_FILTER_POINT);
+    SetTextureFilter(GetFontDefault().texture, TEXTURE_FILTER_POINT);
+
+    achievements.Initialize("game_data/achievements.txt", "save/achievements.dat");
 
     InitializeOverworld();
     Reset();
+}
+
+void Game::UpdateGameplayCamera(float dt, bool snap) {
+    Vector2 focus{};
+    int focusCount = 0;
+    const Player* activePlayers[]{
+        playerAlive ? &player : nullptr,
+        multiplayerEnabled && player2Alive ? &player2 : nullptr,
+        threePlayerEnabled && player3Alive ? &player3 : nullptr,
+        fourPlayerEnabled && player4Alive ? &player4 : nullptr
+    };
+    for (const Player* activePlayer : activePlayers) {
+        if (activePlayer == nullptr) continue;
+        focus.x += activePlayer->rect.x + activePlayer->rect.width * 0.5f;
+        focus.y += activePlayer->rect.y + activePlayer->rect.height * 0.5f;
+        ++focusCount;
+    }
+    if (focusCount == 0) {
+        focus = {
+            player.rect.x + player.rect.width * 0.5f,
+            player.rect.y + player.rect.height * 0.5f
+        };
+        focusCount = 1;
+    }
+    focus.x /= static_cast<float>(focusCount);
+    focus.y /= static_cast<float>(focusCount);
+
+    Rectangle bounds = level.worldBounds;
+    int nextCameraZone = -1;
+    for (int zoneIndex = 0; zoneIndex < static_cast<int>(level.cameraZones.size()); ++zoneIndex) {
+        if (CheckCollisionPointRec(focus, level.cameraZones[zoneIndex])) {
+            bounds = level.cameraZones[zoneIndex];
+            nextCameraZone = zoneIndex;
+            break;
+        }
+    }
+    constexpr float halfViewWidth = Constants::ScreenWidth * 0.5f;
+    constexpr float halfViewHeight = Constants::ScreenHeight * 0.5f;
+    Vector2 desired{
+        bounds.x + bounds.width * 0.5f,
+        bounds.y + bounds.height * 0.5f
+    };
+    if (bounds.width > Constants::ScreenWidth) {
+        desired.x = std::clamp(focus.x, bounds.x + halfViewWidth, bounds.x + bounds.width - halfViewWidth);
+    }
+    if (bounds.height > Constants::ScreenHeight) {
+        desired.y = std::clamp(focus.y, bounds.y + halfViewHeight, bounds.y + bounds.height - halfViewHeight);
+    }
+
+    const bool enteredFixedRoom = nextCameraZone >= 0 && nextCameraZone != activeCameraZone &&
+        bounds.width <= Constants::ScreenWidth && bounds.height <= Constants::ScreenHeight;
+    activeCameraZone = nextCameraZone;
+
+    gameplayCamera.offset = {halfViewWidth, halfViewHeight};
+    gameplayCamera.rotation = 0.0f;
+    gameplayCamera.zoom = 1.0f;
+    if (snap || dt <= 0.0f || enteredFixedRoom) {
+        gameplayCamera.target = desired;
+        return;
+    }
+
+    const float followAmount = 1.0f - expf(-7.5f * dt);
+    gameplayCamera.target.x += (desired.x - gameplayCamera.target.x) * followAmount;
+    gameplayCamera.target.y += (desired.y - gameplayCamera.target.y) * followAmount;
 }
 
 void Game::Reset() {
@@ -2124,26 +3473,44 @@ void Game::Reset() {
     ResetPlayer(player);
     ResetPlayer(player2);
     ResetPlayer(player3);
+    ResetPlayer(player4);
     player.rect.x = level.playerStart.x;
     player.rect.y = level.playerStart.y;
     player2.rect.x = level.playerStart.x;
     player2.rect.y = level.playerStart.y;
     player3.rect.x = level.playerStart.x;
     player3.rect.y = level.playerStart.y;
+    player4.rect.x = level.playerStart.x;
+    player4.rect.y = level.playerStart.y;
     if (!IsTilesetReferenceLevel(level)) {
         player2.rect.x += 44.0f;
         player3.rect.x += 88.0f;
+        player4.rect.x += 132.0f;
     }
     const Player* initialPlayer2 = multiplayerEnabled ? &player2 : nullptr;
     const Player* initialPlayer3 = threePlayerEnabled ? &player3 : nullptr;
-    std::vector<Rectangle> fluidObstacles = BuildFluidObstacles(level, &player, initialPlayer2, initialPlayer3);
+    const Player* initialPlayer4 = fourPlayerEnabled ? &player4 : nullptr;
+    std::vector<Rectangle> fluidObstacles =
+        BuildFluidObstacles(level, &player, initialPlayer2, initialPlayer3, initialPlayer4, true);
+    std::vector<Rectangle> gasObstacles =
+        BuildFluidObstacles(level, nullptr, nullptr, nullptr, nullptr, false);
     for (FluidField& fluid : level.fluids) {
-        InitializeFluidField(fluid, fluidObstacles, SelectedFluidMode(advancedFluidSimulation));
+        const std::vector<Rectangle>& relevantObstacles =
+            fluid.type == FluidType::Gas ? gasObstacles : fluidObstacles;
+        InitializeFluidField(
+            fluid,
+            FilterFluidObstacles(fluid, relevantObstacles),
+            SelectedFluidMode(advancedFluidSimulation)
+        );
     }
     deathRect = player.rect;
     playerDeathRect = player.rect;
     player2DeathRect = player2.rect;
     player3DeathRect = player3.rect;
+    player4DeathRect = player4.rect;
+    checkpointRespawn = level.playerStart;
+    checkpointActivated = false;
+    respawnGraceTimer = 0.0f;
 
     machineWinch.rect.x = machineWinch.startX;
     machineWinch.grabbed = false;
@@ -2153,11 +3520,20 @@ void Game::Reset() {
     playerAlive = true;
     player2Alive = true;
     player3Alive = true;
+    player4Alive = true;
     pulleyRotation = 0.0f;
     machinePhase = 0.0f;
     machinePower = 0.0f;
     gateBottom = HasArea(level.exitTrigger) ? level.exitTrigger.y + level.exitTrigger.height : 650.0f;
     levelClearTimer = 0.0f;
+    toxinExposure = {};
+    playerAir = {1.0f, 1.0f, 1.0f, 1.0f};
+    playerAirWarningPhase = {};
+    toxinEmissionAccumulator = 0.0f;
+    toxinExhaustAccumulator = 0.0f;
+    toxinLevelTimer = 0.0f;
+    activeCameraZone = -1;
+    UpdateGameplayCamera(0.0f, true);
 }
 
 void Game::StartGame() {
@@ -2166,16 +3542,38 @@ void Game::StartGame() {
     menuMessage.clear();
 }
 
+void Game::OpenCharacterSelect(int playerCount) {
+    characterSelectPlayerCount = std::clamp(playerCount, 1, 4);
+    multiplayerEnabled = characterSelectPlayerCount >= 2;
+    threePlayerEnabled = characterSelectPlayerCount >= 3;
+    fourPlayerEnabled = characterSelectPlayerCount >= 4;
+    characterSelectFocusPlayer = 0;
+    selectedCharacters = {0, 1, 2, 3};
+    characterSelectReady = {};
+    mode = GameMode::CharacterSelect;
+    titleModeMenuOpen = false;
+    quitConfirmationOpen = false;
+    menuMessage.clear();
+}
+
 void Game::InitializeOverworld() {
     overworldNodes = {
-        {"gatehouse", "1", "Gatehouse Generator", {285.0f, 545.0f}, true, false},
-        {"rotary_latch_lab", "2", "Rotary Latch Lab", {470.0f, 465.0f}, false, false},
-        {"lower_works", "3", "Flooded Lower Works", {670.0f, 535.0f}, false, false},
-        {"counterweight_row", "4", "Counterweight Row", {875.0f, 405.0f}, false, false},
-        {"foundry_lift", "5", "Foundry Lift", {1095.0f, 480.0f}, false, false},
-        {"clocktower_core", "6", "Clocktower Core", {1310.0f, 335.0f}, false, false},
-        {"test_level", "T", "Test Level", {1410.0f, 430.0f}, true, false},
-        {"tileset_reference", "R", "Tileset Reference", {1510.0f, 330.0f}, true, false}
+        {"gatehouse", "1", "Gatehouse Generator", {280.0f, 500.0f}, 0, true, false},
+        {"rotary_latch_lab", "2", "Rotary Latch Lab", {475.0f, 390.0f}, 0, false, false},
+        {"lower_works", "3", "Flooded Lower Works", {680.0f, 505.0f}, 0, false, false},
+        {"counterweight_row", "4", "Counterweight Row", {885.0f, 365.0f}, 0, false, false},
+        {"neurotoxin_maze", "5", "The Neurotoxin Annex", {1100.0f, 475.0f}, 0, false, false},
+        {"clocktower_core", "6", "Clocktower Core", {1320.0f, 330.0f}, 0, false, false},
+
+        {"wendis_level_1", "W1", "Wendi's Three-Step Tumble", {545.0f, 465.0f}, 1, true, false},
+        {"wendis_level_2", "W2", "Portal Lift", {960.0f, 385.0f}, 1, true, false},
+
+        {"test_level", "T", "Test Level", {285.0f, 405.0f}, 2, true, false},
+        {"massive_test_level", "M", "Massive Object Test Facility", {500.0f, 515.0f}, 2, true, false},
+        {"spring_test_level", "S", "Spring Laboratory", {720.0f, 375.0f}, 2, true, false},
+        {"tileset_reference", "R", "Tileset Reference", {935.0f, 490.0f}, 2, true, false},
+        {"gear_render_gallery", "G", "Gear Render Gallery", {1160.0f, 350.0f}, 2, true, false},
+        {"gatehouse_generator_test", "1G", "Gatehouse Generator Test", {1380.0f, 465.0f}, 2, true, false}
     };
 
     overworldPaths = {
@@ -2184,27 +3582,66 @@ void Game::InitializeOverworld() {
         {2, 3},
         {3, 4},
         {4, 5},
-        {6, 7}
+        {6, 7},
+        {8, 9},
+        {9, 10},
+        {10, 11},
+        {11, 12},
+        {0, 13}
     };
 
     selectedOverworldNode = 0;
+    selectedOverworldWorld = 0;
+    selectedOverworldNodesByWorld = {0, 6, 8};
 }
 
 void Game::OpenOverworld() {
     if (overworldNodes.empty()) {
         InitializeOverworld();
     }
+    if (overworldNodes.empty()) {
+        mode = GameMode::Title;
+        titleModeMenuOpen = false;
+        menuMessage = "The level-select map could not be initialized.";
+        return;
+    }
 
     selectedOverworldNode = std::clamp(selectedOverworldNode, 0, static_cast<int>(overworldNodes.size()) - 1);
+    selectedOverworldWorld = std::clamp(overworldNodes[selectedOverworldNode].world, 0, 2);
+    selectedOverworldNodesByWorld[selectedOverworldWorld] = selectedOverworldNode;
     mode = GameMode::Overworld;
     titleModeMenuOpen = false;
     quitConfirmationOpen = false;
     menuMessage.clear();
 }
 
+void Game::SetOverworldWorld(int world) {
+    if (overworldNodes.empty()) return;
+
+    selectedOverworldWorld = std::clamp(world, 0, 2);
+    int rememberedNode = selectedOverworldNodesByWorld[selectedOverworldWorld];
+    if (rememberedNode >= 0 &&
+        rememberedNode < static_cast<int>(overworldNodes.size()) &&
+        overworldNodes[rememberedNode].world == selectedOverworldWorld) {
+        selectedOverworldNode = rememberedNode;
+        menuMessage.clear();
+        return;
+    }
+
+    for (int nodeIndex = 0; nodeIndex < static_cast<int>(overworldNodes.size()); nodeIndex++) {
+        if (overworldNodes[nodeIndex].world == selectedOverworldWorld) {
+            selectedOverworldNode = nodeIndex;
+            selectedOverworldNodesByWorld[selectedOverworldWorld] = nodeIndex;
+            menuMessage.clear();
+            return;
+        }
+    }
+}
+
 void Game::StartSelectedOverworldLevel() {
     if (overworldNodes.empty()) return;
 
+    selectedOverworldNode = std::clamp(selectedOverworldNode, 0, static_cast<int>(overworldNodes.size()) - 1);
     const OverworldNode& node = overworldNodes[selectedOverworldNode];
     if (!node.unlocked) {
         menuMessage = node.name + " is locked.";
@@ -2231,10 +3668,14 @@ void Game::CompleteCurrentLevelAndReturnToMap() {
         if (nextNode < static_cast<int>(overworldNodes.size())) {
             overworldNodes[nextNode].unlocked = true;
             selectedOverworldNode = nextNode;
+            selectedOverworldWorld = overworldNodes[nextNode].world;
+            selectedOverworldNodesByWorld[selectedOverworldWorld] = nextNode;
             menuMessage = overworldNodes[currentLevelNode].name + " complete. " + overworldNodes[nextNode].name + " unlocked.";
         }
         else {
             selectedOverworldNode = currentLevelNode;
+            selectedOverworldWorld = overworldNodes[currentLevelNode].world;
+            selectedOverworldNodesByWorld[selectedOverworldWorld] = currentLevelNode;
             menuMessage = overworldNodes[currentLevelNode].name + " complete.";
         }
     }
@@ -2247,7 +3688,10 @@ void Game::CompleteCurrentLevelAndReturnToMap() {
 
 void Game::Update(float dt) {
     dt = std::clamp(dt, 0.0f, 1.0f / 30.0f);
+    UpdateMusic();
     screenShakeTimer = fmaxf(0.0f, screenShakeTimer - dt);
+    achievements.Update(dt);
+    respawnGraceTimer = fmaxf(0.0f, respawnGraceTimer - dt);
 
     bool consoleToggled = false;
     if (IsKeyPressed(KEY_GRAVE)) {
@@ -2283,6 +3727,11 @@ void Game::Update(float dt) {
         return;
     }
 
+    if (mode == GameMode::CharacterSelect) {
+        UpdateCharacterSelect();
+        return;
+    }
+
     if (mode == GameMode::Overworld) {
         UpdateOverworld();
         return;
@@ -2293,7 +3742,13 @@ void Game::Update(float dt) {
         return;
     }
 
-    if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_ENTER)) {
+    bool controllerPausePressed = false;
+    for (const PlayerControllerSettings& controller : controllerSettings) {
+        const int gamepad = AvailableGamepad(controller);
+        controllerPausePressed = controllerPausePressed ||
+            (gamepad >= 0 && IsGamepadButtonPressed(gamepad, GAMEPAD_BUTTON_MIDDLE_RIGHT));
+    }
+    if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_ENTER) || controllerPausePressed) {
         mode = GameMode::Paused;
         return;
     }
@@ -2307,63 +3762,86 @@ void Game::Update(float dt) {
 
     if (won) {
         levelClearTimer -= dt;
-        UpdateMachines(dt, {}, {}, {});
+        UpdateMachines(dt, {}, {}, {}, {});
         if (levelClearTimer <= 0.0f) {
             CompleteCurrentLevelAndReturnToMap();
         }
         return;
     }
 
-    const int playerOneGamepad = controllerEnabled && IsGamepadAvailable(0) ? 0 : -1;
+    const int playerOneGamepad = AvailableGamepad(controllerSettings[0]);
+    const int playerTwoGamepad = AvailableGamepad(controllerSettings[1]);
+    const int playerThreeGamepad = AvailableGamepad(controllerSettings[2]);
+    const int playerFourGamepad = AvailableGamepad(controllerSettings[3]);
     const PlayerControls PlayerOneControls{
-        player1Bindings.left,
-        player1Bindings.right,
-        player1Bindings.up,
-        player1Bindings.down,
-        player1Bindings.jump,
+        playerBindings[0].left,
+        playerBindings[0].right,
+        playerBindings[0].up,
+        playerBindings[0].down,
+        playerBindings[0].jump,
         playerOneGamepad,
         GAMEPAD_BUTTON_LEFT_FACE_UP,
         GAMEPAD_BUTTON_LEFT_FACE_DOWN,
-        GAMEPAD_BUTTON_RIGHT_FACE_DOWN
+        controllerSettings[0].jump
     };
-    constexpr PlayerControls PlayerTwoControls{
-        KEY_J, KEY_L, KEY_I, KEY_K, KEY_NULL, -1,
-        GAMEPAD_BUTTON_UNKNOWN, GAMEPAD_BUTTON_UNKNOWN, GAMEPAD_BUTTON_UNKNOWN
+    const PlayerControls PlayerTwoControls{
+        playerBindings[1].left, playerBindings[1].right, playerBindings[1].up,
+        playerBindings[1].down, playerBindings[1].jump, playerTwoGamepad,
+        GAMEPAD_BUTTON_LEFT_FACE_UP, GAMEPAD_BUTTON_LEFT_FACE_DOWN, controllerSettings[1].jump
     };
-    constexpr PlayerControls PlayerThreeControls{
-        KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN, KEY_NULL, -1,
-        GAMEPAD_BUTTON_UNKNOWN, GAMEPAD_BUTTON_UNKNOWN, GAMEPAD_BUTTON_UNKNOWN
+    const PlayerControls PlayerThreeControls{
+        playerBindings[2].left, playerBindings[2].right, playerBindings[2].up,
+        playerBindings[2].down, playerBindings[2].jump, playerThreeGamepad,
+        GAMEPAD_BUTTON_LEFT_FACE_UP, GAMEPAD_BUTTON_LEFT_FACE_DOWN, controllerSettings[2].jump
+    };
+    const PlayerControls PlayerFourControls{
+        playerBindings[3].left, playerBindings[3].right, playerBindings[3].up,
+        playerBindings[3].down, playerBindings[3].jump, playerFourGamepad,
+        GAMEPAD_BUTTON_LEFT_FACE_UP, GAMEPAD_BUTTON_LEFT_FACE_DOWN, controllerSettings[3].jump
     };
 
     PlayerMachineInput player1Input{};
     PlayerMachineInput player2Input{};
     PlayerMachineInput player3Input{};
+    PlayerMachineInput player4Input{};
     if (!won && !lost) {
-        if (IsKeyDown(player1Bindings.left)) player1Input.moveInput -= 1.0f;
-        if (IsKeyDown(player1Bindings.right)) player1Input.moveInput += 1.0f;
-        if (playerOneGamepad >= 0) {
-            const float axis = GetGamepadAxisMovement(playerOneGamepad, GAMEPAD_AXIS_LEFT_X);
-            if (fabsf(axis) >= 0.2f) player1Input.moveInput = axis;
-            if (IsGamepadButtonDown(playerOneGamepad, GAMEPAD_BUTTON_LEFT_FACE_LEFT)) player1Input.moveInput = -1.0f;
-            if (IsGamepadButtonDown(playerOneGamepad, GAMEPAD_BUTTON_LEFT_FACE_RIGHT)) player1Input.moveInput = 1.0f;
-        }
-        if (IsKeyDown(KEY_J)) player2Input.moveInput -= 1.0f;
-        if (IsKeyDown(KEY_L)) player2Input.moveInput += 1.0f;
-        if (IsKeyDown(KEY_LEFT)) player3Input.moveInput -= 1.0f;
-        if (IsKeyDown(KEY_RIGHT)) player3Input.moveInput += 1.0f;
+        auto readMachineInput = [](const PlayerKeyBindings& keys,
+                                   const PlayerControllerSettings& controller,
+                                   int gamepad) {
+            PlayerMachineInput input{};
+            if (IsControlDown(keys.left)) input.moveInput -= 1.0f;
+            if (IsControlDown(keys.right)) input.moveInput += 1.0f;
+            if (gamepad >= 0) {
+                const float axis = GetGamepadAxisMovement(gamepad, GAMEPAD_AXIS_LEFT_X);
+                if (fabsf(axis) >= 0.2f) input.moveInput = axis;
+                if (IsGamepadButtonDown(gamepad, GAMEPAD_BUTTON_LEFT_FACE_LEFT)) input.moveInput = -1.0f;
+                if (IsGamepadButtonDown(gamepad, GAMEPAD_BUTTON_LEFT_FACE_RIGHT)) input.moveInput = 1.0f;
+            }
+            input.interactHeld = IsControlDown(keys.interact) ||
+                (gamepad >= 0 && IsGamepadButtonDown(gamepad, controller.interact));
+            input.interactPressed = IsControlPressed(keys.interact) ||
+                (gamepad >= 0 && IsGamepadButtonPressed(gamepad, controller.interact));
+            input.interactReleased = IsControlReleased(keys.interact) ||
+                (gamepad >= 0 && IsGamepadButtonReleased(gamepad, controller.interact));
+            return input;
+        };
+        player1Input = readMachineInput(playerBindings[0], controllerSettings[0], playerOneGamepad);
+        player2Input = readMachineInput(playerBindings[1], controllerSettings[1], playerTwoGamepad);
+        player3Input = readMachineInput(playerBindings[2], controllerSettings[2], playerThreeGamepad);
+        player4Input = readMachineInput(playerBindings[3], controllerSettings[3], playerFourGamepad);
+    }
 
-        player1Input.interactHeld = IsKeyDown(player1Bindings.interact) ||
-            (playerOneGamepad >= 0 && IsGamepadButtonDown(playerOneGamepad, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT));
-        player1Input.interactPressed = IsKeyPressed(player1Bindings.interact) ||
-            (playerOneGamepad >= 0 && IsGamepadButtonPressed(playerOneGamepad, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT));
-        player1Input.interactReleased = IsKeyReleased(player1Bindings.interact) ||
-            (playerOneGamepad >= 0 && IsGamepadButtonReleased(playerOneGamepad, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT));
-        player2Input.interactHeld = IsKeyDown(KEY_U);
-        player2Input.interactPressed = IsKeyPressed(KEY_U);
-        player2Input.interactReleased = IsKeyReleased(KEY_U);
-        player3Input.interactHeld = IsKeyDown(KEY_RIGHT_CONTROL);
-        player3Input.interactPressed = IsKeyPressed(KEY_RIGHT_CONTROL);
-        player3Input.interactReleased = IsKeyReleased(KEY_RIGHT_CONTROL);
+    if (level.script == LevelScript::PortalLift) {
+        AdvanceButtonPlatformLoops(
+            level,
+            dt,
+            {
+                playerAlive ? &player : nullptr,
+                multiplayerEnabled && player2Alive ? &player2 : nullptr,
+                threePlayerEnabled && player3Alive ? &player3 : nullptr,
+                fourPlayerEnabled && player4Alive ? &player4 : nullptr
+            }
+        );
     }
 
     if (playerAlive) {
@@ -2375,50 +3853,57 @@ void Game::Update(float dt) {
     if (threePlayerEnabled && player3Alive) {
         UpdatePlayer(player3, PlayerThreeControls, dt, player3Input.moveInput);
     }
-    UpdateMachines(dt, player1Input, player2Input, player3Input);
+    if (fourPlayerEnabled && player4Alive) {
+        UpdatePlayer(player4, PlayerFourControls, dt, player4Input.moveInput);
+    }
+    UpdateMachines(dt, player1Input, player2Input, player3Input, player4Input);
+    UpdatePlayerAir(dt);
     UpdateEnemies(dt);
     CheckFailureConditions();
+    UpdateGameplayCamera(dt, false);
 
     CheckWinCondition(gateBottom);
 }
 
 void Game::UpdateTitle() {
+    const int titleGamepad = AvailableGamepad(controllerSettings[0]);
+    const bool controllerConfirmPressed =
+        titleGamepad >= 0 && IsGamepadButtonPressed(titleGamepad, controllerSettings[0].jump);
+    const bool controllerBackPressed =
+        titleGamepad >= 0 && IsGamepadButtonPressed(titleGamepad, controllerSettings[0].interact);
+
     if (titleModeMenuOpen) {
-        if (IsKeyPressed(KEY_ESCAPE)) {
+        if (IsKeyPressed(KEY_ESCAPE) || controllerBackPressed) {
             titleModeMenuOpen = false;
             menuMessage.clear();
             return;
         }
 
-        if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE)) {
-            multiplayerEnabled = false;
-            threePlayerEnabled = false;
-            OpenOverworld();
+        if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE) || controllerConfirmPressed) {
+            OpenCharacterSelect(1);
         }
 
         std::vector<MenuButton> buttons{
-            {{1080, 530, 310, 46}, "Single Player"},
-            {{1080, 586, 310, 46}, "2 Players"},
-            {{1080, 642, 310, 46}, "3 Players"},
-            {{1080, 698, 310, 46}, "Back"}
+            {{92, 506, 386, 40}, "Single Player"},
+            {{92, 555, 386, 40}, "2 Players"},
+            {{92, 604, 386, 40}, "3 Players"},
+            {{92, 653, 386, 40}, "4 Players"},
+            {{92, 702, 386, 40}, "Back"}
         };
 
         if (WasButtonPressed(buttons[0])) {
-            multiplayerEnabled = false;
-            threePlayerEnabled = false;
-            OpenOverworld();
+            OpenCharacterSelect(1);
         }
         else if (WasButtonPressed(buttons[1])) {
-            multiplayerEnabled = true;
-            threePlayerEnabled = false;
-            OpenOverworld();
+            OpenCharacterSelect(2);
         }
         else if (WasButtonPressed(buttons[2])) {
-            multiplayerEnabled = true;
-            threePlayerEnabled = true;
-            OpenOverworld();
+            OpenCharacterSelect(3);
         }
         else if (WasButtonPressed(buttons[3])) {
+            OpenCharacterSelect(4);
+        }
+        else if (WasButtonPressed(buttons[4])) {
             titleModeMenuOpen = false;
             menuMessage.clear();
         }
@@ -2426,17 +3911,17 @@ void Game::UpdateTitle() {
         return;
     }
 
-    if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE)) {
+    if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE) || controllerConfirmPressed) {
         titleModeMenuOpen = true;
         menuMessage.clear();
     }
 
     std::vector<MenuButton> buttons{
-        {{1080, 510, 310, 46}, "New Game"},
-        {{1080, 566, 310, 46}, "Continue"},
-        {{1080, 622, 310, 46}, "Load Custom"},
-        {{1080, 678, 310, 46}, "Settings"},
-        {{1080, 734, 310, 46}, "Quit Game"}
+        {{92, 490, 386, 40}, "New Game"},
+        {{92, 539, 386, 40}, "Continue"},
+        {{92, 588, 386, 40}, "Load Custom"},
+        {{92, 637, 386, 40}, "Settings"},
+        {{92, 686, 386, 40}, "Quit Game"}
     };
 
     if (WasButtonPressed(buttons[0])) {
@@ -2444,9 +3929,7 @@ void Game::UpdateTitle() {
         menuMessage.clear();
     }
     else if (WasButtonPressed(buttons[1])) {
-        multiplayerEnabled = false;
-        threePlayerEnabled = false;
-        OpenOverworld();
+        OpenCharacterSelect(1);
     }
     else if (WasButtonPressed(buttons[2])) {
         menuMessage = "Custom level loading is not available yet.";
@@ -2461,26 +3944,203 @@ void Game::UpdateTitle() {
     }
 }
 
+void Game::UpdateCharacterSelect() {
+    const int primaryGamepad = AvailableGamepad(controllerSettings[0]);
+    const bool controllerBackPressed =
+        primaryGamepad >= 0 &&
+        IsGamepadButtonPressed(primaryGamepad, controllerSettings[0].interact);
+    if (IsKeyPressed(KEY_ESCAPE) || controllerBackPressed) {
+        mode = GameMode::Title;
+        titleModeMenuOpen = true;
+        characterSelectReady = {};
+        menuMessage.clear();
+        return;
+    }
+
+    for (int playerIndex = 0; playerIndex < characterSelectPlayerCount; playerIndex++) {
+        int direction = 0;
+        if (IsControlPressed(playerBindings[playerIndex].left)) direction--;
+        if (IsControlPressed(playerBindings[playerIndex].right)) direction++;
+
+        const int gamepad = AvailableGamepad(controllerSettings[playerIndex]);
+        if (gamepad >= 0) {
+            if (IsGamepadButtonPressed(gamepad, GAMEPAD_BUTTON_LEFT_FACE_LEFT)) direction--;
+            if (IsGamepadButtonPressed(gamepad, GAMEPAD_BUTTON_LEFT_FACE_RIGHT)) direction++;
+        }
+
+        if (direction != 0) {
+            selectedCharacters[playerIndex] =
+                (selectedCharacters[playerIndex] + direction + kCharacterCount) % kCharacterCount;
+            characterSelectReady[playerIndex] = false;
+            characterSelectFocusPlayer = playerIndex;
+            menuMessage.clear();
+        }
+
+        bool readyPressed = IsControlPressed(playerBindings[playerIndex].interact);
+        if (gamepad >= 0) {
+            readyPressed = readyPressed ||
+                IsGamepadButtonPressed(gamepad, controllerSettings[playerIndex].jump);
+        }
+        if (readyPressed) {
+            characterSelectReady[playerIndex] = !characterSelectReady[playerIndex];
+            characterSelectFocusPlayer = playerIndex;
+            menuMessage.clear();
+        }
+    }
+
+    constexpr float cardWidth = 260.0f;
+    constexpr float cardGap = 28.0f;
+    constexpr float cardsX = 238.0f;
+    const Vector2 mouse = GetUiMousePosition();
+    for (int characterIndex = 0; characterIndex < kCharacterCount; characterIndex++) {
+        Rectangle card{
+            cardsX + characterIndex * (cardWidth + cardGap),
+            235.0f,
+            cardWidth,
+            340.0f
+        };
+        if (CheckCollisionPointRec(mouse, card) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+            selectedCharacters[characterSelectFocusPlayer] = characterIndex;
+            characterSelectReady[characterSelectFocusPlayer] = false;
+            menuMessage.clear();
+        }
+    }
+
+    const float playerButtonsWidth =
+        characterSelectPlayerCount * 220.0f + (characterSelectPlayerCount - 1) * 40.0f;
+    const float playerButtonsX = (Constants::ScreenWidth - playerButtonsWidth) * 0.5f;
+    for (int playerIndex = 0; playerIndex < characterSelectPlayerCount; playerIndex++) {
+        Rectangle playerButton{
+            playerButtonsX + playerIndex * 260.0f,
+            635.0f,
+            220.0f,
+            52.0f
+        };
+        if (CheckCollisionPointRec(mouse, playerButton) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+            characterSelectFocusPlayer = playerIndex;
+        }
+        Rectangle readyButton{playerButton.x, 696.0f, playerButton.width, 42.0f};
+        if (CheckCollisionPointRec(mouse, readyButton) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+            characterSelectFocusPlayer = playerIndex;
+            characterSelectReady[playerIndex] = !characterSelectReady[playerIndex];
+        }
+    }
+
+    bool allReady = true;
+    for (int playerIndex = 0; playerIndex < characterSelectPlayerCount; playerIndex++) {
+        allReady = allReady && characterSelectReady[playerIndex];
+    }
+
+    Rectangle startButton{625.0f, 782.0f, 350.0f, 48.0f};
+    Rectangle backButton{100.0f, 782.0f, 220.0f, 48.0f};
+    bool controllerStartPressed = false;
+    for (int playerIndex = 0; playerIndex < characterSelectPlayerCount; ++playerIndex) {
+        const int gamepad = AvailableGamepad(controllerSettings[playerIndex]);
+        controllerStartPressed = controllerStartPressed ||
+            (gamepad >= 0 && IsGamepadButtonPressed(gamepad, GAMEPAD_BUTTON_MIDDLE_RIGHT));
+    }
+    if ((allReady && (IsKeyPressed(KEY_ENTER) || controllerStartPressed)) ||
+        (allReady && WasButtonPressed({startButton, "Continue"}))) {
+        OpenOverworld();
+    }
+    else if (WasButtonPressed({backButton, "Back"})) {
+        mode = GameMode::Title;
+        titleModeMenuOpen = true;
+        characterSelectReady = {};
+        menuMessage.clear();
+    }
+    else if (!allReady && IsKeyPressed(KEY_ENTER)) {
+        menuMessage = "Every player must be ready before continuing.";
+    }
+}
+
 void Game::UpdateOverworld() {
-    if (IsKeyPressed(KEY_ESCAPE)) {
+    if (overworldNodes.empty()) {
+        InitializeOverworld();
+        if (overworldNodes.empty()) {
+            mode = GameMode::Title;
+            titleModeMenuOpen = false;
+            menuMessage = "The level-select map could not be initialized.";
+            return;
+        }
+    }
+    selectedOverworldNode = std::clamp(selectedOverworldNode, 0, static_cast<int>(overworldNodes.size()) - 1);
+    selectedOverworldWorld = std::clamp(selectedOverworldWorld, 0, 2);
+
+    const int overworldGamepad = AvailableGamepad(controllerSettings[0]);
+    const bool controllerBackPressed = overworldGamepad >= 0 &&
+        IsGamepadButtonPressed(overworldGamepad, controllerSettings[0].interact);
+    if (IsKeyPressed(KEY_ESCAPE) || controllerBackPressed) {
         mode = GameMode::Title;
         titleModeMenuOpen = false;
         menuMessage.clear();
         return;
     }
 
-    if (IsKeyPressed(KEY_A) || IsKeyPressed(KEY_LEFT)) {
-        selectedOverworldNode = std::max(0, selectedOverworldNode - 1);
+    const bool gamepadAvailable = overworldGamepad >= 0;
+    const bool previousWorldPressed =
+        IsKeyPressed(KEY_Q) || IsKeyPressed(KEY_PAGE_UP) ||
+        (gamepadAvailable &&
+            IsGamepadButtonPressed(overworldGamepad, GAMEPAD_BUTTON_LEFT_TRIGGER_1));
+    const bool nextWorldPressed =
+        IsKeyPressed(KEY_E) || IsKeyPressed(KEY_PAGE_DOWN) ||
+        (gamepadAvailable &&
+            IsGamepadButtonPressed(overworldGamepad, GAMEPAD_BUTTON_RIGHT_TRIGGER_1));
+    if (previousWorldPressed) {
+        SetOverworldWorld((selectedOverworldWorld + 2) % 3);
+    }
+    else if (nextWorldPressed) {
+        SetOverworldWorld((selectedOverworldWorld + 1) % 3);
+    }
+
+    std::vector<int> visibleNodes;
+    for (int nodeIndex = 0; nodeIndex < static_cast<int>(overworldNodes.size()); nodeIndex++) {
+        if (overworldNodes[nodeIndex].world == selectedOverworldWorld) {
+            visibleNodes.push_back(nodeIndex);
+        }
+    }
+    auto selectedIt = std::find(visibleNodes.begin(), visibleNodes.end(), selectedOverworldNode);
+    int visibleSelection = selectedIt != visibleNodes.end()
+        ? static_cast<int>(std::distance(visibleNodes.begin(), selectedIt))
+        : 0;
+
+    const bool previousNodePressed =
+        IsControlPressed(playerBindings[0].left) || IsKeyPressed(KEY_LEFT) ||
+        (gamepadAvailable &&
+            IsGamepadButtonPressed(overworldGamepad, GAMEPAD_BUTTON_LEFT_FACE_LEFT));
+    const bool nextNodePressed =
+        IsControlPressed(playerBindings[0].right) || IsKeyPressed(KEY_RIGHT) ||
+        (gamepadAvailable &&
+            IsGamepadButtonPressed(overworldGamepad, GAMEPAD_BUTTON_LEFT_FACE_RIGHT));
+    if (previousNodePressed && !visibleNodes.empty()) {
+        visibleSelection = (visibleSelection + static_cast<int>(visibleNodes.size()) - 1) %
+            static_cast<int>(visibleNodes.size());
+        selectedOverworldNode = visibleNodes[visibleSelection];
+        selectedOverworldNodesByWorld[selectedOverworldWorld] = selectedOverworldNode;
+        menuMessage.clear();
+    }
+    else if (nextNodePressed && !visibleNodes.empty()) {
+        visibleSelection = (visibleSelection + 1) % static_cast<int>(visibleNodes.size());
+        selectedOverworldNode = visibleNodes[visibleSelection];
+        selectedOverworldNodesByWorld[selectedOverworldWorld] = selectedOverworldNode;
         menuMessage.clear();
     }
 
-    if (IsKeyPressed(KEY_D) || IsKeyPressed(KEY_RIGHT)) {
-        selectedOverworldNode = std::min(static_cast<int>(overworldNodes.size()) - 1, selectedOverworldNode + 1);
-        menuMessage.clear();
-    }
-
-    if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE)) {
+    if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE) ||
+        (gamepadAvailable &&
+            IsGamepadButtonPressed(overworldGamepad, controllerSettings[0].jump))) {
         StartSelectedOverworldLevel();
+    }
+
+    std::vector<MenuButton> worldButtons{
+        {{770, 88, 230, 44}, "World 1"},
+        {{1012, 88, 230, 44}, "World 2"},
+        {{1360, 24, 150, 38}, "Test World"}
+    };
+    for (int worldIndex = 0; worldIndex < static_cast<int>(worldButtons.size()); worldIndex++) {
+        if (WasButtonPressed(worldButtons[worldIndex])) {
+            SetOverworldWorld(worldIndex);
+        }
     }
 
     std::vector<MenuButton> buttons{
@@ -2500,8 +4160,10 @@ void Game::UpdateOverworld() {
 
     Vector2 mouse = GetUiMousePosition();
     for (int i = 0; i < static_cast<int>(overworldNodes.size()); i++) {
+        if (overworldNodes[i].world != selectedOverworldWorld) continue;
         if (CheckCollisionPointCircle(mouse, overworldNodes[i].position, 34.0f) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
             selectedOverworldNode = i;
+            selectedOverworldNodesByWorld[selectedOverworldWorld] = i;
             StartSelectedOverworldLevel();
             break;
         }
@@ -2514,7 +4176,13 @@ void Game::UpdatePaused() {
         return;
     }
 
-    if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_ENTER)) {
+    bool controllerResumePressed = false;
+    for (const PlayerControllerSettings& controller : controllerSettings) {
+        const int gamepad = AvailableGamepad(controller);
+        controllerResumePressed = controllerResumePressed ||
+            (gamepad >= 0 && IsGamepadButtonPressed(gamepad, GAMEPAD_BUTTON_MIDDLE_RIGHT));
+    }
+    if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_ENTER) || controllerResumePressed) {
         mode = GameMode::Playing;
     }
 
@@ -2567,10 +4235,13 @@ void Game::UpdateGameOverActions() {
         {{625, 591, 350, 46}, "Quit Game"}
     };
 
-    if (WasButtonPressed(buttons[0])) {
+    const int gamepad = AvailableGamepad(controllerSettings[0]);
+    if ((gamepad >= 0 && IsGamepadButtonPressed(gamepad, controllerSettings[0].jump)) ||
+        WasButtonPressed(buttons[0])) {
         StartGame();
     }
-    else if (WasButtonPressed(buttons[1])) {
+    else if ((gamepad >= 0 && IsGamepadButtonPressed(gamepad, controllerSettings[0].interact)) ||
+        WasButtonPressed(buttons[1])) {
         quitConfirmationOpen = true;
     }
 }
@@ -2580,7 +4251,12 @@ void Game::UpdateControlsPopup() {
         {{705, 775, 190, 46}, "Close"}
     };
 
-    if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE) || WasButtonPressed(buttons[0])) {
+    const int gamepad = AvailableGamepad(controllerSettings[0]);
+    const bool controllerClosePressed = gamepad >= 0 &&
+        (IsGamepadButtonPressed(gamepad, controllerSettings[0].jump) ||
+            IsGamepadButtonPressed(gamepad, controllerSettings[0].interact));
+    if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE) ||
+        controllerClosePressed || WasButtonPressed(buttons[0])) {
         controlsPopupOpen = false;
     }
 }
@@ -2594,14 +4270,20 @@ void Game::UpdateSettingsPopup() {
         return mousePressed && CheckCollisionPointRec(mouse, bounds);
     };
 
+    settingsSelectedPlayer = std::clamp(settingsSelectedPlayer, 0, 3);
+    PlayerKeyBindings& selectedBindings = pendingPlayerBindings[settingsSelectedPlayer];
     KeyboardKey* bindingTargets[] = {
-        &pendingPlayer1Bindings.left,
-        &pendingPlayer1Bindings.right,
-        &pendingPlayer1Bindings.up,
-        &pendingPlayer1Bindings.down,
-        &pendingPlayer1Bindings.jump,
-        &pendingPlayer1Bindings.interact
+        &selectedBindings.left,
+        &selectedBindings.right,
+        &selectedBindings.up,
+        &selectedBindings.down,
+        &selectedBindings.jump,
+        &selectedBindings.interact
     };
+    constexpr int bindingTargetCount = static_cast<int>(sizeof(bindingTargets) / sizeof(bindingTargets[0]));
+    if (settingsBindingCapture < -1 || settingsBindingCapture >= bindingTargetCount) {
+        settingsBindingCapture = -1;
+    }
     if (settingsBindingCapture >= 0) {
         if (IsKeyPressed(KEY_ESCAPE)) {
             settingsBindingCapture = -1;
@@ -2611,6 +4293,30 @@ void Game::UpdateSettingsPopup() {
         if (key != 0) {
             *bindingTargets[settingsBindingCapture] = static_cast<KeyboardKey>(key);
             settingsBindingCapture = -1;
+        }
+        return;
+    }
+
+    if (settingsGamepadBindingCapture < -1 || settingsGamepadBindingCapture > 1) {
+        settingsGamepadBindingCapture = -1;
+    }
+    if (settingsGamepadBindingCapture >= 0) {
+        if (IsKeyPressed(KEY_ESCAPE)) {
+            settingsGamepadBindingCapture = -1;
+            return;
+        }
+        PlayerControllerSettings& controller = pendingControllerSettings[settingsSelectedPlayer];
+        const int gamepad = AvailableGamepad(controller);
+        if (gamepad < 0) {
+            settingsGamepadBindingCapture = -1;
+            return;
+        }
+        for (GamepadButton button : kBindableGamepadButtons) {
+            if (!IsGamepadButtonPressed(gamepad, button)) continue;
+            if (settingsGamepadBindingCapture == 0) controller.jump = button;
+            else controller.interact = button;
+            settingsGamepadBindingCapture = -1;
+            break;
         }
         return;
     }
@@ -2632,6 +4338,7 @@ void Game::UpdateSettingsPopup() {
         case SettingsDropdown::UiScale: anchor = layout.controls[4]; optionCount = kUiScaleCount; break;
         case SettingsDropdown::ScreenShake: anchor = layout.controls[0]; optionCount = 3; break;
         case SettingsDropdown::ColorblindMode: anchor = layout.controls[3]; optionCount = 4; break;
+        case SettingsDropdown::ControllerDevice: anchor = layout.controlRows[0]; optionCount = 5; break;
         default: break;
         }
         const DropdownLayout dropdown = GetDropdownLayout(anchor, optionCount, columns);
@@ -2644,6 +4351,17 @@ void Game::UpdateSettingsPopup() {
             case SettingsDropdown::UiScale: pendingUiScaleIndex = i; break;
             case SettingsDropdown::ScreenShake: pendingScreenShakeSetting = static_cast<ScreenShakeSetting>(i); break;
             case SettingsDropdown::ColorblindMode: pendingColorblindSetting = static_cast<ColorblindSetting>(i); break;
+            case SettingsDropdown::ControllerDevice:
+                pendingControllerSettings[settingsSelectedPlayer].gamepad = i - 1;
+                if (i > 0) {
+                    for (int playerIndex = 0; playerIndex < 4; ++playerIndex) {
+                        if (playerIndex != settingsSelectedPlayer &&
+                            pendingControllerSettings[playerIndex].gamepad == i - 1) {
+                            pendingControllerSettings[playerIndex].gamepad = -1;
+                        }
+                    }
+                }
+                break;
             default: break;
             }
             break;
@@ -2663,6 +4381,27 @@ void Game::UpdateSettingsPopup() {
         for (int i = 0; i < static_cast<int>(layout.tabs.size()); ++i) {
             if (clicked(layout.tabs[i])) {
                 settingsPage = static_cast<SettingsPage>(i);
+                settingsDropdown = SettingsDropdown::None;
+                settingsBindingCapture = -1;
+                settingsGamepadBindingCapture = -1;
+                return;
+            }
+        }
+        if (settingsPage == SettingsPage::Controls) {
+            for (int i = 0; i < static_cast<int>(layout.playerTabs.size()); ++i) {
+                if (!clicked(layout.playerTabs[i])) continue;
+                settingsSelectedPlayer = i;
+                settingsDropdown = SettingsDropdown::None;
+                settingsBindingCapture = -1;
+                settingsGamepadBindingCapture = -1;
+                return;
+            }
+            for (int i = 0; i < static_cast<int>(layout.inputTabs.size()); ++i) {
+                if (!clicked(layout.inputTabs[i])) continue;
+                settingsControlsInputView = static_cast<ControlsInputView>(i);
+                settingsDropdown = SettingsDropdown::None;
+                settingsBindingCapture = -1;
+                settingsGamepadBindingCapture = -1;
                 return;
             }
         }
@@ -2700,18 +4439,32 @@ void Game::UpdateSettingsPopup() {
         }
     }
     else if (settingsPage == SettingsPage::Controls && mousePressed) {
-        for (int i = 0; i < 6; ++i) {
-            if (clicked(layout.controls[i])) {
+        if (settingsControlsInputView == ControlsInputView::Keyboard) {
+            for (int i = 0; i < 6; ++i) {
+                if (!clicked(layout.controlRows[i])) continue;
                 settingsBindingCapture = i;
                 return;
             }
         }
-        if (clicked(layout.controls[6])) {
-            pendingControllerEnabled = !pendingControllerEnabled;
+        else if (clicked(layout.controlRows[0])) {
+            settingsDropdown = SettingsDropdown::ControllerDevice;
             return;
         }
-        if (clicked(layout.controls[7])) {
-            pendingControllerVibrationEnabled = !pendingControllerVibrationEnabled;
+        else if (clicked(layout.controlRows[1])) {
+            if (AvailableGamepad(pendingControllerSettings[settingsSelectedPlayer]) >= 0) {
+                settingsGamepadBindingCapture = 0;
+            }
+            return;
+        }
+        else if (clicked(layout.controlRows[2])) {
+            if (AvailableGamepad(pendingControllerSettings[settingsSelectedPlayer]) >= 0) {
+                settingsGamepadBindingCapture = 1;
+            }
+            return;
+        }
+        else if (clicked(layout.controlRows[3])) {
+            pendingControllerSettings[settingsSelectedPlayer].vibration =
+                !pendingControllerSettings[settingsSelectedPlayer].vibration;
             return;
         }
     }
@@ -2720,7 +4473,9 @@ void Game::UpdateSettingsPopup() {
         else if (clicked(layout.controls[1])) pendingReducedFlashing = !pendingReducedFlashing;
         else if (clicked(layout.controls[2])) pendingHighContrast = !pendingHighContrast;
         else if (clicked(layout.controls[3])) settingsDropdown = SettingsDropdown::ColorblindMode;
-        if (settingsDropdown != SettingsDropdown::None || clicked(layout.controls[1]) || clicked(layout.controls[2])) return;
+        else if (clicked(layout.controls[4])) pendingObjectTooltipsEnabled = !pendingObjectTooltipsEnabled;
+        if (settingsDropdown != SettingsDropdown::None || clicked(layout.controls[1]) ||
+            clicked(layout.controls[2]) || clicked(layout.controls[4])) return;
     }
 
     if (clicked(layout.applyButton)) {
@@ -2742,10 +4497,17 @@ void Game::UpdateQuitConfirmation() {
         {{820, 500, 170, 46}, "No"}
     };
 
-    if (IsKeyPressed(KEY_Y) || IsKeyPressed(KEY_ENTER) || WasButtonPressed(buttons[0])) {
+    const int gamepad = AvailableGamepad(controllerSettings[0]);
+    const bool controllerConfirmPressed =
+        gamepad >= 0 && IsGamepadButtonPressed(gamepad, controllerSettings[0].jump);
+    const bool controllerBackPressed =
+        gamepad >= 0 && IsGamepadButtonPressed(gamepad, controllerSettings[0].interact);
+    if (IsKeyPressed(KEY_Y) || IsKeyPressed(KEY_ENTER) || controllerConfirmPressed ||
+        WasButtonPressed(buttons[0])) {
         shouldQuit = true;
     }
-    else if (IsKeyPressed(KEY_N) || IsKeyPressed(KEY_ESCAPE) || WasButtonPressed(buttons[1])) {
+    else if (IsKeyPressed(KEY_N) || IsKeyPressed(KEY_ESCAPE) || controllerBackPressed ||
+        WasButtonPressed(buttons[1])) {
         quitConfirmationOpen = false;
     }
 }
@@ -2778,10 +4540,10 @@ void Game::UpdatePlayer(Player& activePlayer, const PlayerControls& controls, fl
         activePlayer.facingRight = true;
     }
 
-    bool onLadder = CheckCollisionRecs(activePlayer.rect, level.ladder);
+    bool onLadder = IsOnAnyLadder(level, activePlayer.rect);
     FluidSample simulatedWater = SampleFluidAroundRectangle(level, FluidType::Water, activePlayer.rect);
     bool swimming = IsPlayerSwimming(activePlayer, level);
-    activePlayer.climbing = onLadder && !swimming &&
+    activePlayer.climbing = onLadder &&
         (controlDown(controls.up, controls.upButton) || controlDown(controls.down, controls.downButton)) && controlsEnabled;
 
     float maxMoveSpeed = swimming ? 170.0f : Constants::PlayerSpeed;
@@ -2799,6 +4561,22 @@ void Game::UpdatePlayer(Player& activePlayer, const PlayerControls& controls, fl
     }
     activePlayer.velocity.x = ApproachFloat(activePlayer.velocity.x, targetSpeed, acceleration * dt);
 
+    float standingRampAngle = 0.0f;
+    if (level.script == LevelScript::PortalLift && activePlayer.onGround &&
+        TryGetStandingRampAngle(activePlayer.rect, level.ramps, standingRampAngle)) {
+        const float downhillDirection = standingRampAngle >= 0.0f ? 1.0f : -1.0f;
+        const bool resistingUphill = moveInput * downhillDirection < -0.2f;
+        if (!resistingUphill) {
+            constexpr float MinimumSlideSpeed = 155.0f;
+            if (downhillDirection > 0.0f) {
+                activePlayer.velocity.x = fmaxf(activePlayer.velocity.x, MinimumSlideSpeed);
+            }
+            else {
+                activePlayer.velocity.x = fminf(activePlayer.velocity.x, -MinimumSlideSpeed);
+            }
+        }
+    }
+
     if (activePlayer.onGround) {
         activePlayer.coyoteTimer = Constants::CoyoteTime;
     }
@@ -2815,7 +4593,12 @@ void Game::UpdatePlayer(Player& activePlayer, const PlayerControls& controls, fl
         activePlayer.jumpBufferTimer -= dt;
     }
 
-    if (swimming && controlsEnabled) {
+    if (activePlayer.climbing) {
+        activePlayer.velocity.y = controlDown(controls.up, controls.upButton)
+            ? -Constants::PlayerClimbSpeed
+            : Constants::PlayerClimbSpeed;
+    }
+    else if (swimming && controlsEnabled) {
         float centerX = activePlayer.rect.x + activePlayer.rect.width * 0.5f;
         bool atLegacySurface = HasWaterPit(level) && activePlayer.rect.y <= level.waterPit.surfaceY + 22.0f;
         float waterAbove = SampleFluid(
@@ -2845,12 +4628,6 @@ void Game::UpdatePlayer(Player& activePlayer, const PlayerControls& controls, fl
         if (launchingFromSurface) {
             activePlayer.jumpBufferTimer = 0.0f;
         }
-    }
-    else if (onLadder && controlDown(controls.up, controls.upButton) && controlsEnabled) {
-        activePlayer.velocity.y = -Constants::PlayerClimbSpeed;
-    }
-    else if (onLadder && controlDown(controls.down, controls.downButton) && controlsEnabled) {
-        activePlayer.velocity.y = Constants::PlayerClimbSpeed;
     }
     else {
         activePlayer.velocity.y += Constants::Gravity * dt;
@@ -2896,7 +4673,7 @@ void Game::UpdatePlayer(Player& activePlayer, const PlayerControls& controls, fl
 
         for (int i = 0; i < static_cast<int>(level.stoneBlocks.size()); i++) {
             StoneBlock& block = level.stoneBlocks[i];
-            if (!CheckCollisionRecs(activePlayer.rect, block.rect)) {
+            if (!IsPlayerCollisionLayer(block.layer) || !CheckCollisionRecs(activePlayer.rect, block.rect)) {
                 continue;
             }
 
@@ -2918,7 +4695,8 @@ void Game::UpdatePlayer(Player& activePlayer, const PlayerControls& controls, fl
 
         for (int i = 0; i < static_cast<int>(level.boulders.size()); i++) {
             Boulder& boulder = level.boulders[i];
-            if (!CheckCollisionCircleRec(boulder.center, boulder.radius, activePlayer.rect)) {
+            if (!IsPlayerCollisionLayer(boulder.layer) ||
+                !CheckCollisionCircleRec(boulder.center, boulder.radius, activePlayer.rect)) {
                 continue;
             }
 
@@ -2942,7 +4720,8 @@ void Game::UpdatePlayer(Player& activePlayer, const PlayerControls& controls, fl
 
         for (int i = 0; i < static_cast<int>(level.physicsWheels.size()); i++) {
             PhysicsWheel& wheel = level.physicsWheels[i];
-            if (!CheckCollisionCircleRec(wheel.center, wheel.radius, activePlayer.rect)) {
+            if (!IsPlayerCollisionLayer(wheel.layer) ||
+                !CheckCollisionCircleRec(wheel.center, wheel.radius, activePlayer.rect)) {
                 continue;
             }
 
@@ -2965,7 +4744,18 @@ void Game::UpdatePlayer(Player& activePlayer, const PlayerControls& controls, fl
         std::vector<Rectangle> gearPushSolids = solids;
         for (int i = 0; i < static_cast<int>(level.gears.size()); i++) {
             Gear& gear = level.gears[i];
-            if (!CheckCollisionCircleRec(gear.center, gear.radius * 1.12f, activePlayer.rect)) {
+            if (!IsPlayerCollisionLayer(gear.layer) ||
+                !CheckCollisionCircleRec(gear.center, gear.radius * GearOuterRadiusScale, activePlayer.rect)) {
+                continue;
+            }
+
+            if (gear.mounting == GearMounting::Mounted) {
+                if (activePlayer.velocity.x > 0.0f) {
+                    activePlayer.rect.x = gear.center.x - gear.radius * GearOuterRadiusScale - activePlayer.rect.width;
+                }
+                else if (activePlayer.velocity.x < 0.0f) {
+                    activePlayer.rect.x = gear.center.x + gear.radius * GearOuterRadiusScale;
+                }
                 continue;
             }
 
@@ -2974,21 +4764,22 @@ void Game::UpdatePlayer(Player& activePlayer, const PlayerControls& controls, fl
                 gear.angularVelocity = gear.velocity.x / fmaxf(1.0f, gear.radius) * RAD2DEG;
                 gear.center.x += gear.velocity.x * dt;
                 ResolveGearCollisions(gear, gearPushSolids);
-                activePlayer.rect.x = gear.center.x - gear.radius * 1.12f - activePlayer.rect.width;
+                activePlayer.rect.x = gear.center.x - gear.radius * GearOuterRadiusScale - activePlayer.rect.width;
             }
             else if (activePlayer.velocity.x < 0.0f) {
                 gear.velocity.x = activePlayer.velocity.x * GetGearPushScale(gear);
                 gear.angularVelocity = gear.velocity.x / fmaxf(1.0f, gear.radius) * RAD2DEG;
                 gear.center.x += gear.velocity.x * dt;
                 ResolveGearCollisions(gear, gearPushSolids);
-                activePlayer.rect.x = gear.center.x + gear.radius * 1.12f;
+                activePlayer.rect.x = gear.center.x + gear.radius * GearOuterRadiusScale;
             }
         }
 
         std::vector<Rectangle> flywheelPushSolids = solids;
         for (int i = 0; i < static_cast<int>(level.flywheels.size()); i++) {
             Flywheel& flywheel = level.flywheels[i];
-            if (!CheckCollisionCircleRec(flywheel.center, flywheel.radius, activePlayer.rect)) {
+            if (!IsPlayerCollisionLayer(flywheel.layer) ||
+                !CheckCollisionCircleRec(flywheel.center, flywheel.radius, activePlayer.rect)) {
                 continue;
             }
 
@@ -3008,30 +4799,38 @@ void Game::UpdatePlayer(Player& activePlayer, const PlayerControls& controls, fl
             }
         }
 
+        const float previousFootY = activePlayer.rect.y + activePlayer.rect.height;
         activePlayer.rect.y += activePlayer.velocity.y * dt;
         std::vector<Rectangle> playerSolids = solids;
         for (const StoneBlock& block : level.stoneBlocks) {
+            if (!IsPlayerCollisionLayer(block.layer)) continue;
             playerSolids.push_back(block.rect);
         }
         for (const Boulder& boulder : level.boulders) {
+            if (!IsPlayerCollisionLayer(boulder.layer)) continue;
             playerSolids.push_back(GetBoulderBounds(boulder));
         }
         for (const PhysicsWheel& wheel : level.physicsWheels) {
+            if (!IsPlayerCollisionLayer(wheel.layer)) continue;
             playerSolids.push_back(GetWheelBounds(wheel));
         }
         for (const Gear& gear : level.gears) {
+            if (!IsPlayerCollisionLayer(gear.layer)) continue;
             playerSolids.push_back(GetGearBounds(gear));
         }
         for (const Flywheel& flywheel : level.flywheels) {
+            if (!IsPlayerCollisionLayer(flywheel.layer)) continue;
             playerSolids.push_back(GetFlywheelBounds(flywheel));
         }
         for (const Screw& screw : level.screws) {
+            if (!IsPlayerCollisionLayer(screw.layer)) continue;
             AppendScrewColliders(playerSolids, screw);
         }
 
         ResolveVertical(activePlayer, playerSolids);
-        ApplyScrewConveyor(activePlayer.rect, activePlayer.velocity, 1.0f, level.screws, dt);
-        ResolveRampStanding(activePlayer.rect, activePlayer.velocity, activePlayer.onGround, level.ramps);
+        ApplyScrewConveyor(activePlayer.rect, activePlayer.velocity, 1.0f,
+            WorldLayer::Middleground, level.screws, dt);
+        ResolvePlayerRampStanding(activePlayer, previousFootY, level.ramps, dt);
         ResolveTrapDoorStanding(activePlayer.rect, activePlayer.velocity, activePlayer.onGround, level.trapDoors);
         ResolveSeeSawStanding(activePlayer.rect, activePlayer.velocity, activePlayer.onGround, level.seeSaws);
     }
@@ -3046,9 +4845,9 @@ void Game::UpdatePlayer(Player& activePlayer, const PlayerControls& controls, fl
     );
 }
 
-std::array<bool, 3> Game::UpdateFlexibleEndpointInteractions(
-    const std::array<Player*, 3>& players,
-    const std::array<PlayerMachineInput, 3>& inputs
+std::array<bool, 4> Game::UpdateFlexibleEndpointInteractions(
+    const std::array<Player*, 4>& players,
+    const std::array<PlayerMachineInput, 4>& inputs
 ) {
     struct EndpointHandle {
         bool* pinned;
@@ -3138,7 +4937,7 @@ std::array<bool, 3> Game::UpdateFlexibleEndpointInteractions(
         }
     }
 
-    std::array<bool, 3> consumed{};
+    std::array<bool, 4> consumed{};
     for (int playerIndex = 0; playerIndex < static_cast<int>(players.size()); playerIndex++) {
         Player* activePlayer = players[playerIndex];
         if (activePlayer == nullptr) {
@@ -3239,33 +5038,222 @@ std::array<bool, 3> Game::UpdateFlexibleEndpointInteractions(
     return consumed;
 }
 
-void Game::UpdateMachines(float dt, const PlayerMachineInput& player1Input, const PlayerMachineInput& player2Input, const PlayerMachineInput& player3Input) {
-    std::array<bool, 3> flexibleInputConsumed{};
+void Game::UpdateNeurotoxin(
+    float dt,
+    const PlayerMachineInput& player1Input,
+    const PlayerMachineInput& player2Input,
+    const PlayerMachineInput& player3Input,
+    const PlayerMachineInput& player4Input,
+    const std::array<bool, 4>& consumedInputs
+) {
+    toxinLevelTimer += dt;
+
+    if (!won && !lost) {
+        const bool player1Near = playerAlive &&
+            CheckCollisionCircleRec(level.valve.center, level.valve.radius + 25.0f, player.rect);
+        const bool player2Near = multiplayerEnabled && player2Alive &&
+            CheckCollisionCircleRec(level.valve.center, level.valve.radius + 25.0f, player2.rect);
+        const bool player3Near = threePlayerEnabled && player3Alive &&
+            CheckCollisionCircleRec(level.valve.center, level.valve.radius + 25.0f, player3.rect);
+        const bool player4Near = fourPlayerEnabled && player4Alive &&
+            CheckCollisionCircleRec(level.valve.center, level.valve.radius + 25.0f, player4.rect);
+        const bool valveHeld =
+            (player1Near && player1Input.interactHeld && !consumedInputs[0]) ||
+            (player2Near && player2Input.interactHeld && !consumedInputs[1]) ||
+            (player3Near && player3Input.interactHeld && !consumedInputs[2]) ||
+            (player4Near && player4Input.interactHeld && !consumedInputs[3]);
+
+        if (valveHeld && !level.valve.opened) {
+            level.valve.turnDegrees = fminf(360.0f, level.valve.turnDegrees + level.valve.turnSpeed * dt);
+            if (level.valve.turnDegrees >= 360.0f) {
+                level.valve.opened = true;
+                achievements.Unlock("still_alive");
+            }
+        }
+
+        const ToxinLeak& leak = level.toxinLeak;
+        if (!level.valve.opened && leak.fluidIndex >= 0 &&
+            leak.fluidIndex < static_cast<int>(level.fluids.size())) {
+            FluidField& toxin = level.fluids[leak.fluidIndex];
+            const float toxinMass = GetFluidMass(toxin);
+            if (toxin.type == FluidType::Gas && toxinMass < leak.maximumMass) {
+                toxinEmissionAccumulator += leak.massPerSecond * dt;
+                const float requested = fminf(
+                    toxinEmissionAccumulator,
+                    leak.maximumMass - toxinMass
+                );
+                if (requested > 0.0001f) {
+                    const float pulse = sinf(toxinLevelTimer * 3.7f);
+                    const float emitted = EmitGasDensity(
+                        toxin,
+                        leak.source,
+                        {48.0f + pulse * 18.0f, -42.0f},
+                        requested
+                    );
+                    toxinEmissionAccumulator = fmaxf(0.0f, toxinEmissionAccumulator - emitted);
+                }
+            }
+        }
+
+        if (level.valve.opened && HasArea(level.exitTrigger) && leak.fluidIndex >= 0 &&
+            leak.fluidIndex < static_cast<int>(level.fluids.size())) {
+            FluidField& toxin = level.fluids[leak.fluidIndex];
+            float closedBottom = level.exitTrigger.y + level.exitTrigger.height;
+            float doorOpenAmount = Clamp01((closedBottom - gateBottom) / level.exitTrigger.height);
+            float exhaustRate = 3.0f + GetFluidMass(toxin) * 0.003f;
+            toxinExhaustAccumulator += exhaustRate * doorOpenAmount * dt;
+            const float requestedRemoval = toxinExhaustAccumulator;
+            toxinExhaustAccumulator = 0.0f;
+            VentGasDensity(
+                toxin,
+                level.exitTrigger,
+                {-1.0f, 0.0f},
+                310.0f,
+                185.0f * doorOpenAmount,
+                requestedRemoval,
+                dt
+            );
+        }
+
+        Player* players[] = {
+            playerAlive ? &player : nullptr,
+            multiplayerEnabled && player2Alive ? &player2 : nullptr,
+            threePlayerEnabled && player3Alive ? &player3 : nullptr,
+            fourPlayerEnabled && player4Alive ? &player4 : nullptr
+        };
+        for (int index = 0; index < 4; ++index) {
+            if (players[index] == nullptr) continue;
+            const float density = SampleFluidAroundRectangle(level, FluidType::Gas, players[index]->rect).density;
+            if (density >= 0.025f) {
+                const float doseScale = 0.25f + density * 1.85f;
+                toxinExposure[index] = fminf(1.0f,
+                    toxinExposure[index] + level.toxinLeak.exposureRate * doseScale * dt);
+                float airUseRate = 0.028f + density * 0.115f;
+                playerAir[index] = fmaxf(0.0f, playerAir[index] - airUseRate * dt);
+            }
+            else {
+                const float recoveryRate = level.valve.opened ? 0.075f : 0.032f;
+                toxinExposure[index] = fmaxf(0.0f, toxinExposure[index] - recoveryRate * dt);
+                float airRecoveryRate = level.valve.opened ? 0.24f : 0.14f;
+                playerAir[index] = fminf(1.0f, playerAir[index] + airRecoveryRate * dt);
+            }
+        }
+    }
+
+    machinePower = GetValveOpenAmount(level.valve);
+    if (HasArea(level.exitTrigger)) {
+        const float targetGateBottom = level.valve.opened
+            ? level.exitTrigger.y
+            : level.exitTrigger.y + level.exitTrigger.height;
+        gateBottom = MoveTowardsFloat(gateBottom, targetGateBottom, 190.0f * dt);
+    }
+}
+
+void Game::UpdatePlayerAir(float dt) {
+    if (won || lost) return;
+
+    Player* players[] = {
+        playerAlive ? &player : nullptr,
+        multiplayerEnabled && player2Alive ? &player2 : nullptr,
+        threePlayerEnabled && player3Alive ? &player3 : nullptr,
+        fourPlayerEnabled && player4Alive ? &player4 : nullptr
+    };
+
+    for (int index = 0; index < 4; ++index) {
+        Player* activePlayer = players[index];
+        if (activePlayer == nullptr) {
+            playerAirWarningPhase[index] = 0.0f;
+            continue;
+        }
+
+        const bool toxinHazard =
+            level.script == LevelScript::NeurotoxinMaze &&
+            SampleFluidAroundRectangle(level, FluidType::Gas, activePlayer->rect).density >= 0.025f;
+        const bool underwaterHazard =
+            level.script != LevelScript::NeurotoxinMaze &&
+            IsPlayerHeadSubmerged(*activePlayer, level);
+
+        if (level.script != LevelScript::NeurotoxinMaze) {
+            constexpr float UnderwaterAirUseRate = 0.085f;
+            constexpr float SurfaceAirRecoveryRate = 0.34f;
+            if (underwaterHazard) {
+                playerAir[index] = fmaxf(
+                    0.0f,
+                    playerAir[index] - UnderwaterAirUseRate * dt
+                );
+            }
+            else {
+                playerAir[index] = fminf(
+                    1.0f,
+                    playerAir[index] + SurfaceAirRecoveryRate * dt
+                );
+            }
+        }
+
+        if (toxinHazard || underwaterHazard) {
+            const float airDanger = Clamp01(1.0f - playerAir[index]);
+            const float acceleration = powf(airDanger, 1.35f);
+            const float flashesPerSecond = 0.65f + acceleration * 4.85f;
+            playerAirWarningPhase[index] = fmodf(
+                playerAirWarningPhase[index] + flashesPerSecond * dt,
+                1.0f
+            );
+        }
+        else {
+            playerAirWarningPhase[index] = 0.0f;
+        }
+    }
+}
+
+void Game::UpdateMachines(
+    float dt,
+    const PlayerMachineInput& player1Input,
+    const PlayerMachineInput& player2Input,
+    const PlayerMachineInput& player3Input,
+    const PlayerMachineInput& player4Input
+) {
+    std::array<bool, 4> flexibleInputConsumed{};
     if (!won && !lost) {
         UpdateWind(dt);
         UpdateFluids(dt);
         UpdatePhysicsObjects(dt);
         UpdateButtons();
+        UpdatePortals();
         UpdateArrowTraps(dt);
         UpdateBreakableTiles(dt);
         const Player* activePlayer1 = playerAlive ? &player : nullptr;
         const Player* activePlayer2 = multiplayerEnabled && player2Alive ? &player2 : nullptr;
         const Player* activePlayer3 = threePlayerEnabled && player3Alive ? &player3 : nullptr;
-        std::array<Player*, 3> flexiblePlayers{
+        const Player* activePlayer4 = fourPlayerEnabled && player4Alive ? &player4 : nullptr;
+        std::array<Player*, 4> flexiblePlayers{
             playerAlive ? &player : nullptr,
             multiplayerEnabled && player2Alive ? &player2 : nullptr,
-            threePlayerEnabled && player3Alive ? &player3 : nullptr
+            threePlayerEnabled && player3Alive ? &player3 : nullptr,
+            fourPlayerEnabled && player4Alive ? &player4 : nullptr
         };
-        std::array<PlayerMachineInput, 3> flexibleInputs{player1Input, player2Input, player3Input};
+        std::array<PlayerMachineInput, 4> flexibleInputs{
+            player1Input, player2Input, player3Input, player4Input
+        };
         flexibleInputConsumed = UpdateFlexibleEndpointInteractions(flexiblePlayers, flexibleInputs);
+
+        const Rectangle flexibleSimulationBounds{
+            gameplayCamera.target.x - Constants::ScreenWidth * 0.5f - 240.0f,
+            gameplayCamera.target.y - Constants::ScreenHeight * 0.5f - 240.0f,
+            Constants::ScreenWidth + 480.0f,
+            Constants::ScreenHeight + 480.0f
+        };
 
         for (int chainIndex = 0; chainIndex < static_cast<int>(level.chains.size()); chainIndex++) {
             Chain& chain = level.chains[chainIndex];
+            if (!CheckCollisionRecs(flexibleSimulationBounds, GetChainBounds(chain))) {
+                continue;
+            }
             std::vector<Rectangle> colliders = BuildFlexibleBodyColliders(
                 level,
                 activePlayer1,
                 activePlayer2,
                 activePlayer3,
+                activePlayer4,
                 chainIndex,
                 -1
             );
@@ -3294,11 +5282,15 @@ void Game::UpdateMachines(float dt, const PlayerMachineInput& player1Input, cons
 
         for (int ropeIndex = 0; ropeIndex < static_cast<int>(level.physicsRopes.size()); ropeIndex++) {
             PhysicsRope& rope = level.physicsRopes[ropeIndex];
+            if (!CheckCollisionRecs(flexibleSimulationBounds, GetPhysicsRopeBounds(rope))) {
+                continue;
+            }
             std::vector<Rectangle> colliders = BuildFlexibleBodyColliders(
                 level,
                 activePlayer1,
                 activePlayer2,
                 activePlayer3,
+                activePlayer4,
                 -1,
                 ropeIndex
             );
@@ -3326,14 +5318,22 @@ void Game::UpdateMachines(float dt, const PlayerMachineInput& player1Input, cons
         }
     }
 
+    if (level.script == LevelScript::NeurotoxinMaze) {
+        UpdateNeurotoxin(
+            dt, player1Input, player2Input, player3Input, player4Input, flexibleInputConsumed);
+        return;
+    }
+
     if (level.script == LevelScript::FloodedFoundry) {
         if (!won && !lost) {
             bool player1NearValve = playerAlive && CheckCollisionCircleRec(level.valve.center, level.valve.radius + 24.0f, player.rect);
             bool player2NearValve = multiplayerEnabled && player2Alive && CheckCollisionCircleRec(level.valve.center, level.valve.radius + 24.0f, player2.rect);
             bool player3NearValve = threePlayerEnabled && player3Alive && CheckCollisionCircleRec(level.valve.center, level.valve.radius + 24.0f, player3.rect);
+            bool player4NearValve = fourPlayerEnabled && player4Alive && CheckCollisionCircleRec(level.valve.center, level.valve.radius + 24.0f, player4.rect);
             bool valveHeld = (player1NearValve && player1Input.interactHeld && !flexibleInputConsumed[0]) ||
                 (player2NearValve && player2Input.interactHeld && !flexibleInputConsumed[1]) ||
-                (player3NearValve && player3Input.interactHeld && !flexibleInputConsumed[2]);
+                (player3NearValve && player3Input.interactHeld && !flexibleInputConsumed[2]) ||
+                (player4NearValve && player4Input.interactHeld && !flexibleInputConsumed[3]);
             if (valveHeld && !level.valve.opened) {
                 level.valve.turnDegrees = fminf(360.0f, level.valve.turnDegrees + level.valve.turnSpeed * dt);
                 if (level.valve.turnDegrees >= 360.0f) {
@@ -3371,6 +5371,40 @@ void Game::UpdateMachines(float dt, const PlayerMachineInput& player1Input, cons
         return;
     }
 
+    if (level.script == LevelScript::ClocktowerCore) {
+        const auto toggleNearbyClockGear = [&](const Player* activePlayer, bool interactPressed, bool inputConsumed) {
+            if (activePlayer == nullptr || !interactPressed || inputConsumed) return;
+            for (Gear& gear : level.gears) {
+                if (gear.clockHand == ClockHandType::None) continue;
+                if (IsPlayerInsideClockGearProxy(gear, *activePlayer)) {
+                    gear.stopped = !gear.stopped;
+                    return;
+                }
+            }
+        };
+        if (!won && !lost) {
+            toggleNearbyClockGear(playerAlive ? &player : nullptr, player1Input.interactPressed, flexibleInputConsumed[0]);
+            toggleNearbyClockGear(multiplayerEnabled && player2Alive ? &player2 : nullptr,
+                player2Input.interactPressed, flexibleInputConsumed[1]);
+            toggleNearbyClockGear(threePlayerEnabled && player3Alive ? &player3 : nullptr,
+                player3Input.interactPressed, flexibleInputConsumed[2]);
+            toggleNearbyClockGear(fourPlayerEnabled && player4Alive ? &player4 : nullptr,
+                player4Input.interactPressed, flexibleInputConsumed[3]);
+        }
+
+        const int handCount = CountClockHandGears(level);
+        const int lockedHands = CountLockedClockHands(level);
+        machinePower = handCount > 0 ? static_cast<float>(lockedHands) / static_cast<float>(handCount) : 0.0f;
+        if (HasArea(level.exitTrigger)) {
+            const bool midnightLocked = handCount == 3 && lockedHands == handCount;
+            const float targetGateBottom = midnightLocked
+                ? level.exitTrigger.y
+                : level.exitTrigger.y + level.exitTrigger.height;
+            gateBottom = MoveTowardsFloat(gateBottom, targetGateBottom, 190.0f * dt);
+        }
+        return;
+    }
+
     if (level.script == LevelScript::RotaryLatchLab) {
         machinePower = 0.0f;
         if (!won && !lost) {
@@ -3384,6 +5418,9 @@ void Game::UpdateMachines(float dt, const PlayerMachineInput& player1Input, cons
                 }
                 if (threePlayerEnabled && player3Alive) {
                     TryLockRotaryLatch(latch, player3, player3Input.interactPressed);
+                }
+                if (fourPlayerEnabled && player4Alive) {
+                    TryLockRotaryLatch(latch, player4, player4Input.interactPressed);
                 }
             }
         }
@@ -3401,24 +5438,28 @@ void Game::UpdateMachines(float dt, const PlayerMachineInput& player1Input, cons
         bool heavyPlatePressed = false;
         for (const Button& button : level.buttons) {
             for (const Boulder& boulder : level.boulders) {
+                if (!IsPlayerCollisionLayer(boulder.layer)) continue;
                 if (CheckCollisionCircleRec(boulder.center, boulder.radius, button.rect)) {
                     heavyPlatePressed = true;
                     break;
                 }
             }
             for (const PhysicsWheel& wheel : level.physicsWheels) {
+                if (!IsPlayerCollisionLayer(wheel.layer)) continue;
                 if (CheckCollisionCircleRec(wheel.center, wheel.radius, button.rect)) {
                     heavyPlatePressed = true;
                     break;
                 }
             }
             for (const Gear& gear : level.gears) {
-                if (CheckCollisionCircleRec(gear.center, gear.radius * 1.12f, button.rect)) {
+                if (!IsPlayerCollisionLayer(gear.layer) || gear.mounting == GearMounting::Mounted) continue;
+                if (CheckCollisionCircleRec(gear.center, gear.radius * GearOuterRadiusScale, button.rect)) {
                     heavyPlatePressed = true;
                     break;
                 }
             }
             for (const Flywheel& flywheel : level.flywheels) {
+                if (!IsPlayerCollisionLayer(flywheel.layer)) continue;
                 if (CheckCollisionCircleRec(flywheel.center, flywheel.radius, button.rect)) {
                     heavyPlatePressed = true;
                     break;
@@ -3437,12 +5478,121 @@ void Game::UpdateMachines(float dt, const PlayerMachineInput& player1Input, cons
         return;
     }
 
+    if (level.script == LevelScript::PortalLift) {
+        for (PlatformLoopButtonLink& link : level.platformLoopButtonLinks) {
+            if (link.buttonIndex >= 0 && link.buttonIndex < static_cast<int>(level.buttons.size()) &&
+                level.buttons[link.buttonIndex].pressed) {
+                link.activated = true;
+            }
+        }
+        const auto isButtonPowered = [&](int buttonIndex) {
+            if (buttonIndex >= 0 && buttonIndex < static_cast<int>(level.buttons.size()) &&
+                level.buttons[buttonIndex].pressed) {
+                return true;
+            }
+            return std::any_of(
+                level.platformLoopButtonLinks.begin(),
+                level.platformLoopButtonLinks.end(),
+                [&](const PlatformLoopButtonLink& link) {
+                    return link.buttonIndex == buttonIndex && link.activated;
+                }
+            );
+        };
+
+        const bool chamberLightPowered = !level.buttons.empty() && level.buttons.front().pressed;
+        for (ButtonPlatformLink& link : level.buttonPlatformLinks) {
+            link.active = link.buttonIndex >= 0 &&
+                link.buttonIndex < static_cast<int>(level.buttons.size()) &&
+                level.buttons[link.buttonIndex].pressed;
+        }
+        for (ButtonPlatformLoop& loop : level.buttonPlatformLoops) {
+            loop.active = loop.buttonIndex < 0 ||
+                (loop.buttonIndex < static_cast<int>(level.buttons.size()) &&
+                    level.buttons[loop.buttonIndex].pressed);
+        }
+        for (ButtonSpikeLink& link : level.buttonSpikeLinks) {
+            link.active = link.buttonIndex >= 0 &&
+                link.buttonIndex < static_cast<int>(level.buttons.size()) &&
+                level.buttons[link.buttonIndex].pressed;
+        }
+        for (const ButtonFanLink& link : level.buttonFanLinks) {
+            const bool powered = isButtonPowered(link.buttonIndex);
+            if (link.fanIndex >= 0 && link.fanIndex < static_cast<int>(level.fans.size())) {
+                level.fans[link.fanIndex].power = powered ? link.poweredAmount : 0.0f;
+            }
+        }
+        if (level.buttonExitLink.buttonIndex >= 0 &&
+            isButtonPowered(level.buttonExitLink.buttonIndex)) {
+            level.buttonExitLink.activated = true;
+        }
+        machinePower = chamberLightPowered ? 1.0f : 0.0f;
+        if (HasArea(level.exitTrigger)) {
+            const float targetGateBottom = level.buttonExitLink.activated
+                ? level.exitTrigger.y
+                : level.exitTrigger.y + level.exitTrigger.height;
+            gateBottom = MoveTowardsFloat(gateBottom, targetGateBottom, 190.0f * dt);
+        }
+        return;
+    }
+
+    if (level.script == LevelScript::ButtonSequence) {
+        int activatedStages = 0;
+        int totalStages = static_cast<int>(level.buttonTrapDoorLinks.size()) +
+            static_cast<int>(level.buttonLadderLinks.size()) +
+            (level.buttonExitLink.buttonIndex >= 0 ? 1 : 0);
+
+        for (ButtonTrapDoorLink& link : level.buttonTrapDoorLinks) {
+            if (link.buttonIndex >= 0 && link.buttonIndex < static_cast<int>(level.buttons.size()) &&
+                level.buttons[link.buttonIndex].pressed) {
+                link.activated = true;
+            }
+            if (link.activated) {
+                ++activatedStages;
+                if (link.trapDoorIndex >= 0 && link.trapDoorIndex < static_cast<int>(level.trapDoors.size())) {
+                    TrapDoor& trapDoor = level.trapDoors[link.trapDoorIndex];
+                    trapDoor.angle = MoveTowardsFloat(trapDoor.angle, link.openAngle, link.speed * dt);
+                }
+            }
+        }
+        for (ButtonLadderLink& link : level.buttonLadderLinks) {
+            if (link.buttonIndex >= 0 && link.buttonIndex < static_cast<int>(level.buttons.size()) &&
+                level.buttons[link.buttonIndex].pressed) {
+                link.activated = true;
+            }
+            if (link.activated) {
+                link.revealProgress = MoveTowardsFloat(link.revealProgress, 1.0f, 2.4f * dt);
+                ++activatedStages;
+            }
+        }
+        if (level.buttonExitLink.buttonIndex >= 0 &&
+            level.buttonExitLink.buttonIndex < static_cast<int>(level.buttons.size()) &&
+            level.buttons[level.buttonExitLink.buttonIndex].pressed) {
+            level.buttonExitLink.activated = true;
+        }
+        if (level.buttonExitLink.activated) ++activatedStages;
+
+        machinePower = totalStages > 0
+            ? static_cast<float>(activatedStages) / static_cast<float>(totalStages)
+            : 0.0f;
+        if (HasArea(level.exitTrigger)) {
+            const float targetGateBottom = level.buttonExitLink.activated
+                ? level.exitTrigger.y
+                : level.exitTrigger.y + level.exitTrigger.height;
+            gateBottom = MoveTowardsFloat(gateBottom, targetGateBottom, 190.0f * dt);
+        }
+        return;
+    }
+
     float winchDelta = 0.0f;
     if (!won && !lost) {
         bool player1GrabbingWinch = playerAlive && IsNearRect(player.rect, machineWinch.rect, 18.0f) && player1Input.interactHeld && !flexibleInputConsumed[0];
         bool player2GrabbingWinch = multiplayerEnabled && player2Alive && IsNearRect(player2.rect, machineWinch.rect, 18.0f) && player2Input.interactHeld && !flexibleInputConsumed[1];
         bool player3GrabbingWinch = threePlayerEnabled && player3Alive && IsNearRect(player3.rect, machineWinch.rect, 18.0f) && player3Input.interactHeld && !flexibleInputConsumed[2];
-        if (player3GrabbingWinch && !player1GrabbingWinch && !player2GrabbingWinch) {
+        bool player4GrabbingWinch = fourPlayerEnabled && player4Alive && IsNearRect(player4.rect, machineWinch.rect, 18.0f) && player4Input.interactHeld && !flexibleInputConsumed[3];
+        if (player4GrabbingWinch && !player1GrabbingWinch && !player2GrabbingWinch && !player3GrabbingWinch) {
+            winchDelta = UpdateWinch(machineWinch, player4, player4Input.moveInput, player4Input.interactHeld, dt);
+        }
+        else if (player3GrabbingWinch && !player1GrabbingWinch && !player2GrabbingWinch) {
             winchDelta = UpdateWinch(machineWinch, player3, player3Input.moveInput, player3Input.interactHeld, dt);
         }
         else if (player2GrabbingWinch && !player1GrabbingWinch) {
@@ -3460,12 +5610,36 @@ void Game::UpdateMachines(float dt, const PlayerMachineInput& player1Input, cons
         else if (threePlayerEnabled && player3Alive) {
             winchDelta = UpdateWinch(machineWinch, player3, 0.0f, false, dt);
         }
+        else if (fourPlayerEnabled && player4Alive) {
+            winchDelta = UpdateWinch(machineWinch, player4, 0.0f, false, dt);
+        }
     }
 
-    machinePower = GetMachinePower(machineWinch);
-    float spinAmount = fabsf(winchDelta) * 3.0f + machinePower * 140.0f * dt;
+    const float mechanicalDrive = GetMachinePower(machineWinch);
+    GuideObject* factoryGenerator = nullptr;
+    for (GuideObject& object : level.guideObjects) {
+        if (object.type == GuideObjectType::Generator && object.active && !object.broken) {
+            factoryGenerator = &object;
+            break;
+        }
+    }
+
+    const float generatorLoadScale = factoryGenerator != nullptr
+        ? 1.0f / (1.0f + factoryGenerator->mechanicalLoad * 0.24f)
+        : 1.0f;
+    float spinAmount = (fabsf(winchDelta) * 3.0f + mechanicalDrive * 140.0f * dt) * generatorLoadScale;
     pulleyRotation += spinAmount;
-    machinePhase += (0.35f + machinePower * 3.3f) * dt;
+    machinePhase += (0.35f + mechanicalDrive * 3.3f) * dt;
+
+    if (factoryGenerator != nullptr) {
+        factoryGenerator->mechanicalInputSpeed = dt > 0.0001f
+            ? spinAmount * 1.7f / dt
+            : 0.0f;
+        machinePower = std::clamp(factoryGenerator->power.currentPower, 0.0f, 1.0f);
+    }
+    else {
+        machinePower = mechanicalDrive;
+    }
 
     UpdateHangingWeights(level.weights, machinePower, machinePhase);
 
@@ -3480,21 +5654,27 @@ void Game::UpdateEnemies(float dt) {
     std::vector<Rectangle> solids = BuildSolids(level);
     AppendFlexibleObjectColliders(solids, level);
     for (const StoneBlock& block : level.stoneBlocks) {
+        if (!IsPlayerCollisionLayer(block.layer)) continue;
         solids.push_back(block.rect);
     }
     for (const Boulder& boulder : level.boulders) {
+        if (!IsPlayerCollisionLayer(boulder.layer)) continue;
         solids.push_back(GetBoulderBounds(boulder));
     }
     for (const PhysicsWheel& wheel : level.physicsWheels) {
+        if (!IsPlayerCollisionLayer(wheel.layer)) continue;
         solids.push_back(GetWheelBounds(wheel));
     }
     for (const Gear& gear : level.gears) {
+        if (!IsPlayerCollisionLayer(gear.layer)) continue;
         solids.push_back(GetGearBounds(gear));
     }
     for (const Flywheel& flywheel : level.flywheels) {
+        if (!IsPlayerCollisionLayer(flywheel.layer)) continue;
         solids.push_back(GetFlywheelBounds(flywheel));
     }
     for (const Screw& screw : level.screws) {
+        if (!IsPlayerCollisionLayer(screw.layer)) continue;
         AppendScrewColliders(solids, screw);
     }
 
@@ -3539,7 +5719,8 @@ void Game::UpdateEnemies(float dt) {
 
 void Game::UpdateWind(float dt) {
     for (Fan& fan : level.fans) {
-        fan.rotation += fan.power * fan.strength * dt * 1.8f;
+        const float visualSpinSpeed = fminf(fan.strength * 1.8f, 1440.0f);
+        fan.rotation += fan.power * visualSpinSpeed * dt;
     }
 
     for (Pinwheel& pinwheel : level.pinwheels) {
@@ -3557,32 +5738,49 @@ void Game::UpdateFluids(float dt) {
     const Player* activePlayer1 = playerAlive ? &player : nullptr;
     const Player* activePlayer2 = multiplayerEnabled && player2Alive ? &player2 : nullptr;
     const Player* activePlayer3 = threePlayerEnabled && player3Alive ? &player3 : nullptr;
-    std::vector<Rectangle> obstacles = BuildFluidObstacles(level, activePlayer1, activePlayer2, activePlayer3);
+    const Player* activePlayer4 = fourPlayerEnabled && player4Alive ? &player4 : nullptr;
+    std::vector<Rectangle> obstacles =
+        BuildFluidObstacles(level, activePlayer1, activePlayer2, activePlayer3, activePlayer4, true);
+    std::vector<Rectangle> gasObstacles =
+        BuildFluidObstacles(level, nullptr, nullptr, nullptr, nullptr, false);
 
     for (FluidField& fluid : level.fluids) {
-        // Cellular materials do not need a per-pixel wind query. Object impulses
-        // still stir them, while particle gel and gas retain full wind interaction.
+        // Characters displace liquids and granular material, but a person should
+        // not punch a player-sized hole into a volumetric gas concentration grid.
+        const std::vector<Rectangle>& relevantObstacles = fluid.type == FluidType::Gas
+            ? gasObstacles
+            : obstacles;
+        const std::vector<Rectangle> nearbyObstacles = FilterFluidObstacles(fluid, relevantObstacles);
+        // Water and sand do not need a per-cell wind query. Gel particles and gas
+        // concentration tiles retain full wind interaction.
         int flowPointCount = (fluid.type == FluidType::Water || fluid.type == FluidType::Sand) ?
             0 : GetFluidSimulationPointCount(fluid);
         std::vector<Vector2> externalFlow(static_cast<size_t>(flowPointCount));
         for (int index = 0; index < static_cast<int>(externalFlow.size()); index++) {
             externalFlow[index] = GetWindAtPoint(level, GetFluidSimulationPoint(fluid, index));
         }
-        UpdateFluidField(fluid, obstacles, externalFlow, dt, SelectedFluidMode(advancedFluidSimulation));
+        UpdateFluidField(fluid, nearbyObstacles, externalFlow, dt, SelectedFluidMode(advancedFluidSimulation));
     }
 }
 
 void Game::UpdatePhysicsObjects(float dt) {
     std::vector<Rectangle> solids = BuildSolids(level);
-    AppendFlexibleObjectColliders(solids, level);
-    std::vector<Rectangle> dynamicWorldSolids = solids;
-    for (const Screw& screw : level.screws) {
-        AppendScrewColliders(dynamicWorldSolids, screw);
+    std::array<std::vector<Rectangle>, WorldLayerCount> dynamicWorldSolids{
+        solids, solids, solids
+    };
+    AppendFlexibleObjectColliders(dynamicWorldSolids[WorldLayerIndex(WorldLayer::Middleground)], level);
+    for (const GuideObject& object : level.guideObjects) {
+        if (object.body.type == BodyType::Dynamic && !object.broken && object.active) {
+            dynamicWorldSolids[WorldLayerIndex(object.layer)].push_back(GetGuideObjectBounds(object));
+        }
     }
-    const std::vector<Rectangle>& blockSolids = dynamicWorldSolids;
+    for (const Screw& screw : level.screws) {
+        AppendScrewColliders(dynamicWorldSolids[WorldLayerIndex(screw.layer)], screw);
+    }
 
     for (int i = 0; i < static_cast<int>(level.stoneBlocks.size()); i++) {
         StoneBlock& block = level.stoneBlocks[i];
+        const std::vector<Rectangle>& blockSolids = dynamicWorldSolids[WorldLayerIndex(block.layer)];
 
         if (block.onGround) {
             block.velocity.x *= powf(0.000001f, dt);
@@ -3600,7 +5798,7 @@ void Game::UpdatePhysicsObjects(float dt) {
 
         block.rect.y += block.velocity.y * dt;
         ResolveStoneBlockVertical(block, blockSolids);
-        ApplyScrewConveyor(block.rect, block.velocity, block.mass, level.screws, dt);
+        ApplyScrewConveyor(block.rect, block.velocity, block.mass, block.layer, level.screws, dt);
         ResolveRampStanding(block.rect, block.velocity, block.onGround, level.ramps);
         ResolveTrapDoorStanding(block.rect, block.velocity, block.onGround, level.trapDoors);
         ResolveSeeSawStanding(block.rect, block.velocity, block.onGround, level.seeSaws);
@@ -3614,10 +5812,9 @@ void Game::UpdatePhysicsObjects(float dt) {
         );
     }
 
-    const std::vector<Rectangle>& boulderSolids = dynamicWorldSolids;
-
     for (int i = 0; i < static_cast<int>(level.boulders.size()); i++) {
         Boulder& boulder = level.boulders[i];
+        const std::vector<Rectangle>& boulderSolids = dynamicWorldSolids[WorldLayerIndex(boulder.layer)];
 
         if (boulder.onGround) {
             boulder.velocity.x *= powf(0.34f, dt);
@@ -3646,10 +5843,11 @@ void Game::UpdatePhysicsObjects(float dt) {
         boulder.center.x += boulder.velocity.x * dt;
         ResolveBoulderCollisions(boulder, boulderSolids);
 
+        const float previousBoulderFootY = boulder.center.y + boulder.radius;
         boulder.center.y += boulder.velocity.y * dt;
         ResolveBoulderCollisions(boulder, boulderSolids);
         ApplyScrewConveyor(boulder, boulder.radius, level.screws, dt);
-        ResolveBoulderRampStanding(boulder, level.ramps, dt);
+        ResolveBoulderRampStanding(boulder, level.ramps, dt, previousBoulderFootY);
         ResolveBoulderTrapDoorStanding(boulder, level.trapDoors, dt);
         ResolveBoulderSeeSawStanding(boulder, level.seeSaws, dt);
 
@@ -3661,10 +5859,9 @@ void Game::UpdatePhysicsObjects(float dt) {
         DisturbFluids(level.fluids, boulder.center, boulder.radius * 1.35f, boulder.velocity, 2.0f, dt);
     }
 
-    const std::vector<Rectangle>& wheelSolids = dynamicWorldSolids;
-
     for (int i = 0; i < static_cast<int>(level.physicsWheels.size()); i++) {
         PhysicsWheel& wheel = level.physicsWheels[i];
+        const std::vector<Rectangle>& wheelSolids = dynamicWorldSolids[WorldLayerIndex(wheel.layer)];
 
         if (wheel.onGround) {
             wheel.velocity.x *= powf(0.28f, dt);
@@ -3707,14 +5904,23 @@ void Game::UpdatePhysicsObjects(float dt) {
         DisturbFluids(level.fluids, wheel.center, wheel.radius * 1.35f, wheel.velocity, 2.3f, dt);
     }
 
-    const std::vector<Rectangle>& gearSolids = dynamicWorldSolids;
-
     for (int i = 0; i < static_cast<int>(level.gears.size()); i++) {
         Gear& gear = level.gears[i];
+        const std::vector<Rectangle>& gearSolids = dynamicWorldSolids[WorldLayerIndex(gear.layer)];
+        if (gear.mounting == GearMounting::Mounted) {
+            gear.velocity = {0.0f, 0.0f};
+            gear.onGround = false;
+            ApplyGearMotorAndBrake(gear, dt);
+            gear.rotation += gear.angularVelocity * dt;
+            continue;
+        }
+
         if (gear.onGround) {
             gear.velocity.x *= powf(0.18f, dt);
             gear.angularVelocity *= powf(0.14f, dt);
         }
+
+        ApplyGearMotorAndBrake(gear, dt);
 
         gear.onGround = false;
         gear.velocity.y += Constants::Gravity * dt;
@@ -3733,22 +5939,21 @@ void Game::UpdatePhysicsObjects(float dt) {
         gear.center.y += gear.velocity.y * dt;
         ResolveGearCollisions(gear, gearSolids);
         ApplyScrewGearCoupling(gear, level.screws, dt);
-        ResolveRoundBodyRampStanding(gear, level.ramps, gear.radius * 1.12f, dt, 0.38f);
-        ResolveRoundBodyTrapDoorStanding(gear, level.trapDoors, gear.radius * 1.12f, dt, 0.36f);
-        ResolveRoundBodySeeSawStanding(gear, level.seeSaws, gear.radius * 1.12f, dt, 0.38f);
+        ResolveRoundBodyRampStanding(gear, level.ramps, gear.radius * GearOuterRadiusScale, dt, 0.38f);
+        ResolveRoundBodyTrapDoorStanding(gear, level.trapDoors, gear.radius * GearOuterRadiusScale, dt, 0.36f);
+        ResolveRoundBodySeeSawStanding(gear, level.seeSaws, gear.radius * GearOuterRadiusScale, dt, 0.38f);
 
         if (gear.onGround && fabsf(gear.velocity.x) > 0.0f) {
-            float rollingSpeed = gear.velocity.x / fmaxf(1.0f, gear.radius * 1.12f) * RAD2DEG;
+            float rollingSpeed = gear.velocity.x / fmaxf(1.0f, gear.radius * GearOuterRadiusScale) * RAD2DEG;
             gear.angularVelocity = ApproachFloat(gear.angularVelocity, rollingSpeed, 620.0f * dt);
         }
         gear.rotation += gear.angularVelocity * dt;
         DisturbFluids(level.fluids, gear.center, gear.radius * 1.45f, gear.velocity, 2.1f, dt);
     }
 
-    const std::vector<Rectangle>& flywheelSolids = dynamicWorldSolids;
-
     for (int i = 0; i < static_cast<int>(level.flywheels.size()); i++) {
         Flywheel& flywheel = level.flywheels[i];
+        const std::vector<Rectangle>& flywheelSolids = dynamicWorldSolids[WorldLayerIndex(flywheel.layer)];
         if (flywheel.onGround) {
             float surfaceSpeed = flywheel.angularVelocity * DEG2RAD * flywheel.radius;
             float slipSpeed = surfaceSpeed - flywheel.velocity.x;
@@ -3796,32 +6001,47 @@ void Game::UpdatePhysicsObjects(float dt) {
         level.flywheels
     );
 
+    for (Gear& gear : level.gears) {
+        if (gear.mounting == GearMounting::Mounted) {
+            gear.velocity = {0.0f, 0.0f};
+        }
+        if (gear.stopped) {
+            gear.angularVelocity = 0.0f;
+        }
+    }
+
     for (StoneBlock& block : level.stoneBlocks) {
-        ResolveStoneBlockPenetration(block, dynamicWorldSolids);
+        ResolveStoneBlockPenetration(block, dynamicWorldSolids[WorldLayerIndex(block.layer)]);
         ResolveRampStanding(block.rect, block.velocity, block.onGround, level.ramps);
         ResolveTrapDoorStanding(block.rect, block.velocity, block.onGround, level.trapDoors);
         ResolveSeeSawStanding(block.rect, block.velocity, block.onGround, level.seeSaws);
     }
     for (Boulder& boulder : level.boulders) {
-        ResolveBoulderCollisions(boulder, dynamicWorldSolids);
-        ResolveBoulderRampStanding(boulder, level.ramps, 0.0f);
+        ResolveBoulderCollisions(boulder, dynamicWorldSolids[WorldLayerIndex(boulder.layer)]);
+        ResolveBoulderRampStanding(
+            boulder,
+            level.ramps,
+            0.0f,
+            boulder.center.y + boulder.radius
+        );
         ResolveBoulderTrapDoorStanding(boulder, level.trapDoors, 0.0f);
         ResolveBoulderSeeSawStanding(boulder, level.seeSaws, 0.0f);
     }
     for (PhysicsWheel& wheel : level.physicsWheels) {
-        ResolveWheelCollisions(wheel, dynamicWorldSolids);
+        ResolveWheelCollisions(wheel, dynamicWorldSolids[WorldLayerIndex(wheel.layer)]);
         ResolveWheelRampStanding(wheel, level.ramps, 0.0f);
         ResolveWheelTrapDoorStanding(wheel, level.trapDoors, 0.0f);
         ResolveWheelSeeSawStanding(wheel, level.seeSaws, 0.0f);
     }
     for (Gear& gear : level.gears) {
-        ResolveGearCollisions(gear, dynamicWorldSolids);
-        ResolveRoundBodyRampStanding(gear, level.ramps, gear.radius * 1.12f, 0.0f, 0.0f);
-        ResolveRoundBodyTrapDoorStanding(gear, level.trapDoors, gear.radius * 1.12f, 0.0f, 0.0f);
-        ResolveRoundBodySeeSawStanding(gear, level.seeSaws, gear.radius * 1.12f, 0.0f, 0.0f);
+        if (gear.mounting == GearMounting::Mounted) continue;
+        ResolveGearCollisions(gear, dynamicWorldSolids[WorldLayerIndex(gear.layer)]);
+        ResolveRoundBodyRampStanding(gear, level.ramps, gear.radius * GearOuterRadiusScale, 0.0f, 0.0f);
+        ResolveRoundBodyTrapDoorStanding(gear, level.trapDoors, gear.radius * GearOuterRadiusScale, 0.0f, 0.0f);
+        ResolveRoundBodySeeSawStanding(gear, level.seeSaws, gear.radius * GearOuterRadiusScale, 0.0f, 0.0f);
     }
     for (Flywheel& flywheel : level.flywheels) {
-        ResolveFlywheelCollisions(flywheel, dynamicWorldSolids);
+        ResolveFlywheelCollisions(flywheel, dynamicWorldSolids[WorldLayerIndex(flywheel.layer)]);
         ResolveRoundBodyRampStanding(flywheel, level.ramps, flywheel.radius, 0.0f, 0.0f);
         ResolveRoundBodyTrapDoorStanding(flywheel, level.trapDoors, flywheel.radius, 0.0f, 0.0f);
         ResolveRoundBodySeeSawStanding(flywheel, level.seeSaws, flywheel.radius, 0.0f, 0.0f);
@@ -3839,19 +6059,27 @@ void Game::UpdatePhysicsObjects(float dt) {
         if (threePlayerEnabled && player3Alive) {
             torque += GetSeeSawTorqueContribution(seeSaw, player3.rect, 1.0f);
         }
+        if (fourPlayerEnabled && player4Alive) {
+            torque += GetSeeSawTorqueContribution(seeSaw, player4.rect, 1.0f);
+        }
         for (const StoneBlock& block : level.stoneBlocks) {
+            if (!IsPlayerCollisionLayer(block.layer)) continue;
             torque += GetSeeSawTorqueContribution(seeSaw, block.rect, block.mass);
         }
         for (const Boulder& boulder : level.boulders) {
+            if (!IsPlayerCollisionLayer(boulder.layer)) continue;
             torque += GetSeeSawTorqueContribution(seeSaw, GetBoulderBounds(boulder), boulder.mass);
         }
         for (const PhysicsWheel& wheel : level.physicsWheels) {
+            if (!IsPlayerCollisionLayer(wheel.layer)) continue;
             torque += GetSeeSawTorqueContribution(seeSaw, GetWheelBounds(wheel), wheel.mass);
         }
         for (const Gear& gear : level.gears) {
+            if (!IsPlayerCollisionLayer(gear.layer) || gear.mounting == GearMounting::Mounted) continue;
             torque += GetSeeSawTorqueContribution(seeSaw, GetGearBounds(gear), gear.mass);
         }
         for (const Flywheel& flywheel : level.flywheels) {
+            if (!IsPlayerCollisionLayer(flywheel.layer)) continue;
             torque += GetSeeSawTorqueContribution(seeSaw, GetFlywheelBounds(flywheel), flywheel.mass);
         }
 
@@ -3876,6 +6104,38 @@ void Game::UpdatePhysicsObjects(float dt) {
             }
         }
     }
+
+    std::array<std::vector<Rectangle>, WorldLayerCount> guideWorldSolids{
+        solids, solids, solids
+    };
+    AppendFlexibleObjectColliders(guideWorldSolids[WorldLayerIndex(WorldLayer::Middleground)], level);
+    for (const StoneBlock& block : level.stoneBlocks) {
+        guideWorldSolids[WorldLayerIndex(block.layer)].push_back(block.rect);
+    }
+    for (const Boulder& boulder : level.boulders) {
+        guideWorldSolids[WorldLayerIndex(boulder.layer)].push_back(GetBoulderBounds(boulder));
+    }
+    for (const PhysicsWheel& wheel : level.physicsWheels) {
+        guideWorldSolids[WorldLayerIndex(wheel.layer)].push_back(GetWheelBounds(wheel));
+    }
+    for (const Gear& gear : level.gears) {
+        guideWorldSolids[WorldLayerIndex(gear.layer)].push_back(GetGearBounds(gear));
+    }
+    for (const Flywheel& flywheel : level.flywheels) {
+        guideWorldSolids[WorldLayerIndex(flywheel.layer)].push_back(GetFlywheelBounds(flywheel));
+    }
+    std::array<Player*, 4> guidePlayers{
+        playerAlive ? &player : nullptr,
+        multiplayerEnabled && player2Alive ? &player2 : nullptr,
+        threePlayerEnabled && player3Alive ? &player3 : nullptr,
+        fourPlayerEnabled && player4Alive ? &player4 : nullptr
+    };
+    Vector2 previousCheckpoint = checkpointRespawn;
+    UpdateGuideObjects(level.guideObjects, guidePlayers, guideWorldSolids,
+        Constants::Gravity, dt, checkpointRespawn);
+    if (checkpointRespawn.x != previousCheckpoint.x || checkpointRespawn.y != previousCheckpoint.y) {
+        checkpointActivated = true;
+    }
 }
 
 void Game::UpdateButtons() {
@@ -3885,9 +6145,11 @@ void Game::UpdateButtons() {
         const Player* players[] = {
             playerAlive ? &player : nullptr,
             multiplayerEnabled && player2Alive ? &player2 : nullptr,
-            threePlayerEnabled && player3Alive ? &player3 : nullptr
+            threePlayerEnabled && player3Alive ? &player3 : nullptr,
+            fourPlayerEnabled && player4Alive ? &player4 : nullptr
         };
-        if (level.script != LevelScript::CounterweightRow) {
+        if (level.script != LevelScript::CounterweightRow &&
+            level.script != LevelScript::ButtonSequence) {
             for (const Player* activePlayer : players) {
                 if (activePlayer != nullptr && CheckCollisionRecs(button.rect, activePlayer->rect)) {
                     button.pressed = true;
@@ -3896,26 +6158,31 @@ void Game::UpdateButtons() {
         }
 
         for (const StoneBlock& block : level.stoneBlocks) {
+            if (!IsPlayerCollisionLayer(block.layer)) continue;
             if (CheckCollisionRecs(button.rect, block.rect)) {
                 button.pressed = true;
             }
         }
         for (const Boulder& boulder : level.boulders) {
+            if (!IsPlayerCollisionLayer(boulder.layer)) continue;
             if (CheckCollisionCircleRec(boulder.center, boulder.radius, button.rect)) {
                 button.pressed = true;
             }
         }
         for (const PhysicsWheel& wheel : level.physicsWheels) {
+            if (!IsPlayerCollisionLayer(wheel.layer)) continue;
             if (CheckCollisionCircleRec(wheel.center, wheel.radius, button.rect)) {
                 button.pressed = true;
             }
         }
         for (const Gear& gear : level.gears) {
-            if (CheckCollisionCircleRec(gear.center, gear.radius * 1.12f, button.rect)) {
+            if (!IsPlayerCollisionLayer(gear.layer) || gear.mounting == GearMounting::Mounted) continue;
+            if (CheckCollisionCircleRec(gear.center, gear.radius * GearOuterRadiusScale, button.rect)) {
                 button.pressed = true;
             }
         }
         for (const Flywheel& flywheel : level.flywheels) {
+            if (!IsPlayerCollisionLayer(flywheel.layer)) continue;
             if (CheckCollisionCircleRec(flywheel.center, flywheel.radius, button.rect)) {
                 button.pressed = true;
             }
@@ -3943,6 +6210,57 @@ void Game::UpdateButtons() {
                 button.pressed = true;
             }
         }
+        for (const GuideObject& object : level.guideObjects) {
+            if (IsPlayerCollisionLayer(object.layer) && object.body.type == BodyType::Dynamic && !object.broken &&
+                CheckCollisionRecs(button.rect, GetGuideObjectBounds(object))) {
+                button.pressed = true;
+            }
+        }
+    }
+}
+
+void Game::UpdatePortals() {
+    const auto teleportRectangle = [](Rectangle& body, Vector2& velocity, const PortalPair& pair) {
+        if (!CheckCollisionRecs(body, pair.entrance)) return;
+        body.x = pair.exit.x + (pair.exit.width - body.width) * 0.5f;
+        body.y = pair.exit.y + pair.exit.height + 3.0f;
+        velocity.y = fmaxf(80.0f, velocity.y);
+    };
+    const auto teleportCircle = [](Vector2& center, Vector2& velocity, float radius, const PortalPair& pair) {
+        if (!CheckCollisionCircleRec(center, radius, pair.entrance)) return;
+        center.x = pair.exit.x + pair.exit.width * 0.5f;
+        center.y = pair.exit.y + pair.exit.height + radius + 3.0f;
+        velocity.y = fmaxf(80.0f, velocity.y);
+    };
+
+    for (const PortalPair& pair : level.portalPairs) {
+        if (playerAlive) teleportRectangle(player.rect, player.velocity, pair);
+        if (multiplayerEnabled && player2Alive) teleportRectangle(player2.rect, player2.velocity, pair);
+        if (threePlayerEnabled && player3Alive) teleportRectangle(player3.rect, player3.velocity, pair);
+        if (fourPlayerEnabled && player4Alive) teleportRectangle(player4.rect, player4.velocity, pair);
+        for (StoneBlock& block : level.stoneBlocks) {
+            if (IsPlayerCollisionLayer(block.layer)) teleportRectangle(block.rect, block.velocity, pair);
+        }
+        for (Boulder& boulder : level.boulders) {
+            if (IsPlayerCollisionLayer(boulder.layer)) {
+                teleportCircle(boulder.center, boulder.velocity, boulder.radius, pair);
+            }
+        }
+        for (PhysicsWheel& wheel : level.physicsWheels) {
+            if (IsPlayerCollisionLayer(wheel.layer)) {
+                teleportCircle(wheel.center, wheel.velocity, wheel.radius, pair);
+            }
+        }
+        for (Gear& gear : level.gears) {
+            if (IsPlayerCollisionLayer(gear.layer) && gear.mounting == GearMounting::Dynamic) {
+                teleportCircle(gear.center, gear.velocity, gear.radius * GearOuterRadiusScale, pair);
+            }
+        }
+        for (Flywheel& flywheel : level.flywheels) {
+            if (IsPlayerCollisionLayer(flywheel.layer)) {
+                teleportCircle(flywheel.center, flywheel.velocity, flywheel.radius, pair);
+            }
+        }
     }
 }
 
@@ -3954,22 +6272,34 @@ void Game::UpdateArrowTraps(float dt) {
     std::vector<Rectangle> solids = BuildSolids(level);
     AppendFlexibleObjectColliders(solids, level);
     for (const StoneBlock& block : level.stoneBlocks) {
+        if (!IsPlayerCollisionLayer(block.layer)) continue;
         solids.push_back(block.rect);
     }
     for (const Boulder& boulder : level.boulders) {
+        if (!IsPlayerCollisionLayer(boulder.layer)) continue;
         solids.push_back(GetBoulderBounds(boulder));
     }
     for (const PhysicsWheel& wheel : level.physicsWheels) {
+        if (!IsPlayerCollisionLayer(wheel.layer)) continue;
         solids.push_back(GetWheelBounds(wheel));
     }
     for (const Gear& gear : level.gears) {
+        if (!IsPlayerCollisionLayer(gear.layer)) continue;
         solids.push_back(GetGearBounds(gear));
     }
     for (const Flywheel& flywheel : level.flywheels) {
+        if (!IsPlayerCollisionLayer(flywheel.layer)) continue;
         solids.push_back(GetFlywheelBounds(flywheel));
     }
     for (const Screw& screw : level.screws) {
+        if (!IsPlayerCollisionLayer(screw.layer)) continue;
         AppendScrewColliders(solids, screw);
+    }
+    for (const GuideObject& object : level.guideObjects) {
+        if (IsPlayerCollisionLayer(object.layer) && object.body.type == BodyType::Dynamic &&
+            !object.broken && object.active) {
+            solids.push_back(GetGuideObjectBounds(object));
+        }
     }
 
     for (ArrowTrap& trap : level.arrowTraps) {
@@ -3998,10 +6328,11 @@ void Game::UpdateArrowTraps(float dt) {
             arrow.rect.y += arrow.velocity.y * dt;
             DisturbFluids(level.fluids, RectCenter(arrow.rect), 10.0f, arrow.velocity, 0.35f, dt);
 
-            if (arrow.rect.x + arrow.rect.width < 0.0f ||
-                arrow.rect.x > Constants::ScreenWidth ||
-                arrow.rect.y + arrow.rect.height < 0.0f ||
-                arrow.rect.y > Constants::ScreenHeight) {
+            const Rectangle worldBounds = level.worldBounds;
+            if (arrow.rect.x + arrow.rect.width < worldBounds.x ||
+                arrow.rect.x > worldBounds.x + worldBounds.width ||
+                arrow.rect.y + arrow.rect.height < worldBounds.y ||
+                arrow.rect.y > worldBounds.y + worldBounds.height) {
                 arrow.active = false;
                 continue;
             }
@@ -4027,13 +6358,25 @@ void Game::UpdateBreakableTiles(float dt) {
     const Player* players[] = {
         playerAlive ? &player : nullptr,
         multiplayerEnabled && player2Alive ? &player2 : nullptr,
-        threePlayerEnabled && player3Alive ? &player3 : nullptr
+        threePlayerEnabled && player3Alive ? &player3 : nullptr,
+        fourPlayerEnabled && player4Alive ? &player4 : nullptr
     };
 
     for (BreakableTile& tile : level.breakableTiles) {
         if (!tile.broken && !tile.cracking) {
             for (const Player* activePlayer : players) {
                 if (activePlayer != nullptr && IsRectStandingOnTile(activePlayer->rect, tile.rect)) {
+                    tile.cracking = true;
+                    break;
+                }
+            }
+            for (const Boulder& boulder : level.boulders) {
+                if (!IsPlayerCollisionLayer(boulder.layer)) continue;
+                float boulderBottom = boulder.center.y + boulder.radius;
+                float supportInset = fminf(boulder.radius, tile.rect.width * 0.45f);
+                bool centeredOnTile = boulder.center.x >= tile.rect.x + supportInset &&
+                    boulder.center.x <= tile.rect.x + tile.rect.width - supportInset;
+                if (centeredOnTile && fabsf(boulderBottom - tile.rect.y) <= 5.0f) {
                     tile.cracking = true;
                     break;
                 }
@@ -4077,12 +6420,29 @@ void Game::KillPlayer(const Player& defeatedPlayer) {
     if (screenShakeSetting != ScreenShakeSetting::Off) {
         screenShakeTimer = screenShakeSetting == ScreenShakeSetting::Reduced ? 0.12f : 0.24f;
     }
-    if (controllerEnabled && controllerVibrationEnabled && IsGamepadAvailable(0)) {
+    int defeatedPlayerIndex = 0;
+    if (&defeatedPlayer == &player2) defeatedPlayerIndex = 1;
+    else if (&defeatedPlayer == &player3) defeatedPlayerIndex = 2;
+    else if (&defeatedPlayer == &player4) defeatedPlayerIndex = 3;
+    const PlayerControllerSettings& controller = controllerSettings[defeatedPlayerIndex];
+    const int gamepad = AvailableGamepad(controller);
+    if (controller.vibration && gamepad >= 0) {
         const float vibrationStrength = screenShakeSetting == ScreenShakeSetting::Reduced ? 0.35f : 0.75f;
-        SetGamepadVibration(0, vibrationStrength, vibrationStrength, 0.18f);
+        SetGamepadVibration(gamepad, vibrationStrength, vibrationStrength, 0.18f);
     }
 
     if (!multiplayerEnabled) {
+        if (checkpointActivated) {
+            ResetPlayer(player);
+            player.rect.x = checkpointRespawn.x;
+            player.rect.y = checkpointRespawn.y;
+            playerAlive = true;
+            playerAir[0] = 1.0f;
+            playerAirWarningPhase[0] = 0.0f;
+            toxinExposure[0] = fminf(toxinExposure[0], 0.35f);
+            respawnGraceTimer = 0.8f;
+            return;
+        }
         playerAlive = false;
         playerDeathRect = defeatedPlayer.rect;
         player.velocity = {0.0f, 0.0f};
@@ -4113,25 +6473,74 @@ void Game::KillPlayer(const Player& defeatedPlayer) {
         player3.walking = false;
         player3.climbing = false;
     }
+    else if (&defeatedPlayer == &player4) {
+        player4Alive = false;
+        player4DeathRect = defeatedPlayer.rect;
+        player4.velocity = {0.0f, 0.0f};
+        player4.walking = false;
+        player4.climbing = false;
+    }
 
-    lost = !playerAlive && !player2Alive && (!threePlayerEnabled || !player3Alive);
+    lost = !playerAlive &&
+        (!multiplayerEnabled || !player2Alive) &&
+        (!threePlayerEnabled || !player3Alive) &&
+        (!fourPlayerEnabled || !player4Alive);
 }
 
 void Game::CheckFailureConditions() {
     if (won || lost) return;
+    if (respawnGraceTimer > 0.0f) return;
 
     const Player* players[] = {
         playerAlive ? &player : nullptr,
         multiplayerEnabled && player2Alive ? &player2 : nullptr,
-        threePlayerEnabled && player3Alive ? &player3 : nullptr
+        threePlayerEnabled && player3Alive ? &player3 : nullptr,
+        fourPlayerEnabled && player4Alive ? &player4 : nullptr
     };
-    for (const Player* activePlayer : players) {
+    for (int playerIndex = 0; playerIndex < 4; ++playerIndex) {
+        const Player* activePlayer = players[playerIndex];
         if (activePlayer == nullptr) continue;
 
-        if (activePlayer->rect.y > Constants::ScreenHeight ||
+        const bool toxinSuffocation =
+            level.script == LevelScript::NeurotoxinMaze &&
+            SampleFluidAroundRectangle(level, FluidType::Gas, activePlayer->rect).density >= 0.025f;
+        const bool underwaterSuffocation =
+            level.script != LevelScript::NeurotoxinMaze &&
+            IsPlayerHeadSubmerged(*activePlayer, level);
+        if (suffocationKills && playerAir[playerIndex] <= 0.001f &&
+            (toxinSuffocation || underwaterSuffocation)) {
+            KillPlayer(*activePlayer);
+            return;
+        }
+
+        if (activePlayer->rect.y > level.worldBounds.y + level.worldBounds.height ||
             (HasArea(level.spikeHazard) && CheckCollisionRecs(activePlayer->rect, level.spikeHazard))) {
             KillPlayer(*activePlayer);
             return;
+        }
+
+        for (const DirectionalSpikeHazard& hazard : level.directionalSpikeHazards) {
+            if (CheckCollisionRecs(activePlayer->rect, hazard.rect)) {
+                KillPlayer(*activePlayer);
+                return;
+            }
+        }
+        for (const ButtonSpikeLink& link : level.buttonSpikeLinks) {
+            if (link.active && CheckCollisionRecs(activePlayer->rect, link.hazard.rect)) {
+                KillPlayer(*activePlayer);
+                return;
+            }
+        }
+        for (const ButtonPlatformLoop& loop : level.buttonPlatformLoops) {
+            if (!loop.active) continue;
+            for (const Rectangle platform : loop.platforms) {
+                for (const DirectionalSpikeHazard& hazard : GetPlatformSideSpikes(platform)) {
+                    if (IsPlayerRunningIntoPlatformSpikes(*activePlayer, hazard)) {
+                        KillPlayer(*activePlayer);
+                        return;
+                    }
+                }
+            }
         }
 
         for (const HangingWeight& weight : level.weights) {
@@ -4156,6 +6565,13 @@ void Game::CheckFailureConditions() {
                 }
             }
         }
+
+        for (const GuideObject& object : level.guideObjects) {
+            if (IsGuideObjectHazardTouchingPlayer(object, activePlayer->rect)) {
+                KillPlayer(*activePlayer);
+                return;
+            }
+        }
     }
 }
 
@@ -4173,7 +6589,8 @@ void Game::CheckWinCondition(float gateBottom) {
     const Player* players[] = {
         playerAlive ? &player : nullptr,
         multiplayerEnabled && player2Alive ? &player2 : nullptr,
-        threePlayerEnabled && player3Alive ? &player3 : nullptr
+        threePlayerEnabled && player3Alive ? &player3 : nullptr,
+        fourPlayerEnabled && player4Alive ? &player4 : nullptr
     };
     for (const Player* activePlayer : players) {
         if (activePlayer == nullptr) continue;
@@ -4204,6 +6621,14 @@ void Game::DrawScene() {
         if (quitConfirmationOpen) {
             DrawQuitConfirmation();
         }
+        achievements.Draw(Constants::ScreenWidth, Constants::ScreenHeight);
+        console.Draw(Constants::ScreenWidth, Constants::ScreenHeight);
+        return;
+    }
+
+    if (mode == GameMode::CharacterSelect) {
+        DrawCharacterSelect();
+        achievements.Draw(Constants::ScreenWidth, Constants::ScreenHeight);
         console.Draw(Constants::ScreenWidth, Constants::ScreenHeight);
         return;
     }
@@ -4213,22 +6638,12 @@ void Game::DrawScene() {
         if (quitConfirmationOpen) {
             DrawQuitConfirmation();
         }
+        achievements.Draw(Constants::ScreenWidth, Constants::ScreenHeight);
         console.Draw(Constants::ScreenWidth, Constants::ScreenHeight);
         return;
     }
 
-    Camera2D shakeCamera{};
-    shakeCamera.zoom = 1.0f;
-    if (screenShakeTimer > 0.0f && screenShakeSetting != ScreenShakeSetting::Off) {
-        const float strength = screenShakeSetting == ScreenShakeSetting::Reduced ? 2.0f : 5.0f;
-        shakeCamera.offset = {
-            static_cast<float>(GetRandomValue(-100, 100)) * 0.01f * strength,
-            static_cast<float>(GetRandomValue(-100, 100)) * 0.01f * strength
-        };
-    }
-    BeginMode2D(shakeCamera);
     DrawGameplay();
-    EndMode2D();
 
     if (mode == GameMode::Paused) {
         DrawPauseScreen();
@@ -4246,10 +6661,7 @@ void Game::DrawScene() {
         DrawQuitConfirmation();
     }
 
-    if (debugCollision) {
-        DrawDebugCollision();
-    }
-
+    achievements.Draw(Constants::ScreenWidth, Constants::ScreenHeight);
     console.Draw(Constants::ScreenWidth, Constants::ScreenHeight);
 }
 
@@ -4283,74 +6695,156 @@ void Game::DrawTitleScreen() {
     DrawTilesetBackgroundFill(industrialBackground, {0, 0, static_cast<float>(Constants::ScreenWidth), static_cast<float>(Constants::ScreenHeight)}, Fade(WHITE, 0.72f));
     DrawRectangle(0, 0, Constants::ScreenWidth, Constants::ScreenHeight, Fade(Color{9, 14, 20, 255}, 0.42f));
 
-    DrawTilesetSolid(industrialTiles, {0, 690, static_cast<float>(Constants::ScreenWidth), 210}, WHITE);
-    DrawTilesetSolid(industrialTiles, {92, 94, 530, 32}, Fade(WHITE, 0.95f));
-    DrawTilesetSolid(industrialTiles, {1030, 442, 410, 32}, Fade(WHITE, 0.95f));
-    DrawTilesetSolid(industrialTiles, {1450, 270, 32, 420}, Fade(WHITE, 0.9f));
+    // Frame the title and controls on the left, leaving the machinery as a
+    // dedicated animated stage instead of putting the menu on top of it.
+    DrawTilesetSolid(industrialTiles, {0, 790, static_cast<float>(Constants::ScreenWidth), 110}, WHITE);
+    DrawTilesetSolid(industrialTiles, {58, 72, 580, 32}, Fade(WHITE, 0.95f));
+    DrawTilesetSolid(industrialTiles, {700, 430, 820, 32}, Fade(WHITE, 0.95f));
+    DrawTilesetSolid(industrialTiles, {520, 640, 1000, 32}, Fade(WHITE, 0.95f));
+    DrawTilesetSolid(industrialTiles, {1030, 145, 490, 32}, Fade(WHITE, 0.95f));
+    DrawTilesetSolid(industrialTiles, {1488, 145, 32, 645}, Fade(WHITE, 0.9f));
 
-    DrawRectangle(80, 145, 720, 390, Fade(BLACK, 0.24f));
-    DrawRectangleLinesEx({80, 145, 720, 390}, 2.0f, Fade(RAYWHITE, 0.16f));
+    DrawRectangle(58, 116, 580, 318, Fade(BLACK, 0.28f));
+    DrawRectangleLinesEx({58, 116, 580, 318}, 2.0f, Fade(RAYWHITE, 0.16f));
 
-    Vector2 titlePosition{120.0f, 176.0f};
-    DrawText("POWER", static_cast<int>(titlePosition.x + 5.0f), static_cast<int>(titlePosition.y + 6.0f), 100, Fade(BLACK, 0.55f));
-    DrawText("PULLEY", static_cast<int>(titlePosition.x + 5.0f), static_cast<int>(titlePosition.y + 106.0f), 100, Fade(BLACK, 0.55f));
-    DrawText("PANIC", static_cast<int>(titlePosition.x + 5.0f), static_cast<int>(titlePosition.y + 206.0f), 100, Fade(BLACK, 0.55f));
-    DrawText("POWER", static_cast<int>(titlePosition.x), static_cast<int>(titlePosition.y), 100, RAYWHITE);
-    DrawText("PULLEY", static_cast<int>(titlePosition.x), static_cast<int>(titlePosition.y + 100.0f), 100, ORANGE);
-    DrawText("PANIC", static_cast<int>(titlePosition.x), static_cast<int>(titlePosition.y + 200.0f), 100, RAYWHITE);
-    DrawText("Spin to Win", 126, 492, 30, Fade(RAYWHITE, 0.82f));
+    Vector2 titlePosition{92.0f, 137.0f};
+    constexpr int titleSize = 84;
+    DrawText("POWER", static_cast<int>(titlePosition.x + 5.0f), static_cast<int>(titlePosition.y + 6.0f), titleSize, Fade(BLACK, 0.55f));
+    DrawText("PULLEY", static_cast<int>(titlePosition.x + 5.0f), static_cast<int>(titlePosition.y + 91.0f), titleSize, Fade(BLACK, 0.55f));
+    DrawText("PANIC", static_cast<int>(titlePosition.x + 5.0f), static_cast<int>(titlePosition.y + 176.0f), titleSize, Fade(BLACK, 0.55f));
+    DrawText("POWER", static_cast<int>(titlePosition.x), static_cast<int>(titlePosition.y), titleSize, RAYWHITE);
+    DrawText("PULLEY", static_cast<int>(titlePosition.x), static_cast<int>(titlePosition.y + 85.0f), titleSize, ORANGE);
+    DrawText("PANIC", static_cast<int>(titlePosition.x), static_cast<int>(titlePosition.y + 170.0f), titleSize, RAYWHITE);
+    DrawText("Spin to Win", 98, 394, 24, Fade(RAYWHITE, 0.82f));
 
-    float rotation = static_cast<float>(GetTime()) * 80.0f;
-    constexpr Vector2 upperLeftPulley{940, 285};
-    constexpr Vector2 centerPulley{1188, 408};
-    constexpr Vector2 upperRightPulley{1370, 310};
-    constexpr Vector2 lowerPulley{1180, 540};
+    const float time = static_cast<float>(GetTime());
+    float rotation = time * 92.0f;
+    constexpr Vector2 upperLeftPulley{875, 256};
+    constexpr Vector2 centerPulley{1108, 365};
+    constexpr Vector2 upperRightPulley{1370, 248};
+    constexpr Vector2 lowerPulley{1282, 535};
     float titleRopeOffset = rotation * DEG2RAD * 58.0f;
-    DrawPulleyRope(upperLeftPulley, 72, centerPulley, 58, -1.0f, 8.0f, BROWN, titleRopeOffset);
-    DrawPulleyRope(centerPulley, 58, upperRightPulley, 86, 1.0f, 8.0f, BROWN, titleRopeOffset);
-    DrawPulleyRope(lowerPulley, 48, upperRightPulley, 86, 1.0f, 8.0f, BROWN, titleRopeOffset);
-    float counterweightRopeX = upperRightPulley.x - 86.0f;
-    DrawRope({counterweightRopeX, upperRightPulley.y}, {counterweightRopeX, 612}, 6.0f, titleRopeOffset);
-    DrawPulley(upperLeftPulley, 72, rotation, RAYWHITE);
-    DrawPulley(centerPulley, 58, rotation * -1.15f, RAYWHITE);
-    DrawPulley(upperRightPulley, 86, rotation * 0.72f, RAYWHITE);
-    DrawPulley(lowerPulley, 48, rotation * 1.35f, RAYWHITE);
+    DrawPulleyRope(upperLeftPulley, 62, centerPulley, 50, -1.0f, 8.0f, BROWN, titleRopeOffset);
+    DrawPulleyRope(centerPulley, 50, upperRightPulley, 74, 1.0f, 8.0f, BROWN, titleRopeOffset);
+    DrawPulleyRope(lowerPulley, 42, upperRightPulley, 74, 1.0f, 8.0f, BROWN, titleRopeOffset);
+    float counterweightRopeX = upperRightPulley.x - 74.0f;
+    float counterweightY = 664.0f + sinf(time * 1.35f) * 34.0f;
+    DrawRope({counterweightRopeX, upperRightPulley.y}, {counterweightRopeX, counterweightY}, 6.0f, titleRopeOffset);
+    DrawPulley(upperLeftPulley, 62, rotation, RAYWHITE);
+    DrawPulley(centerPulley, 50, rotation * -1.15f, RAYWHITE);
+    DrawPulley(upperRightPulley, 74, rotation * 0.72f, RAYWHITE);
+    DrawPulley(lowerPulley, 42, rotation * 1.35f, RAYWHITE);
 
-    Rectangle counterweight{counterweightRopeX - 32.0f, 612, 64, 78};
+    Rectangle counterweight{counterweightRopeX - 27.0f, counterweightY, 54, 66};
     DrawRectangleRec(counterweight, GRAY);
     DrawRectangleLinesEx(counterweight, 2.0f, BLACK);
 
-    if (playerSpritesTexture.id > 0) {
-        DrawTexturePro(
-            playerSpritesTexture,
-            {0.0f, 0.0f, 37.0f, 47.0f},
-            {1117, 395, 37, 47},
-            {0, 0},
-            0.0f,
-            WHITE
-        );
-    }
+    // A sampling of real physics objects gives the scene more of the playful,
+    // kinetic character of the levels.
+    PhysicsWheel wheel{};
+    wheel.center = {760.0f, 598.0f};
+    wheel.radius = 35.0f;
+    wheel.rotation = -rotation * 1.7f;
+    DrawPhysicsWheel(wheel);
 
-    DrawRectangle(1048, 486, 374, 324, Fade(BLACK, 0.26f));
-    DrawRectangleLinesEx({1048, 486, 374, 324}, 2.0f, Fade(RAYWHITE, 0.15f));
+    Gear gear{};
+    gear.center = {846.0f, 590.0f};
+    gear.radius = 43.0f;
+    gear.rotation = rotation * 1.25f;
+    gear.mounting = GearMounting::Mounted;
+    DrawGear(gear);
+
+    Flywheel flywheel{};
+    flywheel.center = {952.0f, 582.0f};
+    flywheel.radius = 50.0f;
+    flywheel.rotation = -rotation * 0.62f;
+    DrawFlywheel(flywheel);
+
+    SeeSaw seeSaw{};
+    seeSaw.pivot = {1160.0f, 748.0f};
+    seeSaw.length = 250.0f;
+    seeSaw.angle = sinf(time * 1.15f) * 11.0f;
+    DrawSeeSaw(seeSaw);
+
+    Pinwheel pinwheel{};
+    pinwheel.center = {1432.0f, 550.0f};
+    pinwheel.radius = 30.0f;
+    pinwheel.rotation = rotation * 2.3f;
+    DrawPinwheel(pinwheel);
+
+    auto patrolPosition = [time](float minX, float maxX, float speed, float phase, bool& facingRight) {
+        const float distance = maxX - minX;
+        const float travel = fmodf(time * speed + phase, distance * 2.0f);
+        facingRight = travel < distance;
+        return facingRight ? minX + travel : maxX - (travel - distance);
+    };
+    auto drawTitlePlayer = [&](int character, float minX, float maxX, float y, float speed, float phase) {
+        Player runner{};
+        runner.facingRight = true;
+        runner.rect = {
+            patrolPosition(minX, maxX, speed, phase, runner.facingRight),
+            y,
+            31.0f,
+            40.0f
+        };
+        runner.walking = true;
+        runner.animationTimer = time + phase / fmaxf(speed, 1.0f);
+        if (character < 3) {
+            DrawPlayer(runner, playerSpritesTexture, character);
+        }
+        else {
+            DrawPlayer(runner, playerFourSpritesTexture, 0, 37.0f, 47.0f, 1, 64.0f, 4.0f, 17.0f);
+        }
+    };
+
+    drawTitlePlayer(0, 715.0f, 1015.0f, 390.0f, 74.0f, 0.0f);
+    drawTitlePlayer(1, 1045.0f, 1450.0f, 105.0f, 92.0f, 120.0f);
+    drawTitlePlayer(2, 535.0f, 1000.0f, 600.0f, 86.0f, 260.0f);
+    drawTitlePlayer(3, 1030.0f, 1450.0f, 600.0f, 101.0f, 410.0f);
+
+    bool robotFacingRight = false;
+    Enemy titleRobot{};
+    titleRobot.rect = {
+        patrolPosition(565.0f, 1430.0f, 118.0f, 680.0f, robotFacingRight),
+        742.0f,
+        48.0f,
+        48.0f
+    };
+    titleRobot.facingRight = robotFacingRight;
+    titleRobot.walking = true;
+    DrawEnemy(titleRobot, enemyPlaceholderTexture);
+
+    Boulder boulder{};
+    bool boulderMovingRight = true;
+    boulder.center = {
+        patrolPosition(540.0f, 1450.0f, 66.0f, 90.0f, boulderMovingRight),
+        760.0f
+    };
+    boulder.radius = 28.0f;
+    boulder.rotation = (boulderMovingRight ? 1.0f : -1.0f) * rotation * 1.8f;
+    DrawBoulder(boulder);
+
+    DrawRectangle(68, 464, 434, 294, Fade(BLACK, 0.34f));
+    DrawRectangleLinesEx({68, 464, 434, 294}, 2.0f, Fade(RAYWHITE, 0.17f));
 
     std::vector<MenuButton> buttons;
     if (titleModeMenuOpen) {
-        DrawText("Select Mode", 1080, 495, 20, Fade(RAYWHITE, 0.86f));
+        DrawText("Select Mode", 92, 477, 20, Fade(RAYWHITE, 0.86f));
         buttons = {
-            {{1080, 530, 310, 46}, "Single Player"},
-            {{1080, 586, 310, 46}, "2 Players"},
-            {{1080, 642, 310, 46}, "3 Players"},
-            {{1080, 698, 310, 46}, "Back"}
+            {{92, 506, 386, 40}, "Single Player"},
+            {{92, 555, 386, 40}, "2 Players"},
+            {{92, 604, 386, 40}, "3 Players"},
+            {{92, 653, 386, 40}, "4 Players"},
+            {{92, 702, 386, 40}, "Back"}
         };
     }
     else {
         buttons = {
-            {{1080, 510, 310, 46}, "New Game"},
-            {{1080, 566, 310, 46}, "Continue"},
-            {{1080, 622, 310, 46}, "Load Custom"},
-            {{1080, 678, 310, 46}, "Settings"},
-            {{1080, 734, 310, 46}, "Quit Game"}
+            {{92, 490, 386, 40}, "New Game"},
+            {{92, 539, 386, 40}, "Continue"},
+            {{92, 588, 386, 40}, "Load Custom"},
+            {{92, 637, 386, 40}, "Settings"},
+            {{92, 686, 386, 40}, "Quit Game"}
         };
     }
 
@@ -4359,7 +6853,157 @@ void Game::DrawTitleScreen() {
     }
 
     if (!menuMessage.empty()) {
-        DrawText(menuMessage.c_str(), 1080, 825, 20, ORANGE);
+        DrawText(menuMessage.c_str(), 76, 766, 18, ORANGE);
+    }
+}
+
+void Game::DrawCharacterSelect() {
+    DrawTilesetBackgroundFill(
+        industrialBackground,
+        {0, 0, static_cast<float>(Constants::ScreenWidth), static_cast<float>(Constants::ScreenHeight)},
+        Fade(WHITE, 0.78f)
+    );
+    DrawRectangle(0, 0, Constants::ScreenWidth, Constants::ScreenHeight, Fade(Color{9, 14, 20, 255}, 0.58f));
+    DrawTilesetSolid(industrialTiles, {0, 842, static_cast<float>(Constants::ScreenWidth), 58}, WHITE);
+
+    DrawCenteredText("CHOOSE YOUR CHARACTER", Constants::ScreenWidth / 2, 58, 52, RAYWHITE);
+    DrawCenteredText(
+        TextFormat("%d PLAYER%s", characterSelectPlayerCount, characterSelectPlayerCount == 1 ? "" : "S"),
+        Constants::ScreenWidth / 2,
+        122,
+        24,
+        ORANGE
+    );
+    DrawCenteredText(
+        "Use movement keys or controller D-pad to choose; interact or Jump to ready up",
+        Constants::ScreenWidth / 2,
+        166,
+        20,
+        LIGHTGRAY
+    );
+
+    constexpr float cardWidth = 260.0f;
+    constexpr float cardGap = 28.0f;
+    constexpr float cardsX = 238.0f;
+    for (int characterIndex = 0; characterIndex < kCharacterCount; characterIndex++) {
+        Rectangle card{
+            cardsX + characterIndex * (cardWidth + cardGap),
+            235.0f,
+            cardWidth,
+            340.0f
+        };
+        DrawRectangleRounded(card, 0.06f, 8, Color{24, 31, 39, 244});
+        DrawRectangleRoundedLinesEx(card, 0.06f, 8, 2.0f, Fade(RAYWHITE, 0.34f));
+
+        Rectangle portrait{card.x + 34.0f, card.y + 38.0f, 192.0f, 192.0f};
+        DrawRectangleRounded(portrait, 0.08f, 8, Color{12, 16, 21, 255});
+        DrawRectangleRoundedLinesEx(portrait, 0.08f, 8, 2.0f, Fade(RAYWHITE, 0.16f));
+
+        if (characterIndex < 3 && playerSpritesTexture.id > 0) {
+            DrawTexturePro(
+                playerSpritesTexture,
+                {37.0f, characterIndex * 47.0f, 37.0f, 47.0f},
+                {portrait.x + 20.5f, portrait.y - 26.0f, 151.0f, 192.0f},
+                {0, 0},
+                0.0f,
+                WHITE
+            );
+        }
+        else if (characterIndex == 3 && playerFourSpritesTexture.id > 0) {
+            DrawTexturePro(
+                playerFourSpritesTexture,
+                {68.0f, 17.0f, 37.0f, 47.0f},
+                {portrait.x + 20.5f, portrait.y - 26.0f, 151.0f, 192.0f},
+                {0, 0},
+                0.0f,
+                WHITE
+            );
+        }
+        else {
+            DrawCenteredText("ART MISSING", static_cast<int>(card.x + card.width * 0.5f),
+                static_cast<int>(card.y + 130.0f), 18, ORANGE);
+        }
+
+        DrawCenteredText(
+            kCharacterNames[characterIndex],
+            static_cast<int>(card.x + card.width * 0.5f),
+            static_cast<int>(card.y + 252.0f),
+            24,
+            RAYWHITE
+        );
+
+        int badgeX = static_cast<int>(card.x + 42.0f);
+        for (int playerIndex = 0; playerIndex < characterSelectPlayerCount; playerIndex++) {
+            if (selectedCharacters[playerIndex] != characterIndex) continue;
+            Color playerColor = kPlayerSelectColors[playerIndex];
+            DrawRectangleLinesEx(card, 5.0f, playerColor);
+            DrawCircle(badgeX, static_cast<int>(card.y + 310.0f), 20.0f, playerColor);
+            DrawCenteredText(TextFormat("P%d", playerIndex + 1), badgeX,
+                static_cast<int>(card.y + 301.0f), 18, BLACK);
+            badgeX += 52;
+        }
+    }
+
+    std::array<std::string, 4> controlLabels{};
+    for (int playerIndex = 0; playerIndex < 4; ++playerIndex) {
+        const PlayerKeyBindings& bindings = playerBindings[playerIndex];
+        controlLabels[playerIndex] =
+            KeyLabel(bindings.left) + " / " + KeyLabel(bindings.right) +
+            "    " + KeyLabel(bindings.interact) + " to ready";
+    }
+    const float playerButtonsWidth =
+        characterSelectPlayerCount * 220.0f + (characterSelectPlayerCount - 1) * 40.0f;
+    const float playerButtonsX = (Constants::ScreenWidth - playerButtonsWidth) * 0.5f;
+    for (int playerIndex = 0; playerIndex < characterSelectPlayerCount; playerIndex++) {
+        Rectangle playerButton{
+            playerButtonsX + playerIndex * 260.0f,
+            635.0f,
+            220.0f,
+            52.0f
+        };
+        const bool focused = characterSelectFocusPlayer == playerIndex;
+        const Color playerColor = kPlayerSelectColors[playerIndex];
+        DrawRectangleRounded(playerButton, 0.15f, 8,
+            focused ? Fade(playerColor, 0.34f) : Color{24, 31, 39, 244});
+        DrawRectangleRoundedLinesEx(playerButton, 0.15f, 8, focused ? 3.0f : 1.0f,
+            focused ? playerColor : Fade(RAYWHITE, 0.30f));
+        DrawCenteredText(
+            TextFormat("PLAYER %d: %s", playerIndex + 1, kCharacterNames[selectedCharacters[playerIndex]]),
+            static_cast<int>(playerButton.x + playerButton.width * 0.5f),
+            static_cast<int>(playerButton.y + 15.0f),
+            18,
+            RAYWHITE
+        );
+
+        Rectangle readyButton{playerButton.x, 696.0f, playerButton.width, 42.0f};
+        DrawRectangleRounded(readyButton, 0.18f, 8,
+            characterSelectReady[playerIndex] ? Fade(GREEN, 0.75f) : Fade(BLACK, 0.52f));
+        DrawRectangleRoundedLinesEx(readyButton, 0.18f, 8, 2.0f,
+            characterSelectReady[playerIndex] ? GREEN : Fade(RAYWHITE, 0.30f));
+        DrawCenteredText(
+            characterSelectReady[playerIndex] ? "READY" : controlLabels[playerIndex].c_str(),
+            static_cast<int>(readyButton.x + readyButton.width * 0.5f),
+            static_cast<int>(readyButton.y + 11.0f),
+            17,
+            characterSelectReady[playerIndex] ? RAYWHITE : LIGHTGRAY
+        );
+    }
+
+    bool allReady = true;
+    for (int playerIndex = 0; playerIndex < characterSelectPlayerCount; playerIndex++) {
+        allReady = allReady && characterSelectReady[playerIndex];
+    }
+
+    MenuButton backButton{{100.0f, 782.0f, 220.0f, 48.0f}, "Back"};
+    MenuButton continueButton{{625.0f, 782.0f, 350.0f, 48.0f}, "Continue", allReady};
+    DrawMenuButton(backButton);
+    DrawMenuButton(continueButton);
+    if (allReady) {
+        DrawCenteredText("Press Enter or controller Start to continue",
+            Constants::ScreenWidth / 2, 748, 20, GREEN);
+    }
+    if (!menuMessage.empty()) {
+        DrawCenteredText(menuMessage.c_str(), Constants::ScreenWidth / 2, 850, 18, ORANGE);
     }
 }
 
@@ -4372,8 +7016,42 @@ void Game::DrawOverworld() {
         DrawLineEx({static_cast<float>(x), 690.0f}, {static_cast<float>(x + 120), 925.0f}, 2.0f, Fade(BLACK, 0.22f));
     }
 
-    DrawText("FACTORY DISTRICT", 95, 70, 50, RAYWHITE);
-    DrawText("Level Select", 100, 128, 30, ORANGE);
+    constexpr const char* worldNames[3]{
+        "FACTORY DISTRICT",
+        "WENDI'S WORKSHOP",
+        "TEST WORLD"
+    };
+    constexpr const char* worldDescriptions[3]{
+        "World 1  /  Main Campaign",
+        "World 2  /  Wendi's Levels",
+        "Tests & References"
+    };
+    selectedOverworldWorld = std::clamp(selectedOverworldWorld, 0, 2);
+    DrawText(worldNames[selectedOverworldWorld], 95, 70, 50, RAYWHITE);
+    DrawText(worldDescriptions[selectedOverworldWorld], 100, 128, 25, ORANGE);
+
+    std::vector<MenuButton> worldButtons{
+        {{770, 88, 230, 44}, "World 1"},
+        {{1012, 88, 230, 44}, "World 2"},
+        {{1360, 24, 150, 38}, "Test World"}
+    };
+    for (int worldIndex = 0; worldIndex < static_cast<int>(worldButtons.size()); worldIndex++) {
+        const MenuButton& button = worldButtons[worldIndex];
+        if (worldIndex == selectedOverworldWorld) {
+            DrawRectangleRec(button.rect, Fade(ORANGE, 0.35f));
+            DrawRectangleLinesEx(button.rect, 3.0f, ORANGE);
+            DrawCenteredText(
+                button.text,
+                static_cast<int>(button.rect.x + button.rect.width * 0.5f),
+                static_cast<int>(button.rect.y + 11.0f),
+                20,
+                RAYWHITE
+            );
+        }
+        else {
+            DrawMenuButton(button);
+        }
+    }
 
     DrawCircle(150, 250, 70, Fade(BLACK, 0.22f));
     DrawCircleLines(150, 250, 70, Fade(RAYWHITE, 0.16f));
@@ -4382,9 +7060,23 @@ void Game::DrawOverworld() {
     DrawCircle(1420, 165, 105, Fade(BLACK, 0.18f));
     DrawCircleLines(1420, 165, 105, Fade(RAYWHITE, 0.14f));
 
+    if (overworldNodes.empty()) {
+        DrawCenteredText("Level-select data is unavailable", Constants::ScreenWidth / 2, 430, 30, RAYWHITE);
+        return;
+    }
+    selectedOverworldNode = std::clamp(selectedOverworldNode, 0, static_cast<int>(overworldNodes.size()) - 1);
+
     for (const OverworldPath& path : overworldPaths) {
+        if (path.fromNode < 0 || path.toNode < 0 ||
+            path.fromNode >= static_cast<int>(overworldNodes.size()) ||
+            path.toNode >= static_cast<int>(overworldNodes.size())) {
+            continue;
+        }
         const OverworldNode& from = overworldNodes[path.fromNode];
         const OverworldNode& to = overworldNodes[path.toNode];
+        if (from.world != selectedOverworldWorld || to.world != selectedOverworldWorld) {
+            continue;
+        }
         bool powered = from.unlocked && to.unlocked;
         Color pipeColor = powered ? Color{178, 128, 45, 255} : Color{75, 82, 88, 255};
         Color innerColor = powered ? ORANGE : Color{34, 40, 46, 255};
@@ -4396,6 +7088,7 @@ void Game::DrawOverworld() {
 
     for (int i = 0; i < static_cast<int>(overworldNodes.size()); i++) {
         const OverworldNode& node = overworldNodes[i];
+        if (node.world != selectedOverworldWorld) continue;
         bool selected = i == selectedOverworldNode;
         bool hovered = CheckCollisionPointCircle(GetUiMousePosition(), node.position, 34.0f);
 
@@ -4424,15 +7117,15 @@ void Game::DrawOverworld() {
         DrawCenteredText(label, static_cast<int>(node.position.x), static_cast<int>(node.position.y - labelSize * 0.5f), labelSize, node.unlocked ? RAYWHITE : Fade(RAYWHITE, 0.38f));
     }
 
-    Rectangle panel{1030, 510, 460, 220};
+    Rectangle panel{1030, 560, 460, 170};
     DrawRectangleRec(panel, Color{20, 27, 34, 235});
     DrawRectangleLinesEx(panel, 2.0f, Fade(RAYWHITE, 0.45f));
 
     const OverworldNode& selectedNode = overworldNodes[selectedOverworldNode];
-    DrawText(selectedNode.name.c_str(), 1060, 540, 30, RAYWHITE);
-    DrawText(TextFormat("Node %s", selectedNode.label.c_str()), 1060, 580, 20, ORANGE);
-    DrawText(selectedNode.unlocked ? "Status: Unlocked" : "Status: Locked", 1060, 614, 20, selectedNode.unlocked ? GREEN : LIGHTGRAY);
-    DrawText(selectedNode.unlocked ? "Enter / click starts the level" : "Complete earlier levels to unlock", 1060, 648, 20, LIGHTGRAY);
+    DrawText(selectedNode.name.c_str(), 1060, 583, 27, RAYWHITE);
+    DrawText(TextFormat("Node %s", selectedNode.label.c_str()), 1060, 620, 20, ORANGE);
+    DrawText(selectedNode.unlocked ? "Status: Unlocked" : "Status: Locked", 1060, 652, 20, selectedNode.unlocked ? GREEN : LIGHTGRAY);
+    DrawText(selectedNode.unlocked ? "Enter / click starts the level" : "Complete earlier levels to unlock", 1060, 684, 20, LIGHTGRAY);
 
     std::vector<MenuButton> buttons{
         {{1240, 760, 250, 46}, "Back to Title"},
@@ -4443,11 +7136,11 @@ void Game::DrawOverworld() {
         DrawMenuButton(button);
     }
 
-    DrawText("A/D or arrows select    Enter starts    Esc returns", 95, 825, 20, LIGHTGRAY);
-    DrawText("` opens console", 95, 858, 20, LIGHTGRAY);
+    DrawText("A/D or arrows select    Q/E switch worlds    Enter starts", 95, 825, 20, LIGHTGRAY);
+    DrawText("Shoulders switch worlds    Esc returns    ` opens console", 95, 858, 20, LIGHTGRAY);
 
     if (!menuMessage.empty()) {
-        DrawWrappedText(menuMessage, {1060, 682, 400, 48}, 20, 4, ORANGE);
+        DrawWrappedText(menuMessage, {555, 714, 630, 52}, 20, 4, ORANGE);
     }
 }
 
@@ -4504,31 +7197,38 @@ void Game::DrawControlsPopup() {
     DrawCenteredText("Controls", panelCenterX, 218, 40, RAYWHITE);
 
     struct ControlRow {
-        const char* action;
+        std::string action;
         std::string input;
     };
 
-    const std::vector<ControlRow> rows{
-        {"Player 1 Move", std::string(GetKeyName(player1Bindings.left)) + " / " + GetKeyName(player1Bindings.right)},
-        {"Player 1 Jump", std::string(GetKeyName(player1Bindings.up)) + " / " + GetKeyName(player1Bindings.jump)},
-        {"Player 1 Swim", std::string(GetKeyName(player1Bindings.up)) + " / " + GetKeyName(player1Bindings.down)},
-        {"Player 1 Climb", std::string(GetKeyName(player1Bindings.up)) + " / " + GetKeyName(player1Bindings.down)},
-        {"Player 2 Move", "J / L"},
-        {"Player 2 Jump", "I"},
-        {"Player 2 Swim", "I / K"},
-        {"Player 2 Climb", "I / K"},
-        {"Player 3 Move", "Left / Right"},
-        {"Player 3 Jump", "Up"},
-        {"Player 3 Swim / Climb", "Up / Down"},
-        {"Player 1 Interact", GetKeyName(player1Bindings.interact)},
-        {"Player 2 Interact", "U"},
-        {"Player 3 Interact", "Right Ctrl"},
-        {"Grab / Turn / Lock", std::string(GetKeyName(player1Bindings.interact)) + " / U / Right Ctrl"},
-        {"Pause / Resume", "Esc / Enter"},
-        {"Map Select", "A / D or Arrow Keys"},
-        {"Select / Start", "Enter / Space"},
-        {"Console", "` / ~"}
-    };
+    std::vector<ControlRow> rows;
+    rows.reserve(19);
+    for (int playerIndex = 0; playerIndex < 4; ++playerIndex) {
+        const PlayerKeyBindings& bindings = playerBindings[playerIndex];
+        const PlayerControllerSettings& controller = controllerSettings[playerIndex];
+        const std::string playerLabel = "Player " + std::to_string(playerIndex + 1);
+        rows.push_back({
+            playerLabel + " Move",
+            KeyLabel(bindings.left) + " / " + KeyLabel(bindings.right)
+        });
+        rows.push_back({
+            playerLabel + " Jump",
+            KeyLabel(bindings.up) + " / " + KeyLabel(bindings.jump)
+        });
+        rows.push_back({
+            playerLabel + " Interact",
+            KeyLabel(bindings.interact)
+        });
+        rows.push_back({
+            playerLabel + " Controller",
+            ControllerDeviceLabel(controller.gamepad) + " | " +
+                GamepadButtonLabel(controller.jump) + " / " +
+                GamepadButtonLabel(controller.interact)
+        });
+    }
+    rows.push_back({"Swim / Climb", "Each player's Up / Down"});
+    rows.push_back({"Controller Move", "Left stick / D-pad"});
+    rows.push_back({"Pause / Resume", "Esc / Enter / Start"});
 
     int startY = 285;
     int rowHeight = 25;
@@ -4538,7 +7238,7 @@ void Game::DrawControlsPopup() {
         int y = startY + i * rowHeight;
         Color rowColor = i % 2 == 0 ? Fade(RAYWHITE, 0.06f) : Fade(RAYWHITE, 0.025f);
         DrawRectangle(500, y - 4, 600, 30, rowColor);
-        DrawText(rows[i].action, actionX, y, 20, LIGHTGRAY);
+        DrawText(rows[i].action.c_str(), actionX, y, 20, LIGHTGRAY);
         DrawText(rows[i].input.c_str(), inputX, y, 20, RAYWHITE);
     }
 
@@ -4603,27 +7303,97 @@ void Game::DrawSettingsPopup() {
         DrawMenuButton({layout.controls[3], TextFormat("Mute All: %s", OnOffLabel(pendingAudioMuted))});
     }
     else if (settingsPage == SettingsPage::Controls) {
-        const char* actions[] = {"Move Left", "Move Right", "Move Up", "Move Down", "Jump", "Interact"};
-        const KeyboardKey keys[] = {
-            pendingPlayer1Bindings.left,
-            pendingPlayer1Bindings.right,
-            pendingPlayer1Bindings.up,
-            pendingPlayer1Bindings.down,
-            pendingPlayer1Bindings.jump,
-            pendingPlayer1Bindings.interact
-        };
-        for (int i = 0; i < 6; ++i) {
-            const char* keyName = settingsBindingCapture == i ? "Press a key..." : GetKeyName(keys[i]);
-            DrawMenuButton({layout.controls[i], TextFormat("%s: %s", actions[i], keyName)});
+        constexpr const char* playerLabels[] = {"Player 1", "Player 2", "Player 3", "Player 4"};
+        constexpr const char* inputLabels[] = {"Keyboard", "Controller"};
+        for (int i = 0; i < static_cast<int>(layout.playerTabs.size()); ++i) {
+            DrawMenuButton({layout.playerTabs[i], playerLabels[i]});
+            if (settingsSelectedPlayer == i) {
+                DrawRectangle(
+                    static_cast<int>(layout.playerTabs[i].x + 10.0f),
+                    static_cast<int>(layout.playerTabs[i].y + layout.playerTabs[i].height - 3.0f),
+                    static_cast<int>(layout.playerTabs[i].width - 20.0f),
+                    3,
+                    kPlayerSelectColors[i]
+                );
+            }
         }
-        DrawMenuButton({layout.controls[6], TextFormat("Controller: %s", OnOffLabel(pendingControllerEnabled))});
-        DrawMenuButton({layout.controls[7], TextFormat("Controller Vibration: %s", OnOffLabel(pendingControllerVibrationEnabled))});
+        for (int i = 0; i < static_cast<int>(layout.inputTabs.size()); ++i) {
+            DrawMenuButton({layout.inputTabs[i], inputLabels[i]});
+            if (static_cast<int>(settingsControlsInputView) == i) {
+                DrawRectangle(
+                    static_cast<int>(layout.inputTabs[i].x + 10.0f),
+                    static_cast<int>(layout.inputTabs[i].y + layout.inputTabs[i].height - 3.0f),
+                    static_cast<int>(layout.inputTabs[i].width - 20.0f),
+                    3,
+                    ORANGE
+                );
+            }
+        }
+
+        if (settingsControlsInputView == ControlsInputView::Keyboard) {
+            const char* actions[] = {"Move Left", "Move Right", "Move Up", "Move Down", "Jump", "Interact"};
+            const PlayerKeyBindings& bindings = pendingPlayerBindings[settingsSelectedPlayer];
+            const KeyboardKey keys[] = {
+                bindings.left,
+                bindings.right,
+                bindings.up,
+                bindings.down,
+                bindings.jump,
+                bindings.interact
+            };
+            for (int i = 0; i < 6; ++i) {
+                const std::string keyName = settingsBindingCapture == i ? "Press a key..." : KeyLabel(keys[i]);
+                DrawMenuButton({layout.controlRows[i], TextFormat("%s: %s", actions[i], keyName.c_str())});
+            }
+        }
+        else {
+            const PlayerControllerSettings& controller = pendingControllerSettings[settingsSelectedPlayer];
+            const int gamepad = AvailableGamepad(controller);
+            const std::string deviceLabel = ControllerDeviceLabel(controller.gamepad);
+            DrawMenuButton({
+                layout.controlRows[0],
+                TextFormat("Device: %s", deviceLabel.c_str())
+            });
+
+            const char* jumpLabel = settingsGamepadBindingCapture == 0
+                ? "Press a controller button..."
+                : GamepadButtonLabel(controller.jump);
+            const char* interactLabel = settingsGamepadBindingCapture == 1
+                ? "Press a controller button..."
+                : GamepadButtonLabel(controller.interact);
+            DrawMenuButton({
+                layout.controlRows[1],
+                TextFormat("Jump: %s", jumpLabel),
+                gamepad >= 0
+            });
+            DrawMenuButton({
+                layout.controlRows[2],
+                TextFormat("Interact: %s", interactLabel),
+                gamepad >= 0
+            });
+            DrawMenuButton({
+                layout.controlRows[3],
+                TextFormat("Vibration: %s", OnOffLabel(controller.vibration))
+            });
+
+            const std::string status = controller.gamepad < 0
+                ? "No controller assigned"
+                : deviceLabel + (gamepad >= 0 ? " connected" : " not connected");
+            DrawCenteredText(
+                status.c_str(),
+                panelCenterX,
+                static_cast<int>(layout.panel.y + 404.0f),
+                18,
+                gamepad >= 0 ? LIME : LIGHTGRAY
+            );
+        }
     }
     else {
         DrawMenuButton({layout.controls[0], TextFormat("Screen Shake: %s", ScreenShakeLabel(pendingScreenShakeSetting))});
         DrawMenuButton({layout.controls[1], TextFormat("Reduced Flashing: %s", OnOffLabel(pendingReducedFlashing))});
         DrawMenuButton({layout.controls[2], TextFormat("High Contrast: %s", OnOffLabel(pendingHighContrast))});
         DrawMenuButton({layout.controls[3], TextFormat("Colorblind Mode: %s", ColorblindLabel(pendingColorblindSetting))});
+        DrawMenuButton({layout.controls[4], TextFormat("Object Tooltips: %s", OnOffLabel(pendingObjectTooltipsEnabled))});
     }
 
     DrawMenuButton({layout.applyButton, "Apply"});
@@ -4640,6 +7410,7 @@ void Game::DrawSettingsPopup() {
         case SettingsDropdown::UiScale: anchor = layout.controls[4]; optionCount = kUiScaleCount; break;
         case SettingsDropdown::ScreenShake: anchor = layout.controls[0]; optionCount = 3; break;
         case SettingsDropdown::ColorblindMode: anchor = layout.controls[3]; optionCount = 4; break;
+        case SettingsDropdown::ControllerDevice: anchor = layout.controlRows[0]; optionCount = 5; break;
         default: break;
         }
 
@@ -4648,6 +7419,7 @@ void Game::DrawSettingsPopup() {
         DrawRectangleLinesEx(dropdown.panel, 1.5f, Fade(RAYWHITE, 0.35f));
         for (int i = 0; i < optionCount; ++i) {
             const char* label = "";
+            std::string dynamicLabel;
             switch (settingsDropdown) {
             case SettingsDropdown::WindowMode: label = WindowModeLabel(static_cast<WindowModeSetting>(i)); break;
             case SettingsDropdown::Resolution: label = GetResolutionPreset(i).label; break;
@@ -4655,6 +7427,11 @@ void Game::DrawSettingsPopup() {
             case SettingsDropdown::UiScale: label = kUiScaleLabels[i]; break;
             case SettingsDropdown::ScreenShake: label = ScreenShakeLabel(static_cast<ScreenShakeSetting>(i)); break;
             case SettingsDropdown::ColorblindMode: label = ColorblindLabel(static_cast<ColorblindSetting>(i)); break;
+            case SettingsDropdown::ControllerDevice:
+                dynamicLabel = ControllerDeviceLabel(i - 1);
+                if (i > 0 && !IsGamepadAvailable(i - 1)) dynamicLabel += " (Not Connected)";
+                label = dynamicLabel.c_str();
+                break;
             default: break;
             }
             DrawMenuButton({dropdown.options[i], label});
@@ -4686,25 +7463,286 @@ void Game::DrawQuitConfirmation() {
     DrawCenteredText("Enter/Y confirms    Esc/N cancels", panelCenterX, 552, 20, Fade(RAYWHITE, 0.72f));
 }
 
+void Game::DrawNeurotoxinInfrastructure() {
+    const bool active = !level.valve.opened;
+    const Color outline{22, 27, 29, 255};
+    const Color pipe{74, 82, 80, 255};
+    const Color pipeHighlight{137, 146, 137, 255};
+    const Color toxin{119, 212, 89, 255};
+    const Color stateColor = active ? toxin : Color{83, 104, 91, 255};
+
+    const std::array<Vector2, 5> pipePoints{
+        level.toxinLeak.source,
+        Vector2{210.0f, level.toxinLeak.source.y},
+        Vector2{210.0f, level.valve.center.y},
+        Vector2{level.valve.center.x + level.valve.radius + 28.0f, level.valve.center.y},
+        Vector2{level.valve.center.x + level.valve.radius, level.valve.center.y}
+    };
+    for (int index = 0; index + 1 < static_cast<int>(pipePoints.size()); ++index) {
+        DrawLineEx(pipePoints[index], pipePoints[index + 1], 19.0f, outline);
+        DrawLineEx(pipePoints[index], pipePoints[index + 1], 13.0f, pipe);
+        DrawLineEx(
+            {pipePoints[index].x - 1.5f, pipePoints[index].y - 1.5f},
+            {pipePoints[index + 1].x - 1.5f, pipePoints[index + 1].y - 1.5f},
+            2.0f,
+            pipeHighlight
+        );
+        if (active) DrawLineEx(pipePoints[index], pipePoints[index + 1], 4.0f, Fade(stateColor, 0.80f));
+    }
+    for (Vector2 joint : pipePoints) {
+        DrawCircleV(joint, 12.0f, outline);
+        DrawCircleV(joint, 8.0f, pipe);
+        DrawCircleV(joint, 3.0f, stateColor);
+    }
+
+    // Ruptured outlet beside the entrance. The simulated gas is emitted from
+    // the dark mouth while these rings provide a stable visual landmark.
+    Vector2 leak = level.toxinLeak.source;
+    DrawRectangleRec({leak.x - 28.0f, leak.y - 13.0f, 32.0f, 26.0f}, outline);
+    DrawRectangleRec({leak.x - 24.0f, leak.y - 9.0f, 26.0f, 18.0f}, pipe);
+    DrawCircleV(leak, 16.0f, outline);
+    DrawCircleV(leak, 11.0f, Color{14, 22, 18, 255});
+    if (active) {
+        const float pulse = 0.72f + sinf(toxinLevelTimer * 7.0f) * 0.16f;
+        DrawCircleV({leak.x + 6.0f, leak.y - 8.0f}, 18.0f, Fade(toxin, 0.16f * pulse));
+        DrawCircleV({leak.x + 12.0f, leak.y - 22.0f}, 24.0f, Fade(toxin, 0.10f * pulse));
+    }
+
+    const bool playerNear =
+        (playerAlive &&
+            CheckCollisionCircleRec(level.valve.center, level.valve.radius + 25.0f, player.rect)) ||
+        (multiplayerEnabled && player2Alive &&
+            CheckCollisionCircleRec(level.valve.center, level.valve.radius + 25.0f, player2.rect)) ||
+        (threePlayerEnabled && player3Alive &&
+            CheckCollisionCircleRec(level.valve.center, level.valve.radius + 25.0f, player3.rect)) ||
+        (fourPlayerEnabled && player4Alive &&
+            CheckCollisionCircleRec(level.valve.center, level.valve.radius + 25.0f, player4.rect));
+    DrawValveBody(level.valve, playerNear);
+}
+
+void Game::DrawNeurotoxinLevel() {
+    const bool active = !level.valve.opened;
+
+    // Permanent equipment placard: unlike the facility notices below, this
+    // identifies the valve itself and remains a conventional painted sign.
+    const Rectangle valvePlacard{34.0f, 75.0f, 285.0f, 86.0f};
+    const Color placardBorder{38, 43, 39, 255};
+    const Color placardFace{231, 215, 164, 255};
+    const Color placardWarning{158, 42, 31, 255};
+    DrawRectangleRec(
+        {valvePlacard.x + 4.0f, valvePlacard.y + 4.0f, valvePlacard.width, valvePlacard.height},
+        Fade(BLACK, 0.28f)
+    );
+    DrawRectangleRec(valvePlacard, placardBorder);
+    DrawRectangleRec(
+        {
+            valvePlacard.x + 4.0f,
+            valvePlacard.y + 4.0f,
+            valvePlacard.width - 8.0f,
+            valvePlacard.height - 8.0f
+        },
+        placardFace
+    );
+    const int placardCenterX =
+        static_cast<int>(valvePlacard.x + valvePlacard.width * 0.5f);
+    const auto drawPlacardLine =
+        [&](const char* text, int y, int fontSize, Color color) {
+            const int textX = placardCenterX - MeasureText(text, fontSize) / 2;
+            DrawText(text, textX, y, fontSize, color);
+        };
+    drawPlacardLine(
+        "DEADLY NEUROTOXIN",
+        static_cast<int>(valvePlacard.y + 7.0f),
+        17,
+        placardWarning
+    );
+    drawPlacardLine(
+        "EMERGENCY SHUTOFF",
+        static_cast<int>(valvePlacard.y + 28.0f),
+        24,
+        Color{30, 34, 31, 255}
+    );
+    drawPlacardLine(
+        "DO NOT TURN",
+        static_cast<int>(valvePlacard.y + 58.0f),
+        18,
+        placardWarning
+    );
+
+    auto drawScrollingLedSign = [&](
+        Rectangle housing,
+        const char* message,
+        Color ledColor,
+        float startingOffset,
+        float scrollSpeed
+    ) {
+        const Color frameDark{18, 23, 25, 255};
+        const Color frameMetal{65, 73, 74, 255};
+        const Color frameHighlight{125, 134, 132, 255};
+        Rectangle display{
+            housing.x + 10.0f,
+            housing.y + 10.0f,
+            housing.width - 20.0f,
+            housing.height - 20.0f
+        };
+
+        DrawRectangleRounded(housing, 0.12f, 5, frameDark);
+        DrawRectangleRounded(
+            {housing.x + 3.0f, housing.y + 3.0f, housing.width - 6.0f, housing.height - 6.0f},
+            0.10f,
+            5,
+            frameMetal
+        );
+        DrawRectangleRec(display, Color{8, 13, 12, 255});
+        DrawRectangleLinesEx(display, 2.0f, Color{21, 29, 27, 255});
+        DrawLineEx(
+            {housing.x + 8.0f, housing.y + 5.0f},
+            {housing.x + housing.width - 8.0f, housing.y + 5.0f},
+            1.5f,
+            Fade(frameHighlight, 0.70f)
+        );
+        for (Vector2 bolt : std::initializer_list<Vector2>{
+            {housing.x + 6.0f, housing.y + 6.0f},
+            {housing.x + housing.width - 6.0f, housing.y + 6.0f},
+            {housing.x + 6.0f, housing.y + housing.height - 6.0f},
+            {housing.x + housing.width - 6.0f, housing.y + housing.height - 6.0f}
+        }) {
+            DrawCircleV(bolt, 2.0f, frameDark);
+            DrawCircleV({bolt.x - 0.4f, bolt.y - 0.4f}, 0.8f, frameHighlight);
+        }
+
+        for (float scanlineY = display.y + 3.0f; scanlineY < display.y + display.height; scanlineY += 4.0f) {
+            DrawLineEx(
+                {display.x + 2.0f, scanlineY},
+                {display.x + display.width - 2.0f, scanlineY},
+                1.0f,
+                Fade(ledColor, 0.035f)
+            );
+        }
+
+        Font font = GetFontDefault();
+        const float fontSize = static_cast<float>(font.baseSize) * 2.0f;
+        const float spacing = 2.0f;
+        const Vector2 textSize = MeasureTextEx(font, message, fontSize, spacing);
+        const float gap = 46.0f;
+        const float cycle = display.width + textSize.x + gap;
+        const float distance = fmodf(
+            toxinLevelTimer * scrollSpeed + display.width * startingOffset,
+            cycle
+        );
+        const float firstX = display.x + display.width - distance;
+        const float textY = display.y + (display.height - textSize.y) * 0.5f - 1.0f;
+        const Vector2 scissorOrigin = GetWorldToScreen2D({display.x, display.y}, gameplayCamera);
+        BeginScissorMode(
+            static_cast<int>(floorf(scissorOrigin.x)),
+            static_cast<int>(floorf(scissorOrigin.y)),
+            static_cast<int>(ceilf(display.width * gameplayCamera.zoom)),
+            static_cast<int>(ceilf(display.height * gameplayCamera.zoom))
+        );
+        for (float textX : {firstX, firstX + cycle}) {
+            DrawTextEx(font, message, {textX + 1.0f, textY + 1.0f}, fontSize, spacing, Fade(ledColor, 0.18f));
+            DrawTextEx(font, message, {textX, textY}, fontSize, spacing, ledColor);
+        }
+        EndScissorMode();
+    };
+
+    drawScrollingLedSign(
+        {250.0f, 330.0f, 350.0f, 52.0f},
+        active ? "Deadly Neurotoxin Flow: Active." : "Deadly Neurotoxin Flow: Shut Off.",
+        active ? Color{255, 112, 44, 255} : Color{93, 230, 117, 255},
+        0.08f,
+        48.0f
+    );
+    drawScrollingLedSign(
+        {1040.0f, 104.0f, 450.0f, 52.0f},
+        "Air Quality Event In Progress.",
+        Color{255, 194, 62, 255},
+        0.48f,
+        53.0f
+    );
+    drawScrollingLedSign(
+        {980.0f, 520.0f, 500.0f, 52.0f},
+        "Automated notice: Remain calm and continue breathing normally.",
+        Color{151, 225, 90, 255},
+        0.86f,
+        44.0f
+    );
+
+    const bool player1Near = playerAlive &&
+        CheckCollisionCircleRec(level.valve.center, level.valve.radius + 25.0f, player.rect);
+    const bool player2Near = multiplayerEnabled && player2Alive &&
+        CheckCollisionCircleRec(level.valve.center, level.valve.radius + 25.0f, player2.rect);
+    const bool player3Near = threePlayerEnabled && player3Alive &&
+        CheckCollisionCircleRec(level.valve.center, level.valve.radius + 25.0f, player3.rect);
+    const bool player4Near = fourPlayerEnabled && player4Alive &&
+        CheckCollisionCircleRec(level.valve.center, level.valve.radius + 25.0f, player4.rect);
+    const std::string prompt =
+        GetInteractPrompt(player1Near, player2Near, player3Near, player4Near, "Hold");
+    DrawValvePrompt(
+        level.valve,
+        player1Near || player2Near || player3Near || player4Near,
+        prompt.c_str(),
+        true
+    );
+}
+
 void Game::DrawGameplay() {
-    if (showFPS) DrawFPS(10, 10);
+    Camera2D renderCamera = gameplayCamera;
+    renderCamera.target.x = roundf(renderCamera.target.x);
+    renderCamera.target.y = roundf(renderCamera.target.y);
+    if (screenShakeTimer > 0.0f && screenShakeSetting != ScreenShakeSetting::Off) {
+        const float strength = screenShakeSetting == ScreenShakeSetting::Reduced ? 2.0f : 5.0f;
+        renderCamera.offset.x += static_cast<float>(GetRandomValue(-100, 100)) * 0.01f * strength;
+        renderCamera.offset.y += static_cast<float>(GetRandomValue(-100, 100)) * 0.01f * strength;
+    }
+
+    BeginMode2D(renderCamera);
+
+    constexpr float backgroundMargin = 64.0f;
+    const float viewLeft = gameplayCamera.target.x - Constants::ScreenWidth * 0.5f - backgroundMargin;
+    const float viewTop = gameplayCamera.target.y - Constants::ScreenHeight * 0.5f - backgroundMargin;
+    const float viewRight = gameplayCamera.target.x + Constants::ScreenWidth * 0.5f + backgroundMargin;
+    const float viewBottom = gameplayCamera.target.y + Constants::ScreenHeight * 0.5f + backgroundMargin;
+    constexpr float backgroundTileSize = 32.0f;
+    const float backgroundLeft = fmaxf(
+        level.worldBounds.x,
+        level.worldBounds.x + floorf((viewLeft - level.worldBounds.x) / backgroundTileSize) * backgroundTileSize
+    );
+    const float backgroundTop = fmaxf(
+        level.worldBounds.y,
+        level.worldBounds.y + floorf((viewTop - level.worldBounds.y) / backgroundTileSize) * backgroundTileSize
+    );
+    const float backgroundRight = fminf(
+        level.worldBounds.x + level.worldBounds.width,
+        level.worldBounds.x + ceilf((viewRight - level.worldBounds.x) / backgroundTileSize) * backgroundTileSize
+    );
+    const float backgroundBottom = fminf(
+        level.worldBounds.y + level.worldBounds.height,
+        level.worldBounds.y + ceilf((viewBottom - level.worldBounds.y) / backgroundTileSize) * backgroundTileSize
+    );
+    const Rectangle backgroundBounds{
+        backgroundLeft,
+        backgroundTop,
+        fmaxf(0.0f, backgroundRight - backgroundLeft),
+        fmaxf(0.0f, backgroundBottom - backgroundTop)
+    };
 
     if (IsTilesetReferenceLevel(level) || HasFarBackgroundTiles(level)) {
         DrawTiledTextureRect(
             industrialTiles,
             {32.0f, 64.0f, 32.0f, 32.0f},
-            {0, 0, static_cast<float>(Constants::ScreenWidth), static_cast<float>(Constants::ScreenHeight)},
+            backgroundBounds,
             WHITE
         );
     }
     else {
         DrawTilesetBackgroundFill(
             industrialBackground,
-            {0, 0, static_cast<float>(Constants::ScreenWidth), static_cast<float>(Constants::ScreenHeight)},
+            backgroundBounds,
             Fade(WHITE, 0.68f),
             0.08f
         );
-        DrawRectangle(0, 0, Constants::ScreenWidth, Constants::ScreenHeight, Fade(Color{13, 20, 28, 255}, 0.16f));
+        DrawRectangleRec(backgroundBounds, Fade(Color{13, 20, 28, 255}, 0.16f));
     }
 
     bool hasExplicitVisualTiles = !level.visualTiles.empty();
@@ -4722,6 +7760,25 @@ void Game::DrawGameplay() {
         for (const FluidField& fluid : level.fluids) {
             DrawFluidBackground(fluid);
         }
+    }
+    else {
+        for (const FluidField& fluid : level.fluids) {
+            DrawFluidBackground(fluid);
+        }
+    }
+
+    // Fixed wiring belongs in front of room-depth artwork but behind all
+    // foreground architecture and moving machinery.
+    DrawPortalLiftWiring(level);
+
+    // The leaking pipe and valve sit inside the gas volume. Drawing the hardware
+    // first lets the translucent gas pass visibly in front of it instead of
+    // producing a valve-shaped interruption in the cloud.
+    if (level.script == LevelScript::NeurotoxinMaze) {
+        DrawNeurotoxinInfrastructure();
+    }
+
+    if (hasExplicitVisualTiles) {
         for (const VisualTile& tile : level.visualTiles) {
             if (tile.layer == TileLayer::Foreground) {
                 DrawTilesetTile(industrialTiles, tile.column, tile.row, tile.position, WHITE);
@@ -4729,9 +7786,6 @@ void Game::DrawGameplay() {
         }
     }
     else {
-        for (const FluidField& fluid : level.fluids) {
-            DrawFluidBackground(fluid);
-        }
         for (const Rectangle& solid : level.baseSolids) {
             if (IsCeilingSolid(solid)) {
                 DrawTilesetCeiling(industrialTiles, solid, WHITE);
@@ -4749,13 +7803,89 @@ void Game::DrawGameplay() {
         }
     }
 
-    if (HasArea(level.ladder)) {
-        DrawLineEx({level.ladder.x + 8, level.ladder.y}, {level.ladder.x + 8, level.ladder.y + level.ladder.height}, 4, BLACK);
-        DrawLineEx({level.ladder.x + level.ladder.width - 8, level.ladder.y}, {level.ladder.x + level.ladder.width - 8, level.ladder.y + level.ladder.height}, 4, BLACK);
-        for (int i = 0; i < 13; i++) {
-            float y = level.ladder.y + i * 30;
-            DrawLineEx({level.ladder.x + 8, y}, {level.ladder.x + level.ladder.width - 8, y}, 3, BLACK);
+    // Background physics remains fully simulated, but is rendered behind the play plane.
+    if (level.script == LevelScript::ClocktowerCore) {
+        DrawClocktowerMovementFrame(level);
+    }
+    for (const GuideObject& object : level.guideObjects) {
+        if (object.layer == WorldLayer::Background) DrawGuideObject(object);
+    }
+    for (const StoneBlock& block : level.stoneBlocks) {
+        if (block.layer == WorldLayer::Background) DrawStoneBlock(block);
+    }
+    for (const Boulder& boulder : level.boulders) {
+        if (boulder.layer == WorldLayer::Background) DrawBoulder(boulder);
+    }
+    for (const PhysicsWheel& wheel : level.physicsWheels) {
+        if (wheel.layer == WorldLayer::Background) DrawPhysicsWheel(wheel);
+    }
+    for (const Gear& gear : level.gears) {
+        if (gear.layer == WorldLayer::Background) DrawGear(gear);
+    }
+    for (const Flywheel& flywheel : level.flywheels) {
+        if (flywheel.layer == WorldLayer::Background) DrawFlywheel(flywheel);
+    }
+    for (const Screw& screw : level.screws) {
+        if (screw.layer == WorldLayer::Background) DrawScrew(screw);
+    }
+    if (level.script == LevelScript::ClocktowerCore) {
+        DrawClocktowerFace(level);
+        for (const Gear& gear : level.gears) {
+            if (gear.clockHand == ClockHandType::None) continue;
+
+            const bool player1Near = playerAlive && IsPlayerInsideClockGearProxy(gear, player);
+            const bool player2Near = multiplayerEnabled && player2Alive &&
+                IsPlayerInsideClockGearProxy(gear, player2);
+            const bool player3Near = threePlayerEnabled && player3Alive &&
+                IsPlayerInsideClockGearProxy(gear, player3);
+            const bool player4Near = fourPlayerEnabled && player4Alive &&
+                IsPlayerInsideClockGearProxy(gear, player4);
+            const bool playerNear = player1Near || player2Near || player3Near || player4Near;
+            const Color stateColor = IsClockGearLocked(gear) ? GREEN : (gear.stopped ? RED : ORANGE);
+            if (gear.orientation == GearOrientation::Horizontal) {
+                DrawEllipseLines(static_cast<int>(gear.center.x), static_cast<int>(gear.center.y),
+                    gear.radius + 8.0f, (gear.radius + 8.0f) * 0.38f, stateColor);
+            }
+            else {
+                DrawCircleLinesV(gear.center, gear.radius + 8.0f, stateColor);
+            }
+
+            const std::string brakeLabel = std::string(ClockHandName(gear.clockHand)) + " BRAKE";
+            const int labelWidth = MeasureText(brakeLabel.c_str(), 18);
+            const float labelY = gear.center.y - gear.radius *
+                (gear.orientation == GearOrientation::Horizontal ? 0.46f : 1.0f) - 29.0f;
+            DrawRectangle(static_cast<int>(gear.center.x - labelWidth * 0.5f - 6.0f), static_cast<int>(labelY - 2.0f),
+                labelWidth + 12, 23, Fade(BLACK, 0.78f));
+            DrawText(brakeLabel.c_str(), static_cast<int>(gear.center.x - labelWidth * 0.5f),
+                static_cast<int>(labelY), 18, stateColor);
+
+            if (playerNear) {
+                const std::string prompt = GetInteractPrompt(player1Near, player2Near, player3Near, player4Near,
+                    gear.stopped ? "Restart" : "Stop");
+                const int promptWidth = MeasureText(prompt.c_str(), 19);
+                const float promptY = gear.center.y + gear.radius *
+                    (gear.orientation == GearOrientation::Horizontal ? 0.46f : 1.0f) + 14.0f;
+                DrawRectangle(static_cast<int>(gear.center.x - promptWidth * 0.5f - 7.0f), static_cast<int>(promptY - 3.0f),
+                    promptWidth + 14, 25, Fade(BLACK, 0.82f));
+                DrawText(prompt.c_str(), static_cast<int>(gear.center.x - promptWidth * 0.5f),
+                    static_cast<int>(promptY), 19, RAYWHITE);
+            }
         }
+    }
+
+    for (const LevelLabel& label : level.labels) {
+        const int fontSize = label.fontSize;
+        const int padding = std::max(5, static_cast<int>(roundf(fontSize * 0.42f)));
+        const int textWidth = MeasureText(label.text.c_str(), fontSize);
+        Rectangle sign{
+            label.position.x,
+            label.position.y,
+            static_cast<float>(textWidth + padding * 2),
+            static_cast<float>(fontSize + padding * 2)
+        };
+        DrawRectangleRounded(sign, 0.18f, 6, Fade(Color{22, 28, 34, 255}, 0.90f));
+        DrawRectangleRoundedLinesEx(sign, 0.18f, 6, 2.0f, Fade(ORANGE, 0.90f));
+        DrawText(label.text.c_str(), static_cast<int>(sign.x) + padding, static_cast<int>(sign.y) + padding, fontSize, RAYWHITE);
     }
 
     for (const Chain& chain : level.chains) {
@@ -4772,7 +7902,9 @@ void Game::DrawGameplay() {
         bool player1NearWinch = playerAlive && IsNearRect(player.rect, machineWinch.rect, 18.0f);
         bool player2NearWinch = multiplayerEnabled && player2Alive && IsNearRect(player2.rect, machineWinch.rect, 18.0f);
         bool player3NearWinch = threePlayerEnabled && player3Alive && IsNearRect(player3.rect, machineWinch.rect, 18.0f);
-        std::string winchPrompt = GetInteractPrompt(player1NearWinch, player2NearWinch, player3NearWinch, "Press");
+        bool player4NearWinch = fourPlayerEnabled && player4Alive && IsNearRect(player4.rect, machineWinch.rect, 18.0f);
+        std::string winchPrompt =
+            GetInteractPrompt(player1NearWinch, player2NearWinch, player3NearWinch, player4NearWinch, "Press");
         DrawWinch(machineWinch);
         DrawText(machineWinch.grabbed ? "Move to push" : winchPrompt.c_str(), static_cast<int>(machineWinch.rect.x - 28.0f), static_cast<int>(machineWinch.rect.y - 28.0f), 20, machineWinch.grabbed ? ORANGE : BLACK);
 
@@ -4817,12 +7949,14 @@ void Game::DrawGameplay() {
         bool lightsOn = machinePower > 0.12f;
         Color wireColor = lightsOn ? BLUE : DARKBLUE;
 
-        DrawLineEx({655, 400}, {760, 400}, 4, wireColor);
-        DrawLineEx({760, 400}, {760, 320}, 4, wireColor);
-        DrawLineEx({760, 320}, {1220, 320}, 4, wireColor);
-        DrawLineEx({1220, 320}, {1220, 598}, 4, wireColor);
         float gateMotorWireX = HasArea(level.exitTrigger) ? level.exitTrigger.x - 115.0f : 1370.0f;
-        DrawLineEx({1220, 598}, {gateMotorWireX, 598}, 4, wireColor);
+        DrawElectricalWire(
+            {{655, 400}, {760, 400}, {760, 320}, {1220, 320},
+             {1220, 598}, {gateMotorWireX, 598}},
+            4.0f,
+            wireColor,
+            lightsOn
+        );
 
         float flickerCycle = fmodf(static_cast<float>(GetTime()), 3.4f);
         if (!reducedFlashing && machinePower < 0.65f && flickerCycle < 0.22f) {
@@ -4839,6 +7973,11 @@ void Game::DrawGameplay() {
             DrawTriangle({x - 38, 445}, {x + 38, 445}, {x, 385}, Fade(YELLOW, 0.08f + lampPower * 0.45f));
         }
     }
+    else {
+        for (int index = 0; index < static_cast<int>(level.pulleys.size()); ++index) {
+            DrawPulley(level.pulleys[index], 42.0f, pulleyRotation * (1.0f + index * 0.18f), BLACK);
+        }
+    }
 
     for (const HangingWeight& weight : level.weights) {
         DrawHazardWeight(weight, ropePatternOffset);
@@ -4848,29 +7987,24 @@ void Game::DrawGameplay() {
         bool player1NearValve = playerAlive && CheckCollisionCircleRec(level.valve.center, level.valve.radius + 24.0f, player.rect);
         bool player2NearValve = multiplayerEnabled && player2Alive && CheckCollisionCircleRec(level.valve.center, level.valve.radius + 24.0f, player2.rect);
         bool player3NearValve = threePlayerEnabled && player3Alive && CheckCollisionCircleRec(level.valve.center, level.valve.radius + 24.0f, player3.rect);
-        bool playerNearValve = player1NearValve || player2NearValve || player3NearValve;
-        std::string valvePrompt = GetInteractPrompt(player1NearValve, player2NearValve, player3NearValve, "Hold");
+        bool player4NearValve = fourPlayerEnabled && player4Alive && CheckCollisionCircleRec(level.valve.center, level.valve.radius + 24.0f, player4.rect);
+        bool playerNearValve = player1NearValve || player2NearValve || player3NearValve || player4NearValve;
+        std::string valvePrompt =
+            GetInteractPrompt(player1NearValve, player2NearValve, player3NearValve, player4NearValve, "Hold");
         float valveOpenAmount = GetValveOpenAmount(level.valve);
-        Color pipeColor = valveOpenAmount > 0.0f ? BLUE : DARKGRAY;
         float outletX = level.valve.center.x + 118.0f;
         float outletY = 302.0f;
-        DrawLineEx({level.valve.center.x + level.valve.radius, level.valve.center.y}, {outletX, level.valve.center.y}, 12.0f, pipeColor);
-        DrawLineEx({outletX, level.valve.center.y}, {outletX, outletY}, 12.0f, pipeColor);
-        DrawRectangle(static_cast<int>(outletX - 18.0f), static_cast<int>(outletY - 4.0f), 36, 18, DARKGRAY);
-        DrawRectangleLines(static_cast<int>(outletX - 18.0f), static_cast<int>(outletY - 4.0f), 36, 18, BLACK);
-        if (valveOpenAmount > 0.0f && GetFloodWaterProgress(level) < 0.999f) {
-            DrawLineEx(
-                {outletX, outletY + 14.0f},
-                {outletX, GetFloodWaterSurfaceY(level) + 8.0f},
-                3.0f + valveOpenAmount * 7.0f,
-                Fade(SKYBLUE, 0.35f + valveOpenAmount * 0.45f)
-            );
-        }
+        bool pumpFilling = valveOpenAmount > 0.0f && GetFloodWaterProgress(level) < 0.999f;
+        DrawFloodPump(level.valve, {outletX, outletY}, GetFloodWaterSurfaceY(level), pumpFilling);
         DrawValve(level.valve, playerNearValve, valvePrompt.c_str());
     }
 
+    // The chamber lamp is part of the background so the rail and every moving
+    // platform pass cleanly in front of both the fixture and its light cone.
+    DrawPortalLiftChamberLamp(level, machinePower);
+
     if (HasArea(level.spikeHazard)) {
-        float pitTopY = level.script == LevelScript::FloodedFoundry ? 672.0f : 682.0f;
+        float pitTopY = level.script == LevelScript::FloodedFoundry ? 672.0f : level.spikePitTopY;
         float spikeBaseY = level.spikeHazard.y + level.spikeHazard.height;
         Rectangle pitShaft{
             level.spikeHazard.x,
@@ -4882,23 +8016,51 @@ void Game::DrawGameplay() {
             level.spikeHazard.x,
             spikeBaseY,
             level.spikeHazard.width,
-            static_cast<float>(Constants::ScreenHeight) - spikeBaseY
+            level.worldBounds.y + level.worldBounds.height - spikeBaseY
         };
 
         DrawTilesetPitWalls(industrialTiles, pitShaft, Fade(WHITE, 0.88f));
         DrawTilesetPitFoundation(industrialTiles, pitFoundation, Fade(WHITE, 0.88f));
-        DrawSpikes(level.spikeHazard.x + 2.0f, spikeBaseY, static_cast<int>(level.spikeHazard.width / 28.0f));
+        DrawSpikes(level.spikeHazard);
     }
 
     if (HasWaterPit(level)) {
         DrawWaterPit(level.waterPit);
     }
 
-    if (!hasExplicitVisualTiles) {
-        for (Rectangle platform : level.pitPlatforms) {
+    // Collision-authored platforms retain exact dimensions and cropped end
+    // caps. Dynamic platforms and rails must remain visible in levels whose
+    // static room architecture is authored with explicit visual tiles.
+    for (Rectangle platform : level.pitPlatforms) {
+        DrawTilesetSolid(industrialTiles, platform, WHITE);
+        DrawRectangleLinesEx(platform, 2, BLACK);
+    }
+    for (const ButtonPlatformLink& link : level.buttonPlatformLinks) {
+        if (!link.active) continue;
+        DrawTilesetSolid(industrialTiles, link.platform, WHITE);
+        DrawRectangleLinesEx(link.platform, 2, BLACK);
+    }
+    for (const ButtonPlatformLoop& loop : level.buttonPlatformLoops) {
+        if (!loop.active) continue;
+        DrawPlatformRailTrack(loop);
+        for (const Rectangle platform : loop.platforms) {
             DrawTilesetSolid(industrialTiles, platform, WHITE);
             DrawRectangleLinesEx(platform, 2, BLACK);
+            for (const DirectionalSpikeHazard& hazard : GetPlatformSideSpikes(platform)) {
+                DrawDirectionalSpikes(hazard);
+            }
         }
+    }
+
+    for (const PortalPair& pair : level.portalPairs) {
+        DrawPortal(pair.entrance, Color{255, 146, 52, 255});
+        DrawPortal(pair.exit, Color{63, 143, 255, 255});
+    }
+    for (const DirectionalSpikeHazard& hazard : level.directionalSpikeHazards) {
+        DrawDirectionalSpikes(hazard);
+    }
+    for (const ButtonSpikeLink& link : level.buttonSpikeLinks) {
+        if (link.active) DrawDirectionalSpikes(link.hazard);
     }
 
     for (const BreakableTile& tile : level.breakableTiles) {
@@ -4909,6 +8071,7 @@ void Game::DrawGameplay() {
     if (playerAlive) splashSources.push_back(player.rect);
     if (multiplayerEnabled && player2Alive) splashSources.push_back(player2.rect);
     if (threePlayerEnabled && player3Alive) splashSources.push_back(player3.rect);
+    if (fourPlayerEnabled && player4Alive) splashSources.push_back(player4.rect);
     for (const Enemy& enemy : level.enemies) {
         splashSources.push_back(enemy.rect);
     }
@@ -4917,8 +8080,53 @@ void Game::DrawGameplay() {
         DrawFluidField(fluid, splashSources);
     }
 
+    // Draw ladders over simulated materials so submerged escape routes remain visible.
+    for (Rectangle ladder : level.ladders) {
+        if (!HasArea(ladder)) continue;
+        DrawLineEx({ladder.x + 8, ladder.y}, {ladder.x + 8, ladder.y + ladder.height}, 4, BLACK);
+        DrawLineEx({ladder.x + ladder.width - 8, ladder.y}, {ladder.x + ladder.width - 8, ladder.y + ladder.height}, 4, BLACK);
+        int rungCount = static_cast<int>(ceilf(ladder.height / 30.0f));
+        for (int i = 0; i <= rungCount; i++) {
+            float y = fminf(ladder.y + i * 30.0f, ladder.y + ladder.height);
+            DrawLineEx({ladder.x + 8, y}, {ladder.x + ladder.width - 8, y}, 3, BLACK);
+        }
+    }
+    for (const ButtonLadderLink& link : level.buttonLadderLinks) {
+        Rectangle ladder = GetRevealedLadderRect(link);
+        if (!link.activated || !HasArea(ladder)) continue;
+        DrawLineEx({ladder.x + 8, ladder.y}, {ladder.x + 8, ladder.y + ladder.height}, 4, BLACK);
+        DrawLineEx({ladder.x + ladder.width - 8, ladder.y}, {ladder.x + ladder.width - 8, ladder.y + ladder.height}, 4, BLACK);
+        int rungCount = static_cast<int>(ceilf(ladder.height / 30.0f));
+        for (int i = 0; i <= rungCount; i++) {
+            float y = fminf(ladder.y + i * 30.0f, ladder.y + ladder.height);
+            DrawLineEx({ladder.x + 8, y}, {ladder.x + ladder.width - 8, y}, 3, BLACK);
+        }
+    }
+
+    if (level.script == LevelScript::NeurotoxinMaze) {
+        DrawNeurotoxinLevel();
+    }
+
+    for (const GuideObject& object : level.guideObjects) {
+        if (object.layer == WorldLayer::Middleground) DrawGuideObject(object);
+    }
+
     for (const Button& button : level.buttons) {
         DrawButton(button);
+    }
+
+    // Portal Lift's blackout conceals the rail, moving platforms, lamp, and
+    // moving button, but remains a background layer behind the arrival ramp.
+    if (level.script == LevelScript::PortalLift) {
+        const bool hasPortalLiftDarkness =
+            std::any_of(level.darknessAreas.begin(), level.darknessAreas.end(), HasArea);
+        if (hasPortalLiftDarkness) {
+            const float blackoutFlicker = machinePower > 0.02f ? flicker : 0.0f;
+            const float blackoutAlpha = Clamp01(1.0f - machinePower - blackoutFlicker);
+            for (Rectangle darknessArea : level.darknessAreas) {
+                DrawRectangleRec(darknessArea, Fade(BLACK, blackoutAlpha));
+            }
+        }
     }
 
     for (const ArrowTrap& trap : level.arrowTraps) {
@@ -4938,23 +8146,23 @@ void Game::DrawGameplay() {
     }
 
     for (const StoneBlock& block : level.stoneBlocks) {
-        DrawStoneBlock(block);
+        if (block.layer == WorldLayer::Middleground) DrawStoneBlock(block);
     }
 
     for (const Boulder& boulder : level.boulders) {
-        DrawBoulder(boulder);
+        if (boulder.layer == WorldLayer::Middleground) DrawBoulder(boulder);
     }
 
     for (const PhysicsWheel& wheel : level.physicsWheels) {
-        DrawPhysicsWheel(wheel);
+        if (wheel.layer == WorldLayer::Middleground) DrawPhysicsWheel(wheel);
     }
 
     for (const Gear& gear : level.gears) {
-        DrawGear(gear);
+        if (gear.layer == WorldLayer::Middleground) DrawGear(gear);
     }
 
     for (const Flywheel& flywheel : level.flywheels) {
-        DrawFlywheel(flywheel);
+        if (flywheel.layer == WorldLayer::Middleground) DrawFlywheel(flywheel);
     }
 
     for (const SteeringWheel& steeringWheel : level.steeringWheels) {
@@ -4962,7 +8170,7 @@ void Game::DrawGameplay() {
     }
 
     for (const Screw& screw : level.screws) {
-        DrawScrew(screw);
+        if (screw.layer == WorldLayer::Middleground) DrawScrew(screw);
     }
 
     for (const Fan& fan : level.fans) {
@@ -4994,8 +8202,10 @@ void Game::DrawGameplay() {
         bool player1Near = playerAlive && CheckCollisionCircleRec(latch.center, latch.radius + 20.0f, player.rect);
         bool player2Near = multiplayerEnabled && player2Alive && CheckCollisionCircleRec(latch.center, latch.radius + 20.0f, player2.rect);
         bool player3Near = threePlayerEnabled && player3Alive && CheckCollisionCircleRec(latch.center, latch.radius + 20.0f, player3.rect);
-        bool playerNear = player1Near || player2Near || player3Near;
-        std::string latchPrompt = GetInteractPrompt(player1Near, player2Near, player3Near, "");
+        bool player4Near = fourPlayerEnabled && player4Alive && CheckCollisionCircleRec(latch.center, latch.radius + 20.0f, player4.rect);
+        bool playerNear = player1Near || player2Near || player3Near || player4Near;
+        std::string latchPrompt =
+            GetInteractPrompt(player1Near, player2Near, player3Near, player4Near, "");
         if (latch.latched) {
             latchedCount++;
         }
@@ -5016,24 +8226,7 @@ void Game::DrawGameplay() {
             DrawRing(gateMotorGear, 22.0f, 27.0f, 0.0f, 360.0f, 32, BROWN);
         }
 
-        Rectangle doorway{level.exitTrigger.x + 5.0f, level.exitTrigger.y, level.exitTrigger.width - 10.0f, level.exitTrigger.height};
-        DrawRectangleRec(level.exitTrigger, LIGHTGRAY);
-        DrawOutdoorDoorway(doorway);
-        DrawRectangleLinesEx(level.exitTrigger, 1, BLACK);
-
-        float gateX = level.exitTrigger.x + 5.0f;
-        float gateTop = level.exitTrigger.y;
-        float gateWidth = level.exitTrigger.width - 10.0f;
-        float visibleGateHeight = gateBottom - gateTop;
-        if (visibleGateHeight > 0.0f) {
-            DrawRectangle(static_cast<int>(gateX), static_cast<int>(gateTop), static_cast<int>(gateWidth), static_cast<int>(visibleGateHeight), BROWN);
-            int barCount = static_cast<int>(gateWidth / 13.0f);
-            for (int i = 0; i < barCount; i++) {
-                float x = gateX + 5.0f + i * 13.0f;
-                DrawLineEx({x, gateTop}, {x, gateBottom}, 5, BLACK);
-            }
-            DrawRectangle(static_cast<int>(gateX), static_cast<int>(gateBottom - 15.0f), static_cast<int>(gateWidth), 15, BLACK);
-        }
+        DrawExitDoor(level.exitTrigger, gateBottom);
     }
 
     if (!playerAlive) {
@@ -5045,33 +8238,109 @@ void Game::DrawGameplay() {
     if (threePlayerEnabled && !player3Alive) {
         DrawDeathMarker(skullTexture, player3DeathRect);
     }
-
-    if (playerAlive) {
-        Player visiblePlayer = player;
-        if (IsPlayerSwimming(player, level)) {
-            visiblePlayer.rect.y += sinf(static_cast<float>(GetTime()) * 5.0f) * 3.5f;
-        }
-        DrawPlayer(visiblePlayer, playerSpritesTexture, 0);
+    if (fourPlayerEnabled && !player4Alive) {
+        DrawDeathMarker(skullTexture, player4DeathRect);
     }
 
-    if (multiplayerEnabled && player2Alive) {
-        Player visiblePlayer2 = player2;
-        if (IsPlayerSwimming(player2, level)) {
-            visiblePlayer2.rect.y += sinf(static_cast<float>(GetTime()) * 5.0f + 0.65f) * 3.5f;
+    const auto getAirWarningTint = [&](const Player& activePlayer, int playerIndex) {
+        const bool toxinHazard =
+            level.script == LevelScript::NeurotoxinMaze &&
+            SampleFluidAroundRectangle(level, FluidType::Gas, activePlayer.rect).density >= 0.025f;
+        const bool underwaterHazard =
+            level.script != LevelScript::NeurotoxinMaze &&
+            IsPlayerHeadSubmerged(activePlayer, level);
+        if (!toxinHazard && !underwaterHazard) {
+            return WHITE;
         }
-        DrawPlayer(visiblePlayer2, playerSpritesTexture, 1);
-    }
 
-    if (threePlayerEnabled && player3Alive) {
-        Player visiblePlayer3 = player3;
-        if (IsPlayerSwimming(player3, level)) {
-            visiblePlayer3.rect.y += sinf(static_cast<float>(GetTime()) * 5.0f + 1.3f) * 3.5f;
+        const float airDanger = Clamp01(1.0f - playerAir[playerIndex]);
+        const Color warningColor = toxinHazard
+            ? Color{72, 255, 76, 255}
+            : Color{70, 205, 255, 255};
+        if (reducedFlashing) {
+            return ColorLerp(WHITE, warningColor, 0.18f + airDanger * 0.48f);
         }
-        DrawPlayer(visiblePlayer3, playerSpritesTexture, 2);
+
+        const float flashOnFraction = 0.20f + airDanger * 0.28f;
+        if (playerAirWarningPhase[playerIndex] >= flashOnFraction) {
+            return WHITE;
+        }
+
+        const float tintStrength = 0.48f + sqrtf(airDanger) * 0.42f;
+        return ColorLerp(WHITE, warningColor, tintStrength);
+    };
+
+    const auto drawActivePlayer = [&](const Player& activePlayer, int playerIndex, float swimPhase) {
+        Player visiblePlayer = activePlayer;
+        if (IsPlayerSwimming(activePlayer, level)) {
+            visiblePlayer.rect.y +=
+                sinf(static_cast<float>(GetTime()) * 5.0f + swimPhase) * 3.5f;
+        }
+
+        const Color tint = getAirWarningTint(activePlayer, playerIndex);
+        const int character =
+            std::clamp(selectedCharacters[playerIndex], 0, kCharacterCount - 1);
+        if (character < 3) {
+            DrawPlayer(
+                visiblePlayer,
+                playerSpritesTexture,
+                character,
+                37.0f,
+                47.0f,
+                3,
+                0.0f,
+                0.0f,
+                0.0f,
+                tint
+            );
+        }
+        else {
+            DrawPlayer(
+                visiblePlayer,
+                playerFourSpritesTexture,
+                0,
+                37.0f,
+                47.0f,
+                1,
+                64.0f,
+                4.0f,
+                17.0f,
+                tint
+            );
+        }
+    };
+
+    if (playerAlive) drawActivePlayer(player, 0, 0.0f);
+    if (multiplayerEnabled && player2Alive) drawActivePlayer(player2, 1, 0.65f);
+    if (threePlayerEnabled && player3Alive) drawActivePlayer(player3, 2, 1.30f);
+    if (fourPlayerEnabled && player4Alive) drawActivePlayer(player4, 3, 1.95f);
+
+    // Foreground physics can obscure the player for depth, while remaining on its
+    // own non-player collision plane.
+    for (const GuideObject& object : level.guideObjects) {
+        if (object.layer == WorldLayer::Foreground) DrawGuideObject(object);
+    }
+    for (const StoneBlock& block : level.stoneBlocks) {
+        if (block.layer == WorldLayer::Foreground) DrawStoneBlock(block);
+    }
+    for (const Boulder& boulder : level.boulders) {
+        if (boulder.layer == WorldLayer::Foreground) DrawBoulder(boulder);
+    }
+    for (const PhysicsWheel& wheel : level.physicsWheels) {
+        if (wheel.layer == WorldLayer::Foreground) DrawPhysicsWheel(wheel);
+    }
+    for (const Gear& gear : level.gears) {
+        if (gear.layer == WorldLayer::Foreground) DrawGear(gear);
+    }
+    for (const Flywheel& flywheel : level.flywheels) {
+        if (flywheel.layer == WorldLayer::Foreground) DrawFlywheel(flywheel);
+    }
+    for (const Screw& screw : level.screws) {
+        if (screw.layer == WorldLayer::Foreground) DrawScrew(screw);
     }
 
     bool hasDarkness = std::any_of(level.darknessAreas.begin(), level.darknessAreas.end(), HasArea);
-    if (hasDarkness) {
+    if (hasDarkness && level.script != LevelScript::PortalLift) {
         float blackoutFlicker = machinePower > 0.02f ? flicker : 0.0f;
         float safeAreaDimAlpha = Clamp01(0.20f + (1.0f - machinePower) * 0.18f - flicker * 0.45f);
         float blackoutAlpha = Clamp01(1.0f - machinePower - blackoutFlicker);
@@ -5081,15 +8350,51 @@ void Game::DrawGameplay() {
             DrawRectangleRec(darknessArea, Fade(BLACK, blackoutAlpha));
         }
     }
+    if (highContrast) {
+        const Color danger = AccessibleDangerColor(colorblindSetting);
+        if (playerAlive) DrawRectangleLinesEx(player.rect, 3.0f, RAYWHITE);
+        if (multiplayerEnabled && player2Alive) DrawRectangleLinesEx(player2.rect, 3.0f, SKYBLUE);
+        if (threePlayerEnabled && player3Alive) DrawRectangleLinesEx(player3.rect, 3.0f, LIME);
+        if (fourPlayerEnabled && player4Alive) DrawRectangleLinesEx(player4.rect, 3.0f, VIOLET);
+        for (const Enemy& enemy : level.enemies) DrawRectangleLinesEx(enemy.rect, 3.0f, danger);
+        if (HasArea(level.spikeHazard)) DrawRectangleLinesEx(level.spikeHazard, 3.0f, danger);
+        if (HasArea(level.exitTrigger)) DrawRectangleLinesEx(level.exitTrigger, 3.0f, AccessibleSuccessColor(colorblindSetting));
+    }
+
+    if (debugCollision) {
+        DrawDebugCollision();
+    }
+
+    EndMode2D();
+
+    if (objectTooltipsEnabled) {
+        DrawHoveredObjectTooltip(level, renderCamera);
+    }
+
+    if (showFPS) DrawFPS(10, 10);
+
+    if (level.script == LevelScript::NeurotoxinMaze) {
+        float highestExposure = playerAlive ? toxinExposure[0] : 0.0f;
+        if (multiplayerEnabled && player2Alive) highestExposure = fmaxf(highestExposure, toxinExposure[1]);
+        if (threePlayerEnabled && player3Alive) highestExposure = fmaxf(highestExposure, toxinExposure[2]);
+        if (fourPlayerEnabled && player4Alive) highestExposure = fmaxf(highestExposure, toxinExposure[3]);
+
+        if (highestExposure > 0.12f) {
+            const float pulse = reducedFlashing ? 1.0f : 0.78f + sinf(toxinLevelTimer * 5.5f) * 0.22f;
+            DrawRectangle(0, 0, Constants::ScreenWidth, Constants::ScreenHeight,
+                Fade(Color{116, 210, 85, 255}, (highestExposure - 0.12f) * 0.10f * pulse));
+        }
+    }
 
     int latchTotal = static_cast<int>(level.rotaryLatches.size());
-    if (latchTotal > 0) {
+    if (latchTotal > 0 && level.script == LevelScript::RotaryLatchLab) {
         bool allLatchesLocked = latchedCount == latchTotal;
-        int statusWidth = threePlayerEnabled ? 350 : 300;
+        int statusWidth = fourPlayerEnabled ? 460 : (threePlayerEnabled ? 350 : 300);
         DrawRectangle(20, 20, statusWidth, 66, Fade(BLACK, 0.45f));
         DrawText(TextFormat("Wheel locks: %d / %d", latchedCount, latchTotal), 34, 31, 20, RAYWHITE);
-        const char* latchHelp = threePlayerEnabled ? "Align spokes: E / U / Right Ctrl" :
-            (multiplayerEnabled ? "Align spokes, press E or U" : "Align spokes, press E");
+        const char* latchHelp = fourPlayerEnabled ? "Align spokes: E / U / Right Ctrl / Numpad 0" :
+            (threePlayerEnabled ? "Align spokes: E / U / Right Ctrl" :
+            (multiplayerEnabled ? "Align spokes, press E or U" : "Align spokes, press E"));
         DrawText(allLatchesLocked ? "Gate circuit complete" : latchHelp, 34, 58, 20, allLatchesLocked ? GREEN : ORANGE);
     }
 
@@ -5098,26 +8403,41 @@ void Game::DrawGameplay() {
         float valvePercent = GetValveOpenAmount(level.valve) * 100.0f;
         DrawRectangle(20, 20, 260, 66, Fade(BLACK, 0.45f));
         DrawText(TextFormat("Water level: %.0f%%", fillPercent), 34, 31, 20, RAYWHITE);
-        const char* valveHelp = threePlayerEnabled ? TextFormat("E/U/RCtrl: valve %.0f%%", valvePercent) :
-            TextFormat(multiplayerEnabled ? "Hold E/U: valve %.0f%%" : "Hold E: valve %.0f%%", valvePercent);
+        const char* valveHelp = fourPlayerEnabled ? TextFormat("E/U/RCtrl/Num0: valve %.0f%%", valvePercent) :
+            (threePlayerEnabled ? TextFormat("E/U/RCtrl: valve %.0f%%", valvePercent) :
+            TextFormat(multiplayerEnabled ? "Hold E/U: valve %.0f%%" : "Hold E: valve %.0f%%", valvePercent));
         DrawText(level.valve.opened ? "Swim the flooded pit" : valveHelp, 34, 58, 20, level.valve.opened ? SKYBLUE : ORANGE);
     }
 
     if (level.script == LevelScript::CounterweightRow) {
         DrawRectangle(20, 20, 370, 66, Fade(BLACK, 0.52f));
-        DrawText(machinePower > 0.5f ? "Counterweight locked" : "Roll a boulder onto the plate", 34, 31, 20,
+        DrawText(machinePower > 0.5f ? "Counterweight locked" : "Drop the boulder to the lower lane", 34, 31, 20,
             machinePower > 0.5f ? GREEN : ORANGE);
-        DrawText(machinePower > 0.5f ? "Exit gate is open" : "Boulders block incoming arrows", 34, 58, 20, RAYWHITE);
+        DrawText(machinePower > 0.5f ? "Exit gate is open" : "Use it as cover, then find the plate", 34, 58, 20, RAYWHITE);
     }
 
-    if (highContrast) {
-        const Color danger = AccessibleDangerColor(colorblindSetting);
-        if (playerAlive) DrawRectangleLinesEx(player.rect, 3.0f, RAYWHITE);
-        if (multiplayerEnabled && player2Alive) DrawRectangleLinesEx(player2.rect, 3.0f, SKYBLUE);
-        if (threePlayerEnabled && player3Alive) DrawRectangleLinesEx(player3.rect, 3.0f, LIME);
-        for (const Enemy& enemy : level.enemies) DrawRectangleLinesEx(enemy.rect, 3.0f, danger);
-        if (HasArea(level.spikeHazard)) DrawRectangleLinesEx(level.spikeHazard, 3.0f, danger);
-        if (HasArea(level.exitTrigger)) DrawRectangleLinesEx(level.exitTrigger, 3.0f, AccessibleSuccessColor(colorblindSetting));
+    if (level.script == LevelScript::ButtonSequence) {
+        int stage = level.buttonExitLink.activated ? 3 :
+            (!level.buttonLadderLinks.empty() && level.buttonLadderLinks.front().activated ? 2 :
+            (!level.buttonTrapDoorLinks.empty() && level.buttonTrapDoorLinks.front().activated ? 1 : 0));
+        const char* objective = stage == 0 ? "Roll the first ball onto Button 1" :
+            (stage == 1 ? "The trap door is open - follow the falling ball" :
+            (stage == 2 ? "Climb the ladder and roll the upper ball" : "Exit door open"));
+        DrawRectangle(20, 20, 500, 66, Fade(BLACK, 0.52f));
+        DrawText(TextFormat("Three-Step Tumble: %d / 3", stage), 34, 31, 20,
+            stage == 3 ? GREEN : RAYWHITE);
+        DrawText(objective, 34, 58, 20, stage == 3 ? GREEN : ORANGE);
+    }
+
+    if (level.script == LevelScript::ClocktowerCore) {
+        const int clockHandCount = CountClockHandGears(level);
+        const int lockedHandCount = CountLockedClockHands(level);
+        const bool synchronized = clockHandCount == 3 && lockedHandCount == clockHandCount;
+        DrawRectangle(20, 20, 520, 66, Fade(BLACK, 0.56f));
+        DrawText(TextFormat("Clock hands locked: %d / %d", lockedHandCount, clockHandCount), 34, 31, 20,
+            synchronized ? GREEN : RAYWHITE);
+        DrawText(synchronized ? "Midnight synchronized - gate open" : "Stop each drive gear when its hand reaches XII",
+            34, 58, 20, synchronized ? GREEN : ORANGE);
     }
 
     if (won) {
@@ -5131,15 +8451,115 @@ void Game::DrawGameplay() {
     }
 }
 
+void Game::UpdateMusic() {
+    const bool titleActive = mode == GameMode::Title || mode == GameMode::CharacterSelect;
+    const bool levelSelectActive = mode == GameMode::Overworld;
+    const bool gameplayMusicActive = mode == GameMode::Playing || mode == GameMode::Paused;
+    const bool levelOneActive = currentLevelNode == 0 &&
+        (mode == GameMode::Playing || mode == GameMode::Paused);
+    const bool levelTwoActive = currentLevelNode == 1 &&
+        (mode == GameMode::Playing || mode == GameMode::Paused);
+    const bool levelThreeActive = currentLevelNode == 2 &&
+        (mode == GameMode::Playing || mode == GameMode::Paused);
+    const bool levelFourActive = currentLevelNode == 3 &&
+        (mode == GameMode::Playing || mode == GameMode::Paused);
+    const bool levelFiveActive = currentLevelNode == 4 &&
+        (mode == GameMode::Playing || mode == GameMode::Paused);
+    const bool levelSixActive = currentLevelNode == 5 &&
+        (mode == GameMode::Playing || mode == GameMode::Paused);
+    const bool wendiLevelOneActive = gameplayMusicActive &&
+        currentLevelNode >= 0 &&
+        currentLevelNode < static_cast<int>(overworldNodes.size()) &&
+        overworldNodes[currentLevelNode].id == "wendis_level_1";
+    const bool portalLiftActive = gameplayMusicActive &&
+        currentLevelNode >= 0 &&
+        currentLevelNode < static_cast<int>(overworldNodes.size()) &&
+        overworldNodes[currentLevelNode].id == "wendis_level_2";
+
+    auto updateTrack = [&](Music& music, bool loaded, bool active) {
+        if (!loaded) return;
+        if (active) {
+            if (!IsMusicStreamPlaying(music)) PlayMusicStream(music);
+            SetMusicVolume(music, musicVolume);
+            UpdateMusicStream(music);
+        }
+        else if (IsMusicStreamPlaying(music)) {
+            StopMusicStream(music);
+        }
+    };
+
+    updateTrack(titleMusic, titleMusicLoaded, titleActive);
+    updateTrack(levelSelectMusic, levelSelectMusicLoaded, levelSelectActive);
+    updateTrack(levelOneMusic, levelOneMusicLoaded, levelOneActive);
+    updateTrack(levelTwoMusic, levelTwoMusicLoaded, levelTwoActive);
+    updateTrack(levelThreeMusic, levelThreeMusicLoaded, levelThreeActive);
+    updateTrack(levelFourMusic, levelFourMusicLoaded, levelFourActive);
+    updateTrack(levelFiveMusic, levelFiveMusicLoaded, levelFiveActive);
+    updateTrack(levelSixMusic, levelSixMusicLoaded, levelSixActive);
+    updateTrack(wendiLevelOneMusic, wendiLevelOneMusicLoaded, wendiLevelOneActive);
+    updateTrack(portalLiftMusic, portalLiftMusicLoaded, portalLiftActive);
+}
+
 void Game::Unload() {
     if (sceneTarget.id > 0) UnloadRenderTexture(sceneTarget);
     UnloadTexture(playerSpritesTexture);
+    UnloadTexture(playerFourSpritesTexture);
     UnloadTexture(skullTexture);
     UnloadTexture(industrialTiles);
     UnloadTexture(industrialBackground);
     UnloadTexture(industrialFarBackground);
     UnloadTexture(chainLinksTexture);
     UnloadTexture(enemyPlaceholderTexture);
+    if (titleMusicLoaded) {
+        StopMusicStream(titleMusic);
+        UnloadMusicStream(titleMusic);
+        titleMusicLoaded = false;
+    }
+    if (levelSelectMusicLoaded) {
+        StopMusicStream(levelSelectMusic);
+        UnloadMusicStream(levelSelectMusic);
+        levelSelectMusicLoaded = false;
+    }
+    if (levelOneMusicLoaded) {
+        StopMusicStream(levelOneMusic);
+        UnloadMusicStream(levelOneMusic);
+        levelOneMusicLoaded = false;
+    }
+    if (levelTwoMusicLoaded) {
+        StopMusicStream(levelTwoMusic);
+        UnloadMusicStream(levelTwoMusic);
+        levelTwoMusicLoaded = false;
+    }
+    if (levelThreeMusicLoaded) {
+        StopMusicStream(levelThreeMusic);
+        UnloadMusicStream(levelThreeMusic);
+        levelThreeMusicLoaded = false;
+    }
+    if (levelFourMusicLoaded) {
+        StopMusicStream(levelFourMusic);
+        UnloadMusicStream(levelFourMusic);
+        levelFourMusicLoaded = false;
+    }
+    if (levelFiveMusicLoaded) {
+        StopMusicStream(levelFiveMusic);
+        UnloadMusicStream(levelFiveMusic);
+        levelFiveMusicLoaded = false;
+    }
+    if (levelSixMusicLoaded) {
+        StopMusicStream(levelSixMusic);
+        UnloadMusicStream(levelSixMusic);
+        levelSixMusicLoaded = false;
+    }
+    if (wendiLevelOneMusicLoaded) {
+        StopMusicStream(wendiLevelOneMusic);
+        UnloadMusicStream(wendiLevelOneMusic);
+        wendiLevelOneMusicLoaded = false;
+    }
+    if (portalLiftMusicLoaded) {
+        StopMusicStream(portalLiftMusic);
+        UnloadMusicStream(portalLiftMusic);
+        portalLiftMusicLoaded = false;
+    }
     if (IsAudioDeviceReady()) CloseAudioDevice();
     CloseWindow();
 }
@@ -5152,7 +8572,7 @@ void Game::ExecuteConsoleCommand(const std::string& line) {
     console.AddLine("> " + line);
 
     if (command == "help") {
-        console.AddLine("Commands: help, clear, start, overworld, title, pause, resume, quit, reset, win, kill, kill_enemy, kill_all_enemies, fps, fluid_sim, debug_collision, disable_arrow_traps, invincible, unlock_all_levels, teleport, power, player, machine");
+        console.AddLine("Commands: help, clear, start, overworld, title, pause, resume, quit, reset, win, kill, kill_enemy, kill_all_enemies, fps, achievements, fluid_sim, debug_collision, disable_arrow_traps, invincible, suffocation, unlock_all_levels, teleport, power, player, machine");
     }
     else if (command == "clear") {
         console.Clear();
@@ -5201,8 +8621,8 @@ void Game::ExecuteConsoleCommand(const std::string& line) {
         (command == "kill" && args.size() >= 2 && ToLower(args[1]) == "enemy")) {
         if (level.enemies.empty()) {
             console.AddLine("No enemies to kill.");
-            return;
-        }
+        return;
+    }
 
         size_t index = 0;
         size_t indexArgument = command == "kill_enemy" ? 1 : 2;
@@ -5243,6 +8663,30 @@ void Game::ExecuteConsoleCommand(const std::string& line) {
         showFPS = !showFPS;
         console.AddLine("FPS display " + OnOff(showFPS) + ".");
     }
+    else if (command == "achievements" || command == "achievement") {
+        const std::string action = args.size() >= 2 ? ToLower(args[1]) : "list";
+        if (action == "list") {
+            for (const Achievement& achievement : achievements.GetAchievements()) {
+                console.AddLine(std::string(achievement.unlocked ? "[unlocked] " : "[locked] ") +
+                    achievement.id + " - " + achievement.title);
+            }
+        }
+        else if (action == "unlock" && args.size() >= 3) {
+            if (achievements.Unlock(ToLower(args[2]))) {
+                console.AddLine("Achievement unlocked.");
+            }
+            else {
+                console.AddLine("Achievement was already unlocked or the id was not found.");
+            }
+        }
+        else if (action == "reset") {
+            achievements.ResetProgress();
+            console.AddLine("Achievement progress reset.");
+        }
+        else {
+            console.AddLine("Usage: achievements [list|unlock <id>|reset]");
+        }
+    }
     else if (command == "fluid_sim" || command == "fluidsim") {
         if (args.size() >= 2) {
             std::string value = ToLower(args[1]);
@@ -5264,9 +8708,19 @@ void Game::ExecuteConsoleCommand(const std::string& line) {
         const Player* activePlayer1 = playerAlive ? &player : nullptr;
         const Player* activePlayer2 = multiplayerEnabled && player2Alive ? &player2 : nullptr;
         const Player* activePlayer3 = threePlayerEnabled && player3Alive ? &player3 : nullptr;
-        std::vector<Rectangle> obstacles = BuildFluidObstacles(level, activePlayer1, activePlayer2, activePlayer3);
+        const Player* activePlayer4 = fourPlayerEnabled && player4Alive ? &player4 : nullptr;
+        std::vector<Rectangle> obstacles =
+            BuildFluidObstacles(level, activePlayer1, activePlayer2, activePlayer3, activePlayer4, true);
+        std::vector<Rectangle> gasObstacles =
+            BuildFluidObstacles(level, nullptr, nullptr, nullptr, nullptr, false);
         for (FluidField& fluid : level.fluids) {
-            InitializeFluidField(fluid, obstacles, SelectedFluidMode(advancedFluidSimulation));
+            const std::vector<Rectangle>& relevantObstacles =
+                fluid.type == FluidType::Gas ? gasObstacles : obstacles;
+            InitializeFluidField(
+                fluid,
+                FilterFluidObstacles(fluid, relevantObstacles),
+                SelectedFluidMode(advancedFluidSimulation)
+            );
         }
         console.AddLine(std::string("Fluid simulation ") + FluidModeName(advancedFluidSimulation) + ".");
     }
@@ -5314,6 +8768,26 @@ void Game::ExecuteConsoleCommand(const std::string& line) {
         }
 
         console.AddLine("Player invincibility " + OnOff(playerInvincible) + ".");
+    }
+    else if (command == "suffocation" || command == "air_kills") {
+        if (args.size() >= 2) {
+            std::string value = ToLower(args[1]);
+            if (value == "on") {
+                suffocationKills = true;
+            }
+            else if (value == "off") {
+                suffocationKills = false;
+            }
+            else {
+                console.AddLine("Usage: suffocation [on|off]");
+                return;
+            }
+        }
+        else {
+            suffocationKills = !suffocationKills;
+        }
+
+        console.AddLine("Suffocation kills " + OnOff(suffocationKills) + ".");
     }
     else if (command == "debug_collision") {
         if (args.size() >= 2) {
@@ -5369,12 +8843,15 @@ void Game::ExecuteConsoleCommand(const std::string& line) {
         playerDeathRect = player.rect;
         player2DeathRect = player2.rect;
         player3DeathRect = player3.rect;
+        player4DeathRect = player4.rect;
         mode = GameMode::Playing;
         won = false;
         lost = false;
         playerAlive = true;
         player2Alive = true;
         player3Alive = true;
+        player4Alive = true;
+        UpdateGameplayCamera(0.0f, true);
         console.AddLine("Teleported player.");
     }
     else if (command == "power") {
@@ -5415,7 +8892,9 @@ void Game::DrawDebugCollision() const {
         DrawRectangleLinesEx(platform, 2, Fade(SKYBLUE, 0.9f));
     }
 
-    DrawRectangleLinesEx(level.ladder, 2, Fade(YELLOW, 0.9f));
+    for (Rectangle ladder : level.ladders) {
+        DrawRectangleLinesEx(ladder, 2, Fade(YELLOW, 0.9f));
+    }
     DrawRectangleLinesEx(level.spikeHazard, 2, Fade(RED, 0.95f));
     DrawRectangleLinesEx(level.exitTrigger, 2, Fade(PURPLE, 0.95f));
 
@@ -5426,12 +8905,16 @@ void Game::DrawDebugCollision() const {
         }
         DrawCircleLinesV(level.valve.center, level.valve.radius + 24.0f, Fade(BLUE, 0.9f));
     }
+    if (level.script == LevelScript::NeurotoxinMaze) {
+        DrawCircleLinesV(level.valve.center, level.valve.radius + 25.0f, Fade(ORANGE, 0.95f));
+        DrawCircleLinesV(level.toxinLeak.source, 18.0f, Fade(LIME, 0.95f));
+    }
 
     for (const FluidField& fluid : level.fluids) {
         Color fluidColor = fluid.type == FluidType::Water ? SKYBLUE :
             (fluid.type == FluidType::Sand ? GOLD : (fluid.type == FluidType::Gel ? BLUE : LIME));
         DrawRectangleLinesEx(fluid.bounds, 2, Fade(fluidColor, 0.95f));
-        if (fluid.type == FluidType::Water || fluid.type == FluidType::Sand) {
+        if (fluid.type == FluidType::Water || fluid.type == FluidType::Sand || fluid.type == FluidType::Gas) {
             for (int index = 0; index < static_cast<int>(fluid.cells.size()); index++) {
                 const FluidCell& cell = fluid.cells[index];
                 if (cell.mass <= 0.01f || cell.solid) continue;
@@ -5491,7 +8974,7 @@ void Game::DrawDebugCollision() const {
     }
 
     for (const Gear& gear : level.gears) {
-        DrawCircleLinesV(gear.center, gear.radius * 1.12f, Fade(GOLD, 0.95f));
+        DrawCircleLinesV(gear.center, gear.radius * GearOuterRadiusScale, Fade(GOLD, 0.95f));
     }
 
     for (const Flywheel& flywheel : level.flywheels) {
@@ -5620,6 +9103,12 @@ void Game::DrawDebugCollision() const {
         }
     }
 
+    for (const GuideObject& object : level.guideObjects) {
+        Color color = object.collider.isTrigger ? Fade(PURPLE, 0.82f) :
+            (object.body.type == BodyType::Dynamic ? Fade(ORANGE, 0.9f) : Fade(GREEN, 0.82f));
+        DrawRectangleLinesEx(GetGuideObjectBounds(object), 2.0f, color);
+    }
+
     if (playerAlive) {
         DrawRectangleLinesEx(player.rect, 2, Fade(ORANGE, 0.95f));
     }
@@ -5628,5 +9117,8 @@ void Game::DrawDebugCollision() const {
     }
     if (threePlayerEnabled && player3Alive) {
         DrawRectangleLinesEx(player3.rect, 2, Fade(GREEN, 0.95f));
+    }
+    if (fourPlayerEnabled && player4Alive) {
+        DrawRectangleLinesEx(player4.rect, 2, Fade(VIOLET, 0.95f));
     }
 }

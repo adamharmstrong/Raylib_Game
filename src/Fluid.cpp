@@ -322,32 +322,6 @@ namespace {
         }
     }
 
-    void ApplyGasPressure(FluidField& field, const std::vector<Rectangle>& obstacles) {
-        float minimumSeparation = field.particleSpacing * 0.52f;
-        for (int iteration = 0; iteration < 3; iteration++) {
-            NeighborGrid grid = BuildNeighborGrid(field);
-            std::vector<Vector2> corrections(field.particles.size());
-            ForEachNeighborPair(field, grid, [&](int first, int second, float distance, Vector2 direction) {
-                float q = 1.0f - distance / field.interactionRadius;
-                float magnitude = q * q * field.particleSpacing * 0.026f * field.flowSpeed;
-                if (distance < minimumSeparation) {
-                    magnitude += (minimumSeparation - distance) * 0.42f;
-                }
-                Vector2 correction{direction.x * magnitude, direction.y * magnitude};
-                corrections[first].x -= correction.x;
-                corrections[first].y -= correction.y;
-                corrections[second].x += correction.x;
-                corrections[second].y += correction.y;
-            });
-            for (int index = 0; index < static_cast<int>(field.particles.size()); index++) {
-                ClampMagnitude(corrections[index], field.particleSpacing * 0.22f);
-                field.particles[index].position.x += corrections[index].x;
-                field.particles[index].position.y += corrections[index].y;
-                ResolveParticleCollisions(field.particles[index], field, obstacles);
-            }
-        }
-    }
-
     void ApplyVelocitySmoothing(FluidField& field, float strength) {
         NeighborGrid grid = BuildNeighborGrid(field);
         std::vector<Vector2> changes(field.particles.size());
@@ -412,12 +386,15 @@ namespace {
     }
 
     bool IsCellularFluid(FluidType type) {
-        return type == FluidType::Water || type == FluidType::Sand;
+        return type == FluidType::Water || type == FluidType::Sand || type == FluidType::Gas;
     }
 
     float DesiredCellSize(const FluidField& field, FluidSimulationMode mode) {
         if (!IsCellularFluid(field.type)) {
             return field.cellSize;
+        }
+        if (field.type == FluidType::Gas) {
+            return std::clamp(field.particleSpacing, 12.0f, 32.0f);
         }
         if (mode == FluidSimulationMode::Tile) {
             return std::clamp(fmaxf(field.particleSpacing, TileFluidCellSize), TileFluidCellSize, 12.0f);
@@ -593,6 +570,62 @@ namespace {
             if (!movedAny) {
                 break;
             }
+        }
+    }
+
+    void RelieveGasCompression(FluidField& field) {
+        std::vector<unsigned char> visited(field.cells.size());
+        std::vector<int> frontier;
+        frontier.reserve(field.cells.size());
+        for (int sourceIndex = 0; sourceIndex < static_cast<int>(field.cells.size()); sourceIndex++) {
+            FluidCell& source = field.cells[sourceIndex];
+            if (source.solid || source.mass <= 1.0001f) continue;
+
+            float excess = source.mass - 1.0f;
+            source.mass = 1.0f;
+            std::fill(visited.begin(), visited.end(), 0);
+            frontier.clear();
+            frontier.push_back(sourceIndex);
+            visited[sourceIndex] = 1;
+            size_t next = 0;
+            const int horizontalDirection = source.velocity.x >= 0.0f ? 1 : -1;
+            const int verticalDirection = source.velocity.y >= 0.0f ? 1 : -1;
+
+            while (next < frontier.size() && excess > 0.0001f) {
+                const int index = frontier[next++];
+                if (index != sourceIndex) {
+                    FluidCell& destination = field.cells[index];
+                    const float capacity = fmaxf(0.0f, 1.0f - destination.mass);
+                    const float moved = fminf(excess, capacity);
+                    if (moved > 0.0001f) {
+                        const float blend = moved / fmaxf(destination.mass + moved, 0.0001f);
+                        destination.velocity.x = destination.velocity.x * (1.0f - blend) + source.velocity.x * blend;
+                        destination.velocity.y = destination.velocity.y * (1.0f - blend) + source.velocity.y * blend;
+                        destination.mass += moved;
+                        excess -= moved;
+                    }
+                }
+
+                const int column = index % field.gridColumns;
+                const int row = index / field.gridColumns;
+                const int candidates[4][2]{
+                    {column + horizontalDirection, row},
+                    {column, row + verticalDirection},
+                    {column - horizontalDirection, row},
+                    {column, row - verticalDirection}
+                };
+                for (const auto& candidate : candidates) {
+                    if (candidate[0] < 0 || candidate[0] >= field.gridColumns ||
+                        candidate[1] < 0 || candidate[1] >= field.gridRows) {
+                        continue;
+                    }
+                    const int candidateIndex = CellIndex(field, candidate[0], candidate[1]);
+                    if (visited[candidateIndex] != 0 || field.cells[candidateIndex].solid) continue;
+                    visited[candidateIndex] = 1;
+                    frontier.push_back(candidateIndex);
+                }
+            }
+            source.mass += excess;
         }
     }
 
@@ -914,41 +947,100 @@ namespace {
         const std::vector<Vector2>& externalFlow,
         float dt
     ) {
-        float windResponse = 1.0f - expf(-4.2f * dt);
-        float damping = expf(-0.95f * dt);
-        for (int index = 0; index < static_cast<int>(field.particles.size()); index++) {
-            FluidParticle& particle = field.particles[index];
-            particle.previousPosition = particle.position;
-            Vector2 target = index < static_cast<int>(externalFlow.size())
-                ? Vector2{externalFlow[index].x * 0.78f, externalFlow[index].y * 0.78f}
-                : Vector2{};
-            float phase = static_cast<float>(field.simulationStep) * 0.11f + static_cast<float>(index) * 2.17f;
-            particle.velocity.x += (target.x - particle.velocity.x) * windResponse;
-            particle.velocity.y += (target.y - particle.velocity.y) * windResponse;
-            float secondaryPhase = static_cast<float>(field.simulationStep) * 0.073f +
-                static_cast<float>(index) * 1.37f;
-            particle.velocity.x += (sinf(phase) * 22.0f + cosf(secondaryPhase) * 10.0f) * dt;
-            particle.velocity.y += sinf(secondaryPhase * 1.31f) * 12.0f * dt;
-            float buoyancy = 72.0f + (1.0f - particle.density) * 74.0f;
-            particle.velocity.y -= buoyancy * dt;
-            particle.velocity.x *= damping;
-            particle.velocity.y *= damping;
-            ClampMagnitude(particle.velocity, 520.0f);
-            particle.position.x += particle.velocity.x * dt;
-            particle.position.y += particle.velocity.y * dt;
-            ResolveParticleCollisions(particle, field, obstacles);
+        UpdateCellSolids(field, obstacles);
+        if (field.cells.empty()) return;
+
+        const float velocityResponse = 1.0f - expf(-1.8f * dt);
+        const float flowScale = std::clamp(field.flowSpeed, 0.25f, 4.0f);
+        const float diffusionRate = 0.48f + flowScale * 0.20f;
+        std::vector<float> nextMass(field.cells.size());
+        std::vector<float> transfer(field.cells.size());
+
+        // Velocity belongs to each concentration tile rather than an individual
+        // mote. A low-frequency curl keeps the volume alive while buoyancy and
+        // level wind provide the dominant motion.
+        for (int index = 0; index < static_cast<int>(field.cells.size()); index++) {
+            FluidCell& cell = field.cells[index];
+            nextMass[index] = cell.solid ? 0.0f : cell.mass;
+            if (cell.solid) {
+                cell.velocity = {};
+                continue;
+            }
+
+            int column = index % field.gridColumns;
+            int row = index / field.gridColumns;
+            const float phase = static_cast<float>(field.simulationStep) * 0.031f +
+                static_cast<float>(column) * 0.47f + static_cast<float>(row) * 0.73f;
+            const Vector2 wind = index < static_cast<int>(externalFlow.size()) ? externalFlow[index] : Vector2{};
+            const Vector2 target{
+                wind.x * 0.76f + cosf(phase) * 8.0f,
+                wind.y * 0.76f - (14.0f + flowScale * 3.0f) + sinf(phase * 0.81f) * 6.0f
+            };
+            cell.velocity.x += (target.x - cell.velocity.x) * velocityResponse;
+            cell.velocity.y += (target.y - cell.velocity.y) * velocityResponse;
+            ClampMagnitude(cell.velocity, 140.0f);
         }
 
-        ApplyGasPressure(field, obstacles);
-        for (FluidParticle& particle : field.particles) {
-            particle.velocity = {
-                (particle.position.x - particle.previousPosition.x) / dt,
-                (particle.position.y - particle.previousPosition.y) / dt
-            };
-            ClampMagnitude(particle.velocity, 520.0f);
+        for (int row = 0; row < field.gridRows; row++) {
+            for (int column = 0; column < field.gridColumns; column++) {
+                const int index = CellIndex(field, column, row);
+                const FluidCell& source = field.cells[index];
+                if (source.solid || source.mass <= 0.0001f) continue;
+
+                const int neighbors[4]{
+                    row > 0 ? CellIndex(field, column, row - 1) : -1,
+                    column + 1 < field.gridColumns ? CellIndex(field, column + 1, row) : -1,
+                    row + 1 < field.gridRows ? CellIndex(field, column, row + 1) : -1,
+                    column > 0 ? CellIndex(field, column - 1, row) : -1
+                };
+                float proposed[4]{};
+                float proposedTotal = 0.0f;
+
+                for (int direction = 0; direction < 4; direction++) {
+                    const int destination = neighbors[direction];
+                    if (destination < 0 || field.cells[destination].solid) continue;
+                    const float concentrationDifference = source.mass - field.cells[destination].mass;
+                    if (concentrationDifference > 0.0f) {
+                        proposed[direction] += concentrationDifference * diffusionRate * dt;
+                    }
+                }
+
+                const float horizontalTravel = fabsf(source.velocity.x) * dt / field.cellSize;
+                const float verticalTravel = fabsf(source.velocity.y) * dt / field.cellSize;
+                const int horizontalDirection = source.velocity.x >= 0.0f ? 1 : 3;
+                const int verticalDirection = source.velocity.y >= 0.0f ? 2 : 0;
+                if (neighbors[horizontalDirection] >= 0 && !field.cells[neighbors[horizontalDirection]].solid) {
+                    proposed[horizontalDirection] += source.mass * horizontalTravel * 0.38f;
+                }
+                if (neighbors[verticalDirection] >= 0 && !field.cells[neighbors[verticalDirection]].solid) {
+                    proposed[verticalDirection] += source.mass * verticalTravel * 0.48f;
+                }
+
+                for (float amount : proposed) proposedTotal += amount;
+                const float maximumTransfer = source.mass * 0.32f;
+                const float scale = proposedTotal > maximumTransfer && proposedTotal > 0.0f
+                    ? maximumTransfer / proposedTotal
+                    : 1.0f;
+                for (int direction = 0; direction < 4; direction++) {
+                    const int destination = neighbors[direction];
+                    const float amount = proposed[direction] * scale;
+                    if (destination < 0 || amount <= 0.000001f) continue;
+                    transfer[index] -= amount;
+                    transfer[destination] += amount;
+                }
+            }
         }
-        ApplyVelocitySmoothing(field, 0.014f * field.flowSpeed);
-        UpdateParticleDensities(field);
+
+        for (int index = 0; index < static_cast<int>(field.cells.size()); index++) {
+            if (field.cells[index].solid) continue;
+            field.cells[index].mass = fmaxf(0.0f, nextMass[index] + transfer[index]);
+            if (field.cells[index].mass <= 0.00005f) {
+                field.cells[index].mass = 0.0f;
+                field.cells[index].velocity = {};
+            }
+        }
+        RelaxCellOverflow(field, 1.0f);
+        RelieveGasCompression(field);
     }
 }
 
@@ -959,9 +1051,11 @@ void InitializeFluidField(
 ) {
     field.bounds.width = fmaxf(1.0f, field.bounds.width);
     field.bounds.height = fmaxf(1.0f, field.bounds.height);
-    field.particleSpacing = IsCellularFluid(field.type) ?
-        std::clamp(field.particleSpacing, 1.0f, 12.0f) :
-        std::clamp(field.particleSpacing, 6.0f, 48.0f);
+    field.particleSpacing = field.type == FluidType::Gas ?
+        std::clamp(field.particleSpacing, 12.0f, 32.0f) :
+        (IsCellularFluid(field.type) ?
+            std::clamp(field.particleSpacing, 1.0f, 12.0f) :
+            std::clamp(field.particleSpacing, 6.0f, 48.0f));
     field.initialFill = std::clamp(field.initialFill, 0.0f, 1.0f);
     field.flowSpeed = std::clamp(field.flowSpeed, 0.1f, 4.0f);
 
@@ -983,12 +1077,20 @@ void InitializeFluidField(
             if (!cell.solid) openCellCount++;
         }
         float remainingMass = static_cast<float>(openCellCount) * field.initialFill;
-        for (int row = field.gridRows - 1; row >= 0 && remainingMass > 0.0f; row--) {
-            for (int column = 0; column < field.gridColumns && remainingMass > 0.0f; column++) {
-                FluidCell& cell = field.cells[CellIndex(field, column, row)];
-                if (cell.solid) continue;
-                cell.mass = fminf(1.0f, remainingMass);
-                remainingMass -= cell.mass;
+        if (field.type == FluidType::Gas) {
+            const float concentration = openCellCount > 0 ? remainingMass / static_cast<float>(openCellCount) : 0.0f;
+            for (FluidCell& cell : field.cells) {
+                if (!cell.solid) cell.mass = concentration;
+            }
+        }
+        else {
+            for (int row = field.gridRows - 1; row >= 0 && remainingMass > 0.0f; row--) {
+                for (int column = 0; column < field.gridColumns && remainingMass > 0.0f; column++) {
+                    FluidCell& cell = field.cells[CellIndex(field, column, row)];
+                    if (cell.solid) continue;
+                    cell.mass = fminf(1.0f, remainingMass);
+                    remainingMass -= cell.mass;
+                }
             }
         }
         field.initialized = true;
@@ -1077,7 +1179,7 @@ void AddFluidImpulse(FluidField& field, Vector2 point, float radius, Vector2 vel
     if (radius <= 0.0f) {
         return;
     }
-    if (field.type == FluidType::Water || field.type == FluidType::Sand) {
+    if (IsCellularFluid(field.type)) {
         for (int index = 0; index < static_cast<int>(field.cells.size()); index++) {
             FluidCell& cell = field.cells[index];
             if (cell.solid || cell.mass <= 0.0001f) continue;
@@ -1105,7 +1207,8 @@ void AddFluidImpulse(FluidField& field, Vector2 point, float radius, Vector2 vel
 }
 
 float AddCellularFluidMass(FluidField& field, float amount, Vector2 velocity) {
-    if (!IsCellularFluid(field.type) || field.cells.empty() || field.gridColumns <= 0 || amount <= 0.0f) {
+    if ((field.type != FluidType::Water && field.type != FluidType::Sand) ||
+        field.cells.empty() || field.gridColumns <= 0 || amount <= 0.0f) {
         return 0.0f;
     }
 
@@ -1136,13 +1239,226 @@ float AddCellularFluidMass(FluidField& field, float amount, Vector2 velocity) {
     return amount - remaining;
 }
 
+int EmitParticleFluid(
+    FluidField& field,
+    Vector2 source,
+    Vector2 velocity,
+    int count,
+    const std::vector<Rectangle>& obstacles
+) {
+    if (IsCellularFluid(field.type) || !field.initialized || count <= 0 ||
+        static_cast<int>(field.particles.size()) >= MaximumParticles) {
+        return 0;
+    }
+
+    const int available = MaximumParticles - static_cast<int>(field.particles.size());
+    const int requested = std::min(count, available);
+    int emitted = 0;
+    // A deterministic sunflower pattern prevents every emitted particle from
+    // occupying the exact same point while keeping replays reproducible.
+    for (int attempt = 0; attempt < requested * 8 && emitted < requested; ++attempt) {
+        const int sequence = static_cast<int>(field.simulationStep) +
+            static_cast<int>(field.particles.size()) + attempt;
+        const float angle = static_cast<float>(sequence) * 2.39996323f;
+        const float radius = field.particleRadius * (0.35f + 0.32f * sqrtf(static_cast<float>(attempt)));
+        Vector2 position{
+            source.x + cosf(angle) * radius,
+            source.y + sinf(angle) * radius
+        };
+        position.x = std::clamp(
+            position.x,
+            field.bounds.x + field.particleRadius,
+            field.bounds.x + field.bounds.width - field.particleRadius
+        );
+        position.y = std::clamp(
+            position.y,
+            field.bounds.y + field.particleRadius,
+            field.bounds.y + field.bounds.height - field.particleRadius
+        );
+        if (ParticleOverlapsObstacles(position, field.particleRadius, obstacles)) continue;
+
+        FluidParticle particle{};
+        particle.position = position;
+        particle.previousPosition = {
+            position.x - velocity.x * FixedTimeStep,
+            position.y - velocity.y * FixedTimeStep
+        };
+        particle.velocity = velocity;
+        field.particles.push_back(particle);
+        emitted++;
+    }
+
+    if (emitted > 0) UpdateParticleDensities(field);
+    return emitted;
+}
+
+float EmitGasDensity(
+    FluidField& field,
+    Vector2 source,
+    Vector2 velocity,
+    float amount
+) {
+    if (field.type != FluidType::Gas || !field.initialized || field.cells.empty() || amount <= 0.0f) {
+        return 0.0f;
+    }
+
+    const int sourceColumn = std::clamp(
+        static_cast<int>((source.x - field.bounds.x) / field.cellSize),
+        0,
+        field.gridColumns - 1
+    );
+    const int sourceRow = std::clamp(
+        static_cast<int>((source.y - field.bounds.y) / field.cellSize),
+        0,
+        field.gridRows - 1
+    );
+
+    int destinationIndex = -1;
+    const int maximumDistance = std::max(field.gridColumns, field.gridRows);
+    for (int distance = 0; distance <= maximumDistance && destinationIndex < 0; distance++) {
+        for (int row = std::max(0, sourceRow - distance);
+             row <= std::min(field.gridRows - 1, sourceRow + distance) && destinationIndex < 0;
+             row++) {
+            for (int column = std::max(0, sourceColumn - distance);
+                 column <= std::min(field.gridColumns - 1, sourceColumn + distance);
+                 column++) {
+                if (std::max(std::abs(column - sourceColumn), std::abs(row - sourceRow)) != distance) continue;
+                const int index = CellIndex(field, column, row);
+                if (!field.cells[index].solid) {
+                    destinationIndex = index;
+                    break;
+                }
+            }
+        }
+    }
+    if (destinationIndex < 0) return 0.0f;
+
+    std::vector<unsigned char> visited(field.cells.size(), 0);
+    std::vector<int> frontier;
+    frontier.reserve(field.cells.size());
+    frontier.push_back(destinationIndex);
+    visited[destinationIndex] = 1;
+    float remaining = amount;
+    size_t next = 0;
+    const int horizontalDirection = velocity.x >= 0.0f ? 1 : -1;
+    const int verticalDirection = velocity.y >= 0.0f ? 1 : -1;
+    while (next < frontier.size() && remaining > 0.0001f) {
+        const int index = frontier[next++];
+        FluidCell& destination = field.cells[index];
+        const float capacity = fmaxf(0.0f, 1.0f - destination.mass);
+        const float added = fminf(remaining, capacity);
+        if (added > 0.0001f) {
+            const float previousMass = destination.mass;
+            destination.mass += added;
+            const float blend = added / fmaxf(destination.mass, 0.0001f);
+            destination.velocity.x = destination.velocity.x * (1.0f - blend) + velocity.x * blend;
+            destination.velocity.y = destination.velocity.y * (1.0f - blend) + velocity.y * blend;
+            if (previousMass <= 0.0001f) destination.velocity = velocity;
+            remaining -= added;
+        }
+
+        const int column = index % field.gridColumns;
+        const int row = index / field.gridColumns;
+        const int candidates[4][2]{
+            {column + horizontalDirection, row},
+            {column, row + verticalDirection},
+            {column - horizontalDirection, row},
+            {column, row - verticalDirection}
+        };
+        for (const auto& candidate : candidates) {
+            if (candidate[0] < 0 || candidate[0] >= field.gridColumns ||
+                candidate[1] < 0 || candidate[1] >= field.gridRows) {
+                continue;
+            }
+            const int candidateIndex = CellIndex(field, candidate[0], candidate[1]);
+            if (visited[candidateIndex] != 0 || field.cells[candidateIndex].solid) continue;
+            visited[candidateIndex] = 1;
+            frontier.push_back(candidateIndex);
+        }
+    }
+    return amount - remaining;
+}
+
+float VentGasDensity(
+    FluidField& field,
+    Rectangle outlet,
+    Vector2 outwardDirection,
+    float influenceRadius,
+    float acceleration,
+    float maximumRemoved,
+    float dt
+) {
+    if (field.type != FluidType::Gas || field.cells.empty() || dt <= 0.0f) return 0.0f;
+
+    float outwardLength = sqrtf(
+        outwardDirection.x * outwardDirection.x + outwardDirection.y * outwardDirection.y);
+    if (outwardLength <= 0.0001f) outwardDirection = {-1.0f, 0.0f};
+    else {
+        outwardDirection.x /= outwardLength;
+        outwardDirection.y /= outwardLength;
+    }
+
+    Vector2 outletCenter{
+        outlet.x + outlet.width * 0.5f,
+        outlet.y + outlet.height * 0.5f
+    };
+    Vector2 mouth{
+        outletCenter.x + outwardDirection.x * outlet.width * 0.42f,
+        outletCenter.y + outwardDirection.y * outlet.height * 0.42f
+    };
+    influenceRadius = fmaxf(1.0f, influenceRadius);
+
+    for (int index = 0; index < static_cast<int>(field.cells.size()); index++) {
+        FluidCell& cell = field.cells[index];
+        if (cell.solid || cell.mass <= 0.0001f) continue;
+        const Vector2 center = CellCenter(field, index);
+        float dx = outletCenter.x - center.x;
+        float dy = outletCenter.y - center.y;
+        float distance = sqrtf(dx * dx + dy * dy);
+        if (distance >= influenceRadius) continue;
+
+        Vector2 desired{
+            mouth.x - center.x,
+            mouth.y - center.y
+        };
+        if (CheckCollisionPointRec(center, outlet)) desired = outwardDirection;
+        float desiredLength = sqrtf(desired.x * desired.x + desired.y * desired.y);
+        if (desiredLength <= 0.0001f) continue;
+
+        float influence = 1.0f - distance / influenceRadius;
+        cell.velocity.x += desired.x / desiredLength * acceleration * influence * dt;
+        cell.velocity.y += desired.y / desiredLength * acceleration * influence * dt;
+        ClampMagnitude(cell.velocity, 260.0f);
+    }
+
+    float removed = 0.0f;
+    maximumRemoved = fmaxf(0.0f, maximumRemoved);
+    for (int index = 0; index < static_cast<int>(field.cells.size()) && removed < maximumRemoved; index++) {
+        FluidCell& cell = field.cells[index];
+        if (cell.solid || cell.mass <= 0.0001f) continue;
+        const Vector2 center = CellCenter(field, index);
+        if (!CheckCollisionPointRec(center, outlet)) continue;
+        Vector2 fromCenter{center.x - outletCenter.x, center.y - outletCenter.y};
+        const float outwardProgress = fromCenter.x * outwardDirection.x + fromCenter.y * outwardDirection.y;
+        if (outwardProgress < -field.cellSize * 0.5f) continue;
+        const float amount = fminf(cell.mass, maximumRemoved - removed);
+        cell.mass -= amount;
+        removed += amount;
+        if (cell.mass <= 0.0001f) {
+            cell.mass = 0.0f;
+            cell.velocity = {};
+        }
+    }
+    return removed;
+}
+
 int GetFluidSimulationPointCount(const FluidField& field) {
-    return (field.type == FluidType::Water || field.type == FluidType::Sand) ? static_cast<int>(field.cells.size()) :
+    return IsCellularFluid(field.type) ? static_cast<int>(field.cells.size()) :
         static_cast<int>(field.particles.size());
 }
 
 Vector2 GetFluidSimulationPoint(const FluidField& field, int index) {
-    if (field.type == FluidType::Water || field.type == FluidType::Sand) {
+    if (IsCellularFluid(field.type)) {
         return index >= 0 && index < static_cast<int>(field.cells.size()) ? CellCenter(field, index) : Vector2{};
     }
     if (index < 0 || index >= static_cast<int>(field.particles.size())) {
@@ -1156,7 +1472,41 @@ FluidSample SampleFluid(const FluidField& field, Vector2 point) {
         return {};
     }
 
-    if (field.type == FluidType::Water || field.type == FluidType::Sand) {
+    if (field.type == FluidType::Gas) {
+        if (field.cells.empty()) return {};
+        const float gridX = (point.x - field.bounds.x) / field.cellSize - 0.5f;
+        const float gridY = (point.y - field.bounds.y) / field.cellSize - 0.5f;
+        const int firstColumn = static_cast<int>(floorf(gridX));
+        const int firstRow = static_cast<int>(floorf(gridY));
+        const float blendX = gridX - static_cast<float>(firstColumn);
+        const float blendY = gridY - static_cast<float>(firstRow);
+        FluidSample sample{};
+        float velocityWeight = 0.0f;
+        for (int y = 0; y < 2; y++) {
+            for (int x = 0; x < 2; x++) {
+                const int column = firstColumn + x;
+                const int row = firstRow + y;
+                if (column < 0 || column >= field.gridColumns || row < 0 || row >= field.gridRows) continue;
+                const FluidCell& cell = field.cells[CellIndex(field, column, row)];
+                if (cell.solid || cell.mass <= 0.0f) continue;
+                const float interpolationWeight = (x == 0 ? 1.0f - blendX : blendX) *
+                    (y == 0 ? 1.0f - blendY : blendY);
+                const float concentrationWeight = interpolationWeight * std::clamp(cell.mass, 0.0f, 1.0f);
+                sample.density += concentrationWeight;
+                sample.velocity.x += cell.velocity.x * concentrationWeight;
+                sample.velocity.y += cell.velocity.y * concentrationWeight;
+                velocityWeight += concentrationWeight;
+            }
+        }
+        if (velocityWeight > 0.0001f) {
+            sample.velocity.x /= velocityWeight;
+            sample.velocity.y /= velocityWeight;
+        }
+        sample.density = std::clamp(sample.density, 0.0f, 1.0f);
+        return sample;
+    }
+
+    if (IsCellularFluid(field.type)) {
         if (field.cells.empty()) return {};
         int centerColumn = static_cast<int>(roundf((point.x - field.bounds.x) / field.cellSize - 0.5f));
         int centerRow = static_cast<int>(roundf((point.y - field.bounds.y) / field.cellSize - 0.5f));
@@ -1234,7 +1584,7 @@ FluidSample SampleFluid(const std::vector<FluidField>& fields, FluidType type, V
 }
 
 float GetFluidMass(const FluidField& field) {
-    if (field.type == FluidType::Water || field.type == FluidType::Sand) {
+    if (IsCellularFluid(field.type)) {
         float mass = 0.0f;
         for (const FluidCell& cell : field.cells) mass += cell.mass;
         return mass;

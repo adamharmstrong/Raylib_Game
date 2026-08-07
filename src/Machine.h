@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Player.h"
+#include "WorldLayer.h"
 #include "raylib.h"
 
 #include <array>
@@ -8,6 +9,33 @@
 
 inline constexpr int GearToothCount = 8;
 inline constexpr float GearOuterRadiusScale = 1.12f;
+
+enum class GearOrientation {
+    Vertical,
+    Horizontal
+};
+
+enum class GearMounting {
+    Dynamic,
+    Mounted
+};
+
+enum class GearVisualType {
+    Spur,
+    LanternPinion,
+    Ratchet,
+    Escape,
+    Bevel,
+    Sector,
+    Count
+};
+
+enum class ClockHandType {
+    None,
+    Hour,
+    Minute,
+    Second
+};
 
 struct Winch {
     Rectangle rect;
@@ -41,6 +69,7 @@ struct StoneBlock {
     Vector2 velocity{0, 0};
     float mass{2.5f};
     bool onGround{false};
+    WorldLayer layer{WorldLayer::Middleground};
 };
 
 struct Boulder {
@@ -51,6 +80,7 @@ struct Boulder {
     float rotation{0.0f};
     float angularVelocity{0.0f};
     bool onGround{false};
+    WorldLayer layer{WorldLayer::Middleground};
 };
 
 struct PhysicsWheel {
@@ -61,6 +91,7 @@ struct PhysicsWheel {
     float rotation{0.0f};
     float angularVelocity{0.0f};
     bool onGround{false};
+    WorldLayer layer{WorldLayer::Middleground};
 };
 
 struct Gear {
@@ -71,6 +102,14 @@ struct Gear {
     float rotation{0.0f};
     float angularVelocity{0.0f};
     bool onGround{false};
+    WorldLayer layer{WorldLayer::Middleground};
+    GearMounting mounting{GearMounting::Dynamic};
+    GearOrientation orientation{GearOrientation::Vertical};
+    GearVisualType visualType{GearVisualType::Spur};
+    int toothCount{GearToothCount};
+    float driveSpeed{0.0f};
+    ClockHandType clockHand{ClockHandType::None};
+    bool stopped{false};
 };
 
 struct Flywheel {
@@ -81,6 +120,7 @@ struct Flywheel {
     float rotation{0.0f};
     float angularVelocity{0.0f};
     bool onGround{false};
+    WorldLayer layer{WorldLayer::Middleground};
 };
 
 struct SteeringWheel {
@@ -96,6 +136,7 @@ struct Screw {
     float angle{0.0f};
     float spinSpeed{180.0f};
     float rotation{0.0f};
+    WorldLayer layer{WorldLayer::Middleground};
 };
 
 struct Fan {
@@ -131,6 +172,7 @@ struct Ramp {
     float length{160.0f};
     float thickness{18.0f};
     float angle{0.0f};
+    int segmentCount{4};
 };
 
 struct TrapDoor {
