@@ -1,0 +1,110 @@
+[
+{
+  "directory": "C:/Users/nanob/source/repos/Raylib_Game/build-web",
+  "command": "C:\\Users\\nanob\\emsdk\\upstream\\emscripten\\em++.exe -DGAME_WEB_BUILD=1 -DGRAPHICS_API_OPENGL_ES2 -DPLATFORM_WEB -IC:/Users/nanob/source/repos/Raylib_Game/src -IC:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-src/src -O3 -DNDEBUG -std=c++17 -o CMakeFiles\\RaylibGameCore.dir\\src\\Achievement.cpp.o -c C:\\Users\\nanob\\source\\repos\\Raylib_Game\\src\\Achievement.cpp",
+  "file": "C:/Users/nanob/source/repos/Raylib_Game/src/Achievement.cpp",
+  "output": "C:/Users/nanob/source/repos/Raylib_Game/build-web/CMakeFiles/RaylibGameCore.dir/src/Achievement.cpp.o"
+},
+{
+  "directory": "C:/Users/nanob/source/repos/Raylib_Game/build-web",
+  "command": "C:\\Users\\nanob\\emsdk\\upstream\\emscripten\\em++.exe -DGAME_WEB_BUILD=1 -DGRAPHICS_API_OPENGL_ES2 -DPLATFORM_WEB -IC:/Users/nanob/source/repos/Raylib_Game/src -IC:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-src/src -O3 -DNDEBUG -std=c++17 -o CMakeFiles\\RaylibGameCore.dir\\src\\Collision.cpp.o -c C:\\Users\\nanob\\source\\repos\\Raylib_Game\\src\\Collision.cpp",
+  "file": "C:/Users/nanob/source/repos/Raylib_Game/src/Collision.cpp",
+  "output": "C:/Users/nanob/source/repos/Raylib_Game/build-web/CMakeFiles/RaylibGameCore.dir/src/Collision.cpp.o"
+},
+{
+  "directory": "C:/Users/nanob/source/repos/Raylib_Game/build-web",
+  "command": "C:\\Users\\nanob\\emsdk\\upstream\\emscripten\\em++.exe -DGAME_WEB_BUILD=1 -DGRAPHICS_API_OPENGL_ES2 -DPLATFORM_WEB -IC:/Users/nanob/source/repos/Raylib_Game/src -IC:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-src/src -O3 -DNDEBUG -std=c++17 -o CMakeFiles\\RaylibGameCore.dir\\src\\DevConsole.cpp.o -c C:\\Users\\nanob\\source\\repos\\Raylib_Game\\src\\DevConsole.cpp",
+  "file": "C:/Users/nanob/source/repos/Raylib_Game/src/DevConsole.cpp",
+  "output": "C:/Users/nanob/source/repos/Raylib_Game/build-web/CMakeFiles/RaylibGameCore.dir/src/DevConsole.cpp.o"
+},
+{
+  "directory": "C:/Users/nanob/source/repos/Raylib_Game/build-web",
+  "command": "C:\\Users\\nanob\\emsdk\\upstream\\emscripten\\em++.exe -DGAME_WEB_BUILD=1 -DGRAPHICS_API_OPENGL_ES2 -DPLATFORM_WEB -IC:/Users/nanob/source/repos/Raylib_Game/src -IC:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-src/src -O3 -DNDEBUG -std=c++17 -o CMakeFiles\\RaylibGameCore.dir\\src\\Fluid.cpp.o -c C:\\Users\\nanob\\source\\repos\\Raylib_Game\\src\\Fluid.cpp",
+  "file": "C:/Users/nanob/source/repos/Raylib_Game/src/Fluid.cpp",
+  "output": "C:/Users/nanob/source/repos/Raylib_Game/build-web/CMakeFiles/RaylibGameCore.dir/src/Fluid.cpp.o"
+},
+{
+  "directory": "C:/Users/nanob/source/repos/Raylib_Game/build-web",
+  "command": "C:\\Users\\nanob\\emsdk\\upstream\\emscripten\\em++.exe -DGAME_WEB_BUILD=1 -DGRAPHICS_API_OPENGL_ES2 -DPLATFORM_WEB -IC:/Users/nanob/source/repos/Raylib_Game/src -IC:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-src/src -O3 -DNDEBUG -std=c++17 -o CMakeFiles\\RaylibGameCore.dir\\src\\Game.cpp.o -c C:\\Users\\nanob\\source\\repos\\Raylib_Game\\src\\Game.cpp",
+  "file": "C:/Users/nanob/source/repos/Raylib_Game/src/Game.cpp",
+  "output": "C:/Users/nanob/source/repos/Raylib_Game/build-web/CMakeFiles/RaylibGameCore.dir/src/Game.cpp.o"
+},
+{
+  "directory": "C:/Users/nanob/source/repos/Raylib_Game/build-web",
+  "command": "C:\\Users\\nanob\\emsdk\\upstream\\emscripten\\em++.exe -DGAME_WEB_BUILD=1 -DGRAPHICS_API_OPENGL_ES2 -DPLATFORM_WEB -IC:/Users/nanob/source/repos/Raylib_Game/src -IC:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-src/src -O3 -DNDEBUG -std=c++17 -o CMakeFiles\\RaylibGameCore.dir\\src\\GuideObjects.cpp.o -c C:\\Users\\nanob\\source\\repos\\Raylib_Game\\src\\GuideObjects.cpp",
+  "file": "C:/Users/nanob/source/repos/Raylib_Game/src/GuideObjects.cpp",
+  "output": "C:/Users/nanob/source/repos/Raylib_Game/build-web/CMakeFiles/RaylibGameCore.dir/src/GuideObjects.cpp.o"
+},
+{
+  "directory": "C:/Users/nanob/source/repos/Raylib_Game/build-web",
+  "command": "C:\\Users\\nanob\\emsdk\\upstream\\emscripten\\em++.exe -DGAME_WEB_BUILD=1 -DGRAPHICS_API_OPENGL_ES2 -DPLATFORM_WEB -IC:/Users/nanob/source/repos/Raylib_Game/src -IC:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-src/src -O3 -DNDEBUG -std=c++17 -o CMakeFiles\\RaylibGameCore.dir\\src\\Level.cpp.o -c C:\\Users\\nanob\\source\\repos\\Raylib_Game\\src\\Level.cpp",
+  "file": "C:/Users/nanob/source/repos/Raylib_Game/src/Level.cpp",
+  "output": "C:/Users/nanob/source/repos/Raylib_Game/build-web/CMakeFiles/RaylibGameCore.dir/src/Level.cpp.o"
+},
+{
+  "directory": "C:/Users/nanob/source/repos/Raylib_Game/build-web",
+  "command": "C:\\Users\\nanob\\emsdk\\upstream\\emscripten\\em++.exe -DGAME_WEB_BUILD=1 -DGRAPHICS_API_OPENGL_ES2 -DPLATFORM_WEB -IC:/Users/nanob/source/repos/Raylib_Game/src -IC:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-src/src -O3 -DNDEBUG -std=c++17 -o CMakeFiles\\RaylibGameCore.dir\\src\\Machine.cpp.o -c C:\\Users\\nanob\\source\\repos\\Raylib_Game\\src\\Machine.cpp",
+  "file": "C:/Users/nanob/source/repos/Raylib_Game/src/Machine.cpp",
+  "output": "C:/Users/nanob/source/repos/Raylib_Game/build-web/CMakeFiles/RaylibGameCore.dir/src/Machine.cpp.o"
+},
+{
+  "directory": "C:/Users/nanob/source/repos/Raylib_Game/build-web",
+  "command": "C:\\Users\\nanob\\emsdk\\upstream\\emscripten\\em++.exe -DGAME_WEB_BUILD=1 -DGRAPHICS_API_OPENGL_ES2 -DPLATFORM_WEB -IC:/Users/nanob/source/repos/Raylib_Game/src -IC:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-src/src -O3 -DNDEBUG -std=c++17 -o CMakeFiles\\RaylibGameCore.dir\\src\\MathUtils.cpp.o -c C:\\Users\\nanob\\source\\repos\\Raylib_Game\\src\\MathUtils.cpp",
+  "file": "C:/Users/nanob/source/repos/Raylib_Game/src/MathUtils.cpp",
+  "output": "C:/Users/nanob/source/repos/Raylib_Game/build-web/CMakeFiles/RaylibGameCore.dir/src/MathUtils.cpp.o"
+},
+{
+  "directory": "C:/Users/nanob/source/repos/Raylib_Game/build-web",
+  "command": "C:\\Users\\nanob\\emsdk\\upstream\\emscripten\\em++.exe -DGAME_WEB_BUILD=1 -DGRAPHICS_API_OPENGL_ES2 -DPLATFORM_WEB -IC:/Users/nanob/source/repos/Raylib_Game/src -IC:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-src/src -O3 -DNDEBUG -std=c++17 -o CMakeFiles\\RaylibGameCore.dir\\src\\Player.cpp.o -c C:\\Users\\nanob\\source\\repos\\Raylib_Game\\src\\Player.cpp",
+  "file": "C:/Users/nanob/source/repos/Raylib_Game/src/Player.cpp",
+  "output": "C:/Users/nanob/source/repos/Raylib_Game/build-web/CMakeFiles/RaylibGameCore.dir/src/Player.cpp.o"
+},
+{
+  "directory": "C:/Users/nanob/source/repos/Raylib_Game/build-web",
+  "command": "C:\\Users\\nanob\\emsdk\\upstream\\emscripten\\em++.exe -DGAME_WEB_BUILD=1 -DGRAPHICS_API_OPENGL_ES2 -DPLATFORM_WEB -IC:/Users/nanob/source/repos/Raylib_Game/src -IC:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-src/src -O3 -DNDEBUG -std=c++17 -o CMakeFiles\\RaylibGameCore.dir\\src\\Render.cpp.o -c C:\\Users\\nanob\\source\\repos\\Raylib_Game\\src\\Render.cpp",
+  "file": "C:/Users/nanob/source/repos/Raylib_Game/src/Render.cpp",
+  "output": "C:/Users/nanob/source/repos/Raylib_Game/build-web/CMakeFiles/RaylibGameCore.dir/src/Render.cpp.o"
+},
+{
+  "directory": "C:/Users/nanob/source/repos/Raylib_Game/build-web",
+  "command": "C:\\Users\\nanob\\emsdk\\upstream\\emscripten\\em++.exe -DGRAPHICS_API_OPENGL_ES2 -DPLATFORM_WEB -IC:/Users/nanob/source/repos/Raylib_Game/src -IC:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-src/src -O3 -DNDEBUG -std=c++17 -o CMakeFiles\\RaylibGame.dir\\src\\main.cpp.o -c C:\\Users\\nanob\\source\\repos\\Raylib_Game\\src\\main.cpp",
+  "file": "C:/Users/nanob/source/repos/Raylib_Game/src/main.cpp",
+  "output": "C:/Users/nanob/source/repos/Raylib_Game/build-web/CMakeFiles/RaylibGame.dir/src/main.cpp.o"
+},
+{
+  "directory": "C:/Users/nanob/source/repos/Raylib_Game/build-web",
+  "command": "C:\\Users\\nanob\\emsdk\\upstream\\emscripten\\emcc.exe -DGRAPHICS_API_OPENGL_ES2 -DPLATFORM_WEB -IC:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-src/src -fno-strict-aliasing -Werror=implicit-function-declaration -Werror=pointer-arith  -O3 -DNDEBUG -std=gnu99 -o _deps\\raylib-build\\raylib\\CMakeFiles\\raylib.dir\\raudio.c.o -c C:\\Users\\nanob\\source\\repos\\Raylib_Game\\build-web\\_deps\\raylib-src\\src\\raudio.c",
+  "file": "C:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-src/src/raudio.c",
+  "output": "C:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-build/raylib/CMakeFiles/raylib.dir/raudio.c.o"
+},
+{
+  "directory": "C:/Users/nanob/source/repos/Raylib_Game/build-web",
+  "command": "C:\\Users\\nanob\\emsdk\\upstream\\emscripten\\emcc.exe -DGRAPHICS_API_OPENGL_ES2 -DPLATFORM_WEB -IC:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-src/src -fno-strict-aliasing -Werror=implicit-function-declaration -Werror=pointer-arith  -O3 -DNDEBUG -std=gnu99 -o _deps\\raylib-build\\raylib\\CMakeFiles\\raylib.dir\\rcore.c.o -c C:\\Users\\nanob\\source\\repos\\Raylib_Game\\build-web\\_deps\\raylib-src\\src\\rcore.c",
+  "file": "C:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-src/src/rcore.c",
+  "output": "C:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-build/raylib/CMakeFiles/raylib.dir/rcore.c.o"
+},
+{
+  "directory": "C:/Users/nanob/source/repos/Raylib_Game/build-web",
+  "command": "C:\\Users\\nanob\\emsdk\\upstream\\emscripten\\emcc.exe -DGRAPHICS_API_OPENGL_ES2 -DPLATFORM_WEB -IC:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-src/src -fno-strict-aliasing -Werror=implicit-function-declaration -Werror=pointer-arith  -O3 -DNDEBUG -std=gnu99 -o _deps\\raylib-build\\raylib\\CMakeFiles\\raylib.dir\\rmodels.c.o -c C:\\Users\\nanob\\source\\repos\\Raylib_Game\\build-web\\_deps\\raylib-src\\src\\rmodels.c",
+  "file": "C:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-src/src/rmodels.c",
+  "output": "C:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-build/raylib/CMakeFiles/raylib.dir/rmodels.c.o"
+},
+{
+  "directory": "C:/Users/nanob/source/repos/Raylib_Game/build-web",
+  "command": "C:\\Users\\nanob\\emsdk\\upstream\\emscripten\\emcc.exe -DGRAPHICS_API_OPENGL_ES2 -DPLATFORM_WEB -IC:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-src/src -fno-strict-aliasing -Werror=implicit-function-declaration -Werror=pointer-arith  -O3 -DNDEBUG -std=gnu99 -o _deps\\raylib-build\\raylib\\CMakeFiles\\raylib.dir\\rshapes.c.o -c C:\\Users\\nanob\\source\\repos\\Raylib_Game\\build-web\\_deps\\raylib-src\\src\\rshapes.c",
+  "file": "C:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-src/src/rshapes.c",
+  "output": "C:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-build/raylib/CMakeFiles/raylib.dir/rshapes.c.o"
+},
+{
+  "directory": "C:/Users/nanob/source/repos/Raylib_Game/build-web",
+  "command": "C:\\Users\\nanob\\emsdk\\upstream\\emscripten\\emcc.exe -DGRAPHICS_API_OPENGL_ES2 -DPLATFORM_WEB -IC:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-src/src -fno-strict-aliasing -Werror=implicit-function-declaration -Werror=pointer-arith  -O3 -DNDEBUG -std=gnu99 -o _deps\\raylib-build\\raylib\\CMakeFiles\\raylib.dir\\rtext.c.o -c C:\\Users\\nanob\\source\\repos\\Raylib_Game\\build-web\\_deps\\raylib-src\\src\\rtext.c",
+  "file": "C:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-src/src/rtext.c",
+  "output": "C:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-build/raylib/CMakeFiles/raylib.dir/rtext.c.o"
+},
+{
+  "directory": "C:/Users/nanob/source/repos/Raylib_Game/build-web",
+  "command": "C:\\Users\\nanob\\emsdk\\upstream\\emscripten\\emcc.exe -DGRAPHICS_API_OPENGL_ES2 -DPLATFORM_WEB -IC:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-src/src -fno-strict-aliasing -Werror=implicit-function-declaration -Werror=pointer-arith  -O3 -DNDEBUG -std=gnu99 -o _deps\\raylib-build\\raylib\\CMakeFiles\\raylib.dir\\rtextures.c.o -c C:\\Users\\nanob\\source\\repos\\Raylib_Game\\build-web\\_deps\\raylib-src\\src\\rtextures.c",
+  "file": "C:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-src/src/rtextures.c",
+  "output": "C:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-build/raylib/CMakeFiles/raylib.dir/rtextures.c.o"
+}
+]

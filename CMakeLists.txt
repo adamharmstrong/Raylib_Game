@@ -93,12 +93,30 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 set_property(TARGET ${PROJECT_NAME} PROPERTY VS_DEBUGGER_WORKING_DIRECTORY $<TARGET_FILE_DIR:${PROJECT_NAME}>)
 
 if ("${PLATFORM}" STREQUAL "Web")
-    add_custom_command(
-        TARGET ${PROJECT_NAME} PRE_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/assets $<TARGET_FILE_DIR:${PROJECT_NAME}>/../assets
-        COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/game_data $<TARGET_FILE_DIR:${PROJECT_NAME}>/../game_data
-    )
-    #DEPENDS ${PROJECT_NAME}
+    # The browser receives every preloaded file up front. Stage only the files
+    # used by the game instead of the full development asset library.
+    set(WEB_ASSET_ROOT "${CMAKE_BINARY_DIR}/web_assets")
+    file(MAKE_DIRECTORY "${WEB_ASSET_ROOT}/assets")
+    file(COPY "${CMAKE_SOURCE_DIR}/game_data" DESTINATION "${WEB_ASSET_ROOT}")
+    file(COPY "${CMAKE_SOURCE_DIR}/assets/Music" DESTINATION "${WEB_ASSET_ROOT}/assets")
+
+    set(WEB_TEXTURE_ASSETS
+        "assets/first_party/characters/Player_Sprites.png"
+        "assets/first_party/characters/knight.png"
+        "assets/first_party/characters/skull.png"
+        "assets/first_party/machines/chain_links.png"
+        "assets/third_party/AtomicRealm/[FREE] Industrial Tileset/raw/FREE/5. Industrial Tileset - Starter Pack 32p/1_Industrial_Tileset_1.png"
+        "assets/third_party/AtomicRealm/[FREE] Industrial Tileset/raw/FREE/5. Industrial Tileset - Starter Pack 32p/2_Industrial_Tileset_1_Background.png"
+        "assets/third_party/AtomicRealm/[FREE] Industrial Tileset/raw/FREE/5. Industrial Tileset - Starter Pack 32p/3_Far_Background_Tile.png"
+        "assets/third_party/AtomicRealm/[FREE] Industrial Tileset/raw/FREE/6. Character Animations 32p/Anim_Robot_Walk1_v1.1_spritesheet.png")
+    foreach (WEB_TEXTURE_ASSET IN LISTS WEB_TEXTURE_ASSETS)
+        get_filename_component(WEB_TEXTURE_DIRECTORY "${WEB_TEXTURE_ASSET}" DIRECTORY)
+        file(MAKE_DIRECTORY "${WEB_ASSET_ROOT}/${WEB_TEXTURE_DIRECTORY}")
+        file(COPY "${CMAKE_SOURCE_DIR}/${WEB_TEXTURE_ASSET}"
+            DESTINATION "${WEB_ASSET_ROOT}/${WEB_TEXTURE_DIRECTORY}")
+    endforeach()
+
+    target_compile_definitions(RaylibGameCore PRIVATE GAME_WEB_BUILD=1)
 else()
     add_custom_command(
         TARGET ${PROJECT_NAME} POST_BUILD
@@ -113,7 +131,14 @@ endif()
 if ("${PLATFORM}" STREQUAL "Web")
     # Tell Emscripten to build an example.html file.
     set_target_properties(${PROJECT_NAME} PROPERTIES SUFFIX ".html")
-    target_link_options(${PROJECT_NAME} PUBLIC -sUSE_GLFW=3 PUBLIC --preload-file assets PUBLIC --preload-file game_data)
+    # Keep each Emscripten argument together. CMake de-duplicates individual
+    # link options, which otherwise removes the second --preload-file flag and
+    # makes game_data look like a linker input.
+    target_link_options(${PROJECT_NAME} PUBLIC
+        "SHELL:-sUSE_GLFW=3"
+        # raylib's Web backend yields to the browser with emscripten_sleep().
+        "SHELL:-sASYNCIFY"
+        "SHELL:--preload-file ${WEB_ASSET_ROOT}@/")
 endif()
 
 # Checks if OSX and links appropriate frameworks (Only required on MacOS)

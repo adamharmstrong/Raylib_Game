@@ -1,0 +1,2 @@
+# id | display name | description
+still_alive | Still Alive | Shut off Level 5's deadly neurotoxin.

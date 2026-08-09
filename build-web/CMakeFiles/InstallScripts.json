@@ -1,0 +1,10 @@
+{
+	"InstallScripts" : 
+	[
+		"C:/Users/nanob/source/repos/Raylib_Game/build-web/cmake_install.cmake",
+		"C:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-build/cmake_install.cmake",
+		"C:/Users/nanob/source/repos/Raylib_Game/build-web/_deps/raylib-build/raylib/cmake_install.cmake",
+		"C:/Users/nanob/source/repos/Raylib_Game/build-web/src/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

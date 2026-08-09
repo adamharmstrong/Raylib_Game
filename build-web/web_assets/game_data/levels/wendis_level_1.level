@@ -1,0 +1,48 @@
+# Wendi's Level 1: Three-Step Tumble
+# Roll one ball down the entry slide to Button 1. It releases the trap door,
+# dropping a second ball onto Button 2 and revealing the tower ladder. Roll the
+# upper ball from its ledge onto Button 3 to open the exit.
+script button_sequence
+bounds 0 0 1600 900
+playerStart 72 168
+
+# Chamber shell and entry ledge.
+solid 0 0 1600 28
+solid 0 28 28 872
+solid 1572 28 28 872
+solid 28 220 230 32
+boulder 215 184 26 2.2
+
+# Wendi's long ramp/slide and Button 1 landing.
+ramp 390 374 380 32 35
+solid 530 510 210 40
+button 625 494 82 16
+# This short stop catches the first ball after it rolls across Button 1.
+solid 715 474 14 36
+
+# The chain visually carries Button 1's pull to the trap-door latch.
+chain 666 474 840 405 20 0.70 1 1
+
+# The waiting ball falls from this door onto Button 2.
+trapDoor 840 405 220 26 0
+boulder 970 367 26 2.6
+solid 530 760 1042 60
+button 1010 744 92 16
+
+# Button 2 reveals the tall ladder beside the trap door.
+buttonLadder 1 1110 142 52 618
+
+# Upper ledge and third ball. Its left edge begins after the ladder shaft,
+# leaving a real opening for the player to climb through.
+solid 1162 142 278 32
+boulder 1320 105 26 2.4
+solid 1415 760 157 60
+solid 1390 700 25 120
+button 1460 744 82 16
+
+# The exit is immediately left of Button 3's catch basin.
+exit 1270 540 110 220
+
+# Latched cause-and-effect links from Wendi's sketch.
+buttonTrapDoor 0 0 78 115
+buttonExit 2

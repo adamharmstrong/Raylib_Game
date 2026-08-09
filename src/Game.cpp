@@ -30,6 +30,14 @@ namespace {
         const char* label;
     };
 
+    const char* MusicPath(const char* desktopPath, const char* webPath) {
+#if defined(GAME_WEB_BUILD)
+        return webPath;
+#else
+        return desktopPath;
+#endif
+    }
+
     std::array<DirectionalSpikeHazard, 2> GetPlatformSideSpikes(Rectangle platform) {
         constexpr float SpikeDepth = 12.0f;
         return {
@@ -3260,91 +3268,81 @@ void Game::Load() {
     InitAudioDevice();
     if (IsAudioDeviceReady()) {
         SetMasterVolume(masterVolume);
-        titleMusic = LoadMusicStream(
-            "assets/third_party/Clark Audio/Clark Audio - MERCURY Beta/processed/"
-            "power_pulley_panic_title_theme.wav"
-        );
+        titleMusic = LoadMusicStream(MusicPath(
+            "assets/third_party/Clark Audio/Clark Audio - MERCURY Beta/processed/power_pulley_panic_title_theme.wav",
+            "assets/Music/power_pulley_panic_title_theme.ogg"));
         titleMusicLoaded = IsMusicValid(titleMusic);
         if (titleMusicLoaded) {
             titleMusic.looping = true;
             SetMusicVolume(titleMusic, musicVolume);
         }
-        levelSelectMusic = LoadMusicStream(
-            "assets/third_party/Clark Audio/Clark Audio - MERCURY Beta/processed/"
-            "power_pulley_panic_level_select_theme.wav"
-        );
+        levelSelectMusic = LoadMusicStream(MusicPath(
+            "assets/third_party/Clark Audio/Clark Audio - MERCURY Beta/processed/power_pulley_panic_level_select_theme.wav",
+            "assets/Music/power_pulley_panic_level_select_theme.ogg"));
         levelSelectMusicLoaded = IsMusicValid(levelSelectMusic);
         if (levelSelectMusicLoaded) {
             levelSelectMusic.looping = true;
             SetMusicVolume(levelSelectMusic, musicVolume);
         }
-        levelOneMusic = LoadMusicStream(
-            "assets/third_party/Clark Audio/Clark Audio - MERCURY Beta/processed/"
-            "power_pulley_panic_level_01_gatehouse.wav"
-        );
+        levelOneMusic = LoadMusicStream(MusicPath(
+            "assets/third_party/Clark Audio/Clark Audio - MERCURY Beta/processed/power_pulley_panic_level_01_gatehouse.wav",
+            "assets/Music/power_pulley_panic_level_01_gatehouse.ogg"));
         levelOneMusicLoaded = IsMusicValid(levelOneMusic);
         if (levelOneMusicLoaded) {
             levelOneMusic.looping = true;
             SetMusicVolume(levelOneMusic, musicVolume);
         }
-        levelTwoMusic = LoadMusicStream(
-            "assets/third_party/Clark Audio/Clark Audio - MERCURY Beta/processed/"
-            "power_pulley_panic_level_02_rotary_latch_lab.wav"
-        );
+        levelTwoMusic = LoadMusicStream(MusicPath(
+            "assets/third_party/Clark Audio/Clark Audio - MERCURY Beta/processed/power_pulley_panic_level_02_rotary_latch_lab.wav",
+            "assets/Music/power_pulley_panic_level_02_rotary_latch_lab.ogg"));
         levelTwoMusicLoaded = IsMusicValid(levelTwoMusic);
         if (levelTwoMusicLoaded) {
             levelTwoMusic.looping = true;
             SetMusicVolume(levelTwoMusic, musicVolume);
         }
-        levelThreeMusic = LoadMusicStream(
-            "assets/third_party/Clark Audio/Clark Audio - MERCURY Beta/processed/"
-            "power_pulley_panic_level_03_flooded_lower_works.wav"
-        );
+        levelThreeMusic = LoadMusicStream(MusicPath(
+            "assets/third_party/Clark Audio/Clark Audio - MERCURY Beta/processed/power_pulley_panic_level_03_flooded_lower_works.wav",
+            "assets/Music/power_pulley_panic_level_03_flooded_lower_works.ogg"));
         levelThreeMusicLoaded = IsMusicValid(levelThreeMusic);
         if (levelThreeMusicLoaded) {
             levelThreeMusic.looping = true;
             SetMusicVolume(levelThreeMusic, musicVolume);
         }
-        levelFourMusic = LoadMusicStream(
-            "assets/third_party/Clark Audio/Clark Audio - MERCURY Beta/processed/"
-            "power_pulley_panic_level_04_counterweight_row.wav"
-        );
+        levelFourMusic = LoadMusicStream(MusicPath(
+            "assets/third_party/Clark Audio/Clark Audio - MERCURY Beta/processed/power_pulley_panic_level_04_counterweight_row.wav",
+            "assets/Music/power_pulley_panic_level_04_counterweight_row.ogg"));
         levelFourMusicLoaded = IsMusicValid(levelFourMusic);
         if (levelFourMusicLoaded) {
             levelFourMusic.looping = true;
             SetMusicVolume(levelFourMusic, musicVolume);
         }
-        levelFiveMusic = LoadMusicStream(
-            "assets/third_party/Clark Audio/Clark Audio - MERCURY Beta/processed/"
-            "power_pulley_panic_level_05_neurotoxin_annex.wav"
-        );
+        levelFiveMusic = LoadMusicStream(MusicPath(
+            "assets/third_party/Clark Audio/Clark Audio - MERCURY Beta/processed/power_pulley_panic_level_05_neurotoxin_annex.wav",
+            "assets/Music/power_pulley_panic_level_05_neurotoxin_annex.ogg"));
         levelFiveMusicLoaded = IsMusicValid(levelFiveMusic);
         if (levelFiveMusicLoaded) {
             levelFiveMusic.looping = true;
             SetMusicVolume(levelFiveMusic, musicVolume);
         }
-        levelSixMusic = LoadMusicStream(
-            "assets/third_party/Clark Audio/Clark Audio - MERCURY Beta/processed/"
-            "power_pulley_panic_level_06_clocktower_core.wav"
-        );
+        levelSixMusic = LoadMusicStream(MusicPath(
+            "assets/third_party/Clark Audio/Clark Audio - MERCURY Beta/processed/power_pulley_panic_level_06_clocktower_core.wav",
+            "assets/Music/power_pulley_panic_level_06_clocktower_core.ogg"));
         levelSixMusicLoaded = IsMusicValid(levelSixMusic);
         if (levelSixMusicLoaded) {
             levelSixMusic.looping = true;
             SetMusicVolume(levelSixMusic, musicVolume);
         }
-        wendiLevelOneMusic = LoadMusicStream(
-            "assets/first_party/audio/"
-            "power_pulley_panic_wendi_01_three_step_tumble.wav"
-        );
+        wendiLevelOneMusic = LoadMusicStream(MusicPath(
+            "assets/first_party/audio/power_pulley_panic_wendi_01_three_step_tumble.wav",
+            "assets/Music/power_pulley_panic_wendi_01_three_step_tumble.ogg"));
         wendiLevelOneMusicLoaded = IsMusicValid(wendiLevelOneMusic);
         if (wendiLevelOneMusicLoaded) {
             wendiLevelOneMusic.looping = true;
             SetMusicVolume(wendiLevelOneMusic, musicVolume);
         }
-        portalLiftMusic = LoadMusicStream(
-            "assets/first_party/music/"
-            "power_pulley_panic_wendi_02_portal_lift.wav"
-        );
+        portalLiftMusic = LoadMusicStream(MusicPath(
+            "assets/first_party/music/power_pulley_panic_wendi_02_portal_lift.wav",
+            "assets/Music/power_pulley_panic_wendi_02_portal_lift.ogg"));
         portalLiftMusicLoaded = IsMusicValid(portalLiftMusic);
         if (portalLiftMusicLoaded) {
             portalLiftMusic.looping = true;

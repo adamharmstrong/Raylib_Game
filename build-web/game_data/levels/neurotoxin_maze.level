@@ -1,0 +1,70 @@
+# Level 5: The Neurotoxin Annex
+# Follow the alternating ladders to the emergency shutoff, then return to the
+# entrance after the safety interlock opens the exit door.
+script neurotoxin_maze
+playerStart 92 790
+
+# Enclosed annex shell and four walkable tiers. Each intermediate floor leaves
+# one opening around its ladder, producing a long switchback route while also
+# giving the buoyant gas a visible path upward through the maze.
+solid 0 0 1600 32
+solid 0 32 32 818
+solid 1568 32 32 818
+solid 0 850 1600 50
+
+# Lower-to-first-tier opening on the right.
+solid 32 650 1388 32
+solid 1510 650 58 32
+ladder 1440 625 48 225
+
+# First-to-second-tier opening on the left.
+solid 32 450 68 32
+solid 190 450 1378 32
+ladder 120 425 48 225
+
+# Second-to-top-tier opening on the right.
+solid 32 250 1388 32
+solid 1510 250 58 32
+ladder 1440 225 48 225
+
+# Alternating low barricades and overhead baffles turn each long corridor into
+# readable maze beats without requiring a crouch mechanic.
+solid 430 782 54 68
+solid 735 682 42 92
+solid 1030 798 58 52
+solid 1260 682 42 94
+
+solid 1190 582 58 68
+solid 910 482 42 94
+solid 630 596 58 54
+solid 350 482 42 96
+
+solid 370 382 58 68
+solid 660 282 42 94
+solid 960 396 58 54
+solid 1230 282 42 96
+
+solid 1180 182 58 68
+solid 890 32 42 124
+solid 610 196 58 54
+solid 330 32 42 126
+
+# Annex security robots patrol distinct stretches of the switchback. Their
+# routes stop short of the entrance, valve, exit, ladders, and barricades.
+enemy 540 810 34 40 500 720 58
+enemy 760 610 34 40 700 900 64
+enemy 1320 610 34 40 1260 1410 58
+enemy 1080 410 34 40 1025 1210 62
+enemy 720 210 34 40 680 860 55
+
+# The sealed exit is deliberately next to the leak and starting position. The
+# player sees the goal immediately, then has to traverse the whole annex.
+# The eight-pixel frame fits exactly between the tier underside at y=682 and
+# the foundation at y=850, so neither edge intersects the surrounding masonry.
+exit 64 690 82 160
+valve 120 207 35
+
+# Smoke seeps steadily from the ruptured lower pipe. Exposure rate is tuned so
+# brief contact is survivable while lingering in a dense cloud is fatal.
+gas 32 32 1536 818 20 0 1.25
+toxinLeak 0 260 816 55 2200 0.030

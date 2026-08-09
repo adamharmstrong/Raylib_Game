@@ -1,0 +1,61 @@
+# Level 6: Clocktower Core
+# One vast mechanism fills the back wall. Stop the three marked drive gears when
+# their corresponding hands reach XII; a mistimed gear can be restarted.
+script clocktower_core
+bounds 0 0 1600 900
+playerStart 64 770
+clockFace 800 355 210
+
+# Enclosed single-screen clock chamber.
+solid 0 0 1600 32
+solid 0 32 32 788
+solid 1568 32 32 788
+solid 0 820 1600 80
+
+# TIME / GOING TRAIN - a compact planted train rising from the winding barrel
+# through the center, third, and fourth wheels to the escapement. Small pinions
+# share the major wheel arbors, as they would between a real movement's plates.
+layer background
+gear spur mounted vertical 250 540 96 7.7 120 8 -8 -8 none
+gear ratchet mounted horizontal 250 540 58 4.6 60 18 -8 -8 none
+gear spur mounted vertical 412 490 72 5.8 90 14 0 0 none
+gear lantern mounted horizontal 412 490 25 2.0 12 35 24 24 none
+gear spur mounted vertical 500 410 56 4.5 75 8 0 0 none
+gear lantern mounted horizontal 500 410 22 1.8 10 10 -36 -36 none
+gear spur mounted vertical 530 315 44 3.5 60 22 0 0 none
+gear escape mounted vertical 500 220 50 4.0 30 0 0 0 none
+gear sector mounted vertical 555 155 30 2.4 24 130 0 0 none
+
+# MOTION WORK / DIAL TRAIN - cannon pinion, minute wheel and pinion, hour wheel,
+# and a bevel takeoff share the central hand arbor behind the skeleton dial.
+gear spur mounted vertical 800 355 84 6.7 72 0 14 14 none
+gear lantern mounted horizontal 800 355 28 2.2 12 25 42 42 none
+gear spur mounted vertical 690 355 38 3.0 36 8 0 0 none
+gear lantern mounted horizontal 690 355 18 1.5 10 40 -58 -58 none
+gear spur mounted vertical 910 355 38 3.0 40 18 0 0 none
+gear bevel mounted horizontal 800 470 38 3.0 32 12 0 0 none
+
+# STRIKE / BELL TRAIN - a second great wheel drives a compact ascending train,
+# warning sector, count wheel, bevel transfer, and fast fly governor.
+gear spur mounted vertical 1350 540 96 7.7 96 6 -10 -10 none
+gear count mounted vertical 1460 430 58 4.6 78 16 0 0 none
+gear spur mounted vertical 1210 495 70 5.6 72 8 0 0 none
+gear lantern mounted horizontal 1210 495 24 1.9 12 28 30 30 none
+gear spur mounted vertical 1115 405 55 4.4 60 20 0 0 none
+gear spur mounted vertical 1085 300 44 3.5 48 0 0 0 none
+gear lantern mounted horizontal 1085 300 20 1.6 10 10 -48 -48 none
+gear sector mounted vertical 1125 215 46 3.7 36 52 0 0 none
+gear bevel mounted horizontal 1214 185 40 3.2 32 0 0 0 none
+gear lantern mounted horizontal 1284 185 30 2.4 12 20 78 78 none
+
+# PLAYER BRAKES - stopping one freezes its matching hand on the central face.
+# Correctly stopped hands turn green; mistimed brakes turn red and can restart.
+gear spur mounted vertical 380 720 54 4.3 40 30 28 28 hour
+gear bevel mounted horizontal 800 725 62 5.0 36 140 52 52 minute
+gear escape mounted vertical 1220 720 56 4.5 30 235 85 85 second
+
+# Gameplay, labels, and the exit return to the player collision plane. The three
+# background brakes remain operable through middleground interaction proxies.
+layer middleground
+label 650 64 CLOCKTOWER MASTER MOVEMENT
+exit 1460 620 80 200

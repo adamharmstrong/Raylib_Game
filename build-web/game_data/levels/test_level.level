@@ -1,0 +1,150 @@
+# Organized sandbox for experimenting with reusable level objects.
+script power_pulley_panic
+# Start beside the fluid tank on the upper catalog floor.
+playerStart 1040 260
+
+exit 1485 430 85 220
+
+# Middle deck, with a ladder opening and a two-tile breakable approach to the exit.
+solid 0 650 360 24
+solid 440 650 880 24
+solid 1448 650 124 24
+
+# Bottom foundation. Replacing the old 210-pixel solid foundation with this
+# thin floor turns the former black void into a third usable test gallery.
+solid 0 868 1600 32
+solid 0 0 28 900
+solid 1572 0 28 900
+
+# Upper test floor. Its opening lines up with the opening in the middle deck.
+solid 28 300 332 24
+solid 440 300 1132 24
+ladder 376 270 48 598
+
+# Middle-floor display shelves use the otherwise empty vertical space and keep
+# the controls, actuators, sensors, and force demonstration visually separated.
+platform 50 470 280 14
+platform 450 455 350 14
+platform 815 555 320 14
+platform 1160 620 300 14
+
+# Lightweight fluid test tank on the upper floor.
+water 1100 80 400 220 1 0.55 1.0
+label 900 20 FLOOR 3 - MOTION AND HAZARDS
+
+# -----------------------------------------------------------------------------
+# BOTTOM GALLERY
+# Station 1 (x 28-390): rolling bodies and an inclined surface.
+# -----------------------------------------------------------------------------
+platform 250 720 118 18
+ramp 175 810 240 18 -22
+physicsWheel 78 785 24 1.4
+boulder 300 685 25 2.6
+
+# -----------------------------------------------------------------------------
+# Station 2 (x 420-890): pushables, patrol AI, buttons, and balance beams.
+# The shelves are aligned; the two see-saws have separate footprints.
+# -----------------------------------------------------------------------------
+platform 430 700 180 18
+platform 690 700 180 18
+
+enemy 545 660 34 40 430 610 80
+stoneBlock 465 652 54 48 3.0
+stoneBlock 700 760 54 48 3.0
+flywheel 825 655 34 4.0 80
+steeringWheel 625 630 28 0
+
+button 430 850 62 18
+button 820 850 62 18
+seeSaw 535 838 210 16 -18 18 7
+seeSaw 780 838 210 16 -18 18 7
+
+# Flexible-body samples frame the balance station instead of crossing it.
+chain 420 670 420 850 11 1
+chain 650 650 650 850 11 1
+chain 900 670 900 838 11 1
+
+# -----------------------------------------------------------------------------
+# Station 3 (x 900-1450): separated screw, impact, and trap-door workbenches.
+# -----------------------------------------------------------------------------
+platform 940 800 200 18
+screw 1040 775 150 13 0 210
+gear 1000 735 24 1.8
+arrowTrap 1130 745 0 -1 1.8 420
+platform 1160 780 160 18
+boulder 1220 745 28 3.2
+trapDoor 1330 838 110 16 0
+
+# -----------------------------------------------------------------------------
+# Middle-right force station: fan response, pinwheel, and rope physics.
+# -----------------------------------------------------------------------------
+fan 1160 570 1 0 250 90 420 1.0
+pinwheel 1435 570 24
+physicsRope 1140 430 1460 430 370 5 1 1
+
+# Exit approach: projectile lane followed by a breakable floor bridge.
+arrowTrap 1480 610 -1 0 1.4 500
+breakableTile 1320 650 64 32 2.0
+breakableTile 1384 650 64 32 2.0
+
+# -----------------------------------------------------------------------------
+# Reusable objects from the physics design guide. Motion and hazards occupy the
+# upper floor; controls, sensors, and materials are arranged on the middle floor.
+# -----------------------------------------------------------------------------
+
+# Loose rigid bodies.
+ball 58 268 14 0.8
+barrel 88 256 28 44 1.8
+breakableCrate 126 260 40 40 1.2
+explosiveBarrel 176 254 30 46 2.0
+
+# Traversal bodies and environment fixtures.
+movingPlatform 225 274 72 14 0 -1 86 1.4
+elevator 310 274 42 14 0 -1 110 1.0
+oneWayPlatform 450 230 92 12
+guideRail 552 284 100 12
+ceilingHook 475 72 13
+fixedJoint 520 72 10
+spring 550 76 620 76 7
+rod 635 76 710 76 6
+
+# Middle-floor rotating mechanical parts.
+label 460 345 FLOOR 2 - MACHINES, CONTROLS, AND FORCES
+crank 470 420 20 105
+ratchet 520 420 20 90
+clutch 570 420 20 100 1
+brake 606 402 50 36 0.72
+cam 690 420 20 95 8
+turntable 745 424 28 70
+conveyorBelt 680 632 130 16 55
+
+# Channel 7 is a small powered demonstration circuit.
+battery 825 608 40 32 1.0 7
+electricMotor 892 620 20 150 7
+limitSwitch 925 614 34 26 7
+relay 970 610 34 30 7
+fuse 1015 622 42 18 1.2 7
+magnet 1090 610 30 520 7
+piston 815 520 42 16 1 0 55 1.8 7
+hydraulicCylinder 885 520 50 18 1 0 50 1.2 7
+
+# Sensors, surface materials, and progression pieces.
+oil 50 632 100 18
+mud 170 632 100 18
+speedSensor 70 438 42 30 120 8
+beamSensor 140 445 1 0 120 8
+checkpoint 300 592 30 56
+collectible 270 455 10
+key 315 445 11
+
+# Suspended motion and force demonstrations, kept above the walking lane.
+pendulumBob 90 70 82 15 0 1.6
+swingingHammer 190 65 80 19 0.8 1.4
+rocketThruster 260 105 1 0 90 34 240 7
+steamVent 385 125 0 -1 80 34 260 1.8
+crushingBlock 470 105 50 32 1 0 65 1.1
+sawBlade 610 125 19 1 0 80 1.6
+electricalArc 750 120 850 120 1.6 7
+
+# Exposed high-speed propeller trap, placed beside the spawn for quick inspection.
+spinnerTrap 940 274 24 540

@@ -1,0 +1,66 @@
+# Dedicated laboratory for comparing every reusable spring family.
+script power_pulley_panic
+playerStart 780 810
+exit 1500 700 72 168
+
+# Three compact galleries connected by one central ladder shaft.
+solid 0 868 1600 32
+solid 0 0 28 900
+solid 1572 0 28 900
+solid 28 300 730 24
+solid 820 300 752 24
+solid 28 570 730 24
+solid 820 570 752 24
+ladder 770 260 40 608
+
+label 50 38 AXIAL AND COMPACT SPRINGS
+label 50 330 ROTARY, CONSTANT-FORCE, AND FLEXURAL SPRINGS
+label 50 610 DAMPED, FLUID, AND NONCONTACT SPRINGS
+
+# Row 1: axial variants that share the original spring's attachment topology.
+compressionSpring 50 255 130 255 7 8.0 1.0
+ball 110 255 11 0.8
+extensionSpring 265 255 345 255 7 8.0 1.0
+ball 365 255 11 0.8
+voluteSpring 480 255 560 255 7 14.0 1.0
+ball 540 255 11 0.9
+discSpring 695 255 775 255 7 18.0 1.0
+ball 755 255 11 0.9
+waveSpring 910 255 990 255 7 10.0 1.0
+ball 970 255 11 0.8
+waveWasher 1125 255 1205 255 7 7.0 1.0
+ball 1185 255 11 0.8
+compositeSpring 1340 255 1420 255 7 10.0 1.6
+ball 1435 255 11 0.8
+
+# Row 2: rotary, radial, constant-output, and bending mechanisms.
+torsionSpring 50 520 130 520 7 10.0 1.8
+ball 130 520 11 0.8
+garterSpring 280 520 310 520 7 9.0 1.0
+ball 320 520 11 0.8
+spiralSpring 480 520 560 520 7 9.0 1.4
+ball 560 520 11 0.8
+constantForceSpring 695 520 775 520 7 8.0 1.0
+ball 790 520 11 0.8
+constantTorqueSpring 910 520 990 520 7 8.0 1.2
+ball 990 520 11 0.8
+leafSpring 1125 520 1205 520 7 12.0 2.0
+ball 1205 540 11 0.9
+beamSpring 1340 520 1420 520 7 10.0 1.7
+ball 1420 540 11 0.9
+
+# Row 3: torsional, frictional, elastomeric, fluid, and magnetic response.
+torsionBar 50 820 130 820 7 15.0 2.2
+ball 130 820 11 0.9
+ringSpring 265 820 345 820 7 13.0 4.2
+ball 360 820 11 0.9
+elastomerSpring 480 820 560 820 7 9.0 4.8
+ball 575 820 11 0.9
+pneumaticSpring 695 820 775 820 7 11.0 2.4
+ball 755 820 11 0.9
+gasSpring 910 820 990 820 7 10.0 3.4
+ball 970 820 11 0.9
+hydropneumaticSpring 1125 820 1205 820 7 14.0 5.2
+ball 1185 820 11 0.9
+magneticSpring 1340 820 1420 820 7 12.0 0.4
+ball 1435 820 11 0.8

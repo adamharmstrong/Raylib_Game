@@ -1,0 +1,25 @@
+# ninja log v7
+125	171	8079357577237941	C:/Users/nanob/source/repos/Raylib_Game/build-web/CMakeFiles/cmake.verify_globs	9c0ba17f2881ef89
+173	1154	8079339158285786	_deps/raylib-build/raylib/CMakeFiles/raylib.dir/rshapes.c.o	89d2d1239085b126
+181	2138	8079339158366067	_deps/raylib-build/raylib/CMakeFiles/raylib.dir/rtext.c.o	eeaebf00d4d3981b
+151	2660	8079339158065686	_deps/raylib-build/raylib/CMakeFiles/raylib.dir/rcore.c.o	a423815560715441
+188	3732	8079339158436513	_deps/raylib-build/raylib/CMakeFiles/raylib.dir/rtextures.c.o	e701f7284f317ad8
+166	4974	8079339158205724	_deps/raylib-build/raylib/CMakeFiles/raylib.dir/rmodels.c.o	7951808a661b59e9
+142	6584	8079339157970291	_deps/raylib-build/raylib/CMakeFiles/raylib.dir/raudio.c.o	412dcc65277700d
+288	2640	8079357578918977	CMakeFiles/RaylibGameCore.dir/src/Player.cpp.o	87018aa0080c6be9
+6585	8733	8079339222401710	_deps/raylib-build/raylib/libraylib.a	e9b26107348cd0b2
+281	2825	8079357578819640	CMakeFiles/RaylibGameCore.dir/src/MathUtils.cpp.o	461366afe5b531d5
+217	3344	8079357578202048	CMakeFiles/RaylibGameCore.dir/src/Collision.cpp.o	f9f33d9a4df9cac0
+224	3463	8079357578263641	CMakeFiles/RaylibGameCore.dir/src/DevConsole.cpp.o	59a30a3a6a4a3118
+272	3854	8079357578744842	CMakeFiles/RaylibGameCore.dir/src/Machine.cpp.o	47c473dc574b8cfa
+379	14360	8079339160332027	CMakeFiles/RaylibGame.dir/src/main.cpp.o	a72d98a3ce7d226
+196	3887	8079357577988136	CMakeFiles/RaylibGameCore.dir/src/Achievement.cpp.o	812cba3fd1e82ea6
+254	4043	8079357578572726	CMakeFiles/RaylibGameCore.dir/src/GuideObjects.cpp.o	c0db563b1f2d6557
+234	4152	8079357578379626	CMakeFiles/RaylibGameCore.dir/src/Fluid.cpp.o	a6bd93c55192988
+296	4413	8079357578985636	CMakeFiles/RaylibGameCore.dir/src/Render.cpp.o	89fcdce0440a5913
+264	4952	8079357578671415	CMakeFiles/RaylibGameCore.dir/src/Level.cpp.o	6151b4b9cf9af90d
+245	6937	8079357578471450	CMakeFiles/RaylibGameCore.dir/src/Game.cpp.o	bf1b2e7a79036921
+6937	7995	8079357645393131	libRaylibGameCore.a	c1669562a3c07663
+7995	34148	8079357655978909	RaylibGame/RaylibGame.html	5e0d6db29828ccf0
+143	186	8079365742655289	C:/Users/nanob/source/repos/Raylib_Game/build-web/CMakeFiles/cmake.verify_globs	9c0ba17f2881ef89
+229	35486	8079365743565523	RaylibGame/RaylibGame.html	83c892f64b3c5c91

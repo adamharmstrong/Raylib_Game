@@ -1,0 +1,135 @@
+# Gear Render Gallery
+# Two screen-sized galleries for auditing gears and reusable spring families.
+bounds 0 0 3200 900
+cameraZone 0 0 1600 900
+cameraZone 1600 0 1600 900
+playerStart 60 770
+
+solid 0 0 3200 32
+solid 0 32 32 788
+solid 1592 32 16 668
+solid 3184 32 16 788
+solid 0 820 3200 80
+
+labelSized 625 38 20 GEAR RENDER GALLERY
+labelSized 276 104 18 SPUR
+labelSized 458 104 18 LANTERN
+labelSized 654 104 18 RATCHET
+labelSized 868 104 18 ESCAPE
+labelSized 1075 104 18 BEVEL
+labelSized 1264 104 18 SECTOR
+labelSized 1473 104 18 COUNT
+
+labelSized 34 215 16 LARGE VERTICAL
+labelSized 34 445 16 LARGE HORIZONTAL
+labelSized 34 655 16 SMALL HORIZONTAL
+
+# All samples are mounted so the inspection grid remains fixed. Background
+# placement keeps every sample non-colliding while the player walks the gallery.
+layer background
+
+# Large face-on samples.
+gear spur mounted vertical 300 270 48 4.0 48 0 18 18 none
+gear lantern mounted vertical 500 270 48 4.0 12 10 -24 -24 none
+gear ratchet mounted vertical 700 270 48 4.0 36 20 18 18 none
+gear escape mounted vertical 900 270 48 4.0 30 30 -28 -28 none
+gear bevel mounted vertical 1100 270 48 4.0 32 40 22 22 none
+gear sector mounted vertical 1300 270 48 4.0 32 270 -20 -20 none
+gear count mounted vertical 1500 270 48 4.0 48 60 16 16 none
+
+# Large foreshortened samples.
+gear spur mounted horizontal 300 500 48 4.0 48 0 18 18 none
+gear lantern mounted horizontal 500 500 48 4.0 12 10 -24 -24 none
+gear ratchet mounted horizontal 700 500 48 4.0 36 20 18 18 none
+gear escape mounted horizontal 900 500 48 4.0 30 30 -28 -28 none
+gear bevel mounted horizontal 1100 500 48 4.0 32 40 22 22 none
+gear sector mounted horizontal 1300 500 48 4.0 32 270 -20 -20 none
+gear count mounted horizontal 1500 500 48 4.0 48 60 16 16 none
+
+# Small foreshortened samples expose pixel-scale ordering and silhouette issues.
+gear spur mounted horizontal 300 700 28 2.0 24 0 30 30 none
+gear lantern mounted horizontal 500 700 28 2.0 10 10 -38 -38 none
+gear ratchet mounted horizontal 700 700 28 2.0 24 20 30 30 none
+gear escape mounted horizontal 900 700 28 2.0 20 30 -44 -44 none
+gear bevel mounted horizontal 1100 700 28 2.0 20 40 36 36 none
+gear sector mounted horizontal 1300 700 28 2.0 20 270 -34 -34 none
+gear count mounted horizontal 1500 700 28 2.0 24 60 28 28 none
+
+layer middleground
+
+# Room 2: every spring object, aligned to a regular inspection grid. Each
+# spring has a small physics ball at its free endpoint so its behavior remains
+# active while the gallery is running.
+labelSized 2200 38 20 SPRING PHYSICS GALLERY
+
+labelSized 1738 126 12 SIMPLE
+labelSized 1974 126 12 COMPRESSION
+labelSized 2237 126 12 EXTENSION
+labelSized 2500 126 12 VOLUTE
+labelSized 2766 126 12 DISC
+labelSized 3021 126 12 WAVE
+spring 1715 190 1805 190 7 8.0 1.0
+ball 1805 190 11 0.8
+compressionSpring 1970 190 2060 190 7 8.0 1.0
+ball 2060 190 11 0.8
+extensionSpring 2225 190 2315 190 7 8.0 1.0
+ball 2315 190 11 0.8
+voluteSpring 2480 190 2570 190 7 14.0 1.0
+ball 2570 190 11 0.9
+discSpring 2735 190 2825 190 7 18.0 1.0
+ball 2825 190 11 0.9
+waveSpring 2990 190 3080 190 7 10.0 1.0
+ball 3080 190 11 0.8
+
+labelSized 1713 301 12 WAVE WASHER
+labelSized 1979 301 12 COMPOSITE
+labelSized 2241 301 12 TORSION
+labelSized 2501 301 12 GARTER
+labelSized 2755 301 12 SPIRAL
+labelSized 2988 301 12 CONSTANT FORCE
+waveWasher 1715 365 1805 365 7 7.0 1.0
+ball 1805 365 11 0.8
+compositeSpring 1970 365 2060 365 7 10.0 1.6
+ball 2060 365 11 0.8
+torsionSpring 2225 365 2315 365 7 10.0 1.8
+ball 2315 365 11 0.8
+garterSpring 2510 365 2540 365 7 9.0 1.0
+ball 2540 365 11 0.8
+spiralSpring 2735 365 2825 365 7 9.0 1.4
+ball 2825 365 11 0.8
+constantForceSpring 2990 365 3080 365 7 8.0 1.0
+ball 3080 365 11 0.8
+
+labelSized 1705 476 12 CONSTANT TORQUE
+labelSized 1998 476 12 LEAF
+labelSized 2253 476 12 BEAM
+labelSized 2483 476 12 TORSION BAR
+labelSized 2764 476 12 RING
+labelSized 3002 476 12 ELASTOMER
+constantTorqueSpring 1715 540 1805 540 7 8.0 1.2
+ball 1805 540 11 0.8
+leafSpring 1970 540 2060 540 7 12.0 2.0
+ball 2060 560 11 0.9
+beamSpring 2225 540 2315 540 7 10.0 1.7
+ball 2315 560 11 0.9
+torsionBar 2480 540 2570 540 7 15.0 2.2
+ball 2570 540 11 0.9
+ringSpring 2735 540 2825 540 7 13.0 4.2
+ball 2825 540 11 0.9
+elastomerSpring 2990 540 3080 540 7 9.0 4.8
+ball 3080 540 11 0.9
+
+labelSized 1968 651 12 PNEUMATIC
+labelSized 2256 651 12 GAS
+labelSized 2463 651 12 HYDROPNEUMATIC
+labelSized 2750 651 12 MAGNETIC
+pneumaticSpring 1970 715 2060 715 7 11.0 2.4
+ball 2060 715 11 0.9
+gasSpring 2225 715 2315 715 7 10.0 3.4
+ball 2315 715 11 0.9
+hydropneumaticSpring 2480 715 2570 715 7 14.0 5.2
+ball 2570 715 11 0.9
+magneticSpring 2735 715 2825 715 7 12.0 0.4
+ball 2825 715 11 0.8
+
+exit 3118 742 50 78

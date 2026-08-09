@@ -1,0 +1,205 @@
+# Compact two-floor facility for testing the complete reusable object catalog.
+# Three ladder shafts provide shortcuts around the dedicated hazard room.
+script power_pulley_panic
+bounds 0 0 3600 1800
+cameraZone 0 0 3600 900
+cameraZone 0 900 3600 900
+playerStart 80 1640
+
+# =============================================================================
+# BUILDING SHELL AND NAVIGATION
+# =============================================================================
+solid 0 0 3600 32
+solid 0 32 32 1768
+solid 3568 32 32 1768
+solid 0 1700 3600 100
+
+# Upper deck, split at the three ladder shafts.
+solid 32 850 808 24
+solid 900 850 840 24
+solid 1800 850 840 24
+solid 2700 850 868 24
+
+# Room dividers stop above each deck to leave generous doorways.
+solid 900 32 24 690
+solid 1800 32 24 690
+solid 2700 32 24 690
+solid 900 874 24 696
+solid 1800 874 24 696
+solid 2700 874 24 696
+
+ladder 850 800 40 900
+ladder 1750 800 40 900
+ladder 2650 800 40 900
+
+platform 780 790 60 14
+platform 900 790 60 14
+platform 1680 790 60 14
+platform 1800 790 60 14
+platform 2580 790 60 14
+platform 2700 790 60 14
+platform 780 1640 60 14
+platform 900 1640 60 14
+platform 1680 1640 60 14
+platform 1800 1640 60 14
+platform 2580 1640 60 14
+platform 2700 1640 60 14
+
+# =============================================================================
+# FLOOR 2A - RIGID BODIES AND TRAVERSAL
+# =============================================================================
+label 60 70 FLOOR 2A - BODIES AND TRAVERSAL
+ball 90 812 16 0.9
+barrel 145 782 32 44 1.8
+breakableCrate 205 784 42 42 1.2
+explosiveBarrel 270 780 34 46 2.0
+stoneBlock 340 778 48 48 3.0
+boulder 440 806 22 2.6
+physicsWheel 525 806 22 1.4
+gear 610 804 24 1.8
+flywheel 690 800 30 4.0 85
+steeringWheel 770 700 26 20
+ramp 760 790 180 16 -18
+
+checkpoint 70 742 28 58
+movingPlatform 100 620 100 16 1 0 180 1.4
+elevator 340 782 72 16 0 -1 220 1.1
+oneWayPlatform 520 620 130 12
+guideRail 650 780 130 10
+platform 80 690 150 16
+platform 300 560 150 16
+platform 520 680 150 16
+
+# =============================================================================
+# FLOOR 2B - FLEXIBLES AND ROTARY MACHINES
+# =============================================================================
+label 940 70 FLOOR 2B - JOINTS AND ROTARY MACHINES
+ceilingHook 980 170 12
+fixedJoint 1100 170 10
+barrel 1080 782 34 44 1.8
+breakableCrate 1260 784 42 42 1.3
+spring 980 280 1100 280 7
+rod 1160 280 1290 280 6
+chain 1370 190 1370 650 11 1 1 0
+physicsRope 960 430 1280 520 370 5 1 0
+
+crank 980 680 24 105
+ratchet 1060 680 24 90
+clutch 1140 680 24 100 1
+brake 1200 654 66 52 0.72
+cam 1320 680 25 95 9
+turntable 1420 690 34 70
+conveyorBelt 1510 806 170 18 65
+
+# =============================================================================
+# FLOOR 2C - POWER, SENSORS, AND PICKUPS
+# =============================================================================
+label 1840 70 FLOOR 2C - POWER AND SENSORS
+battery 1860 782 46 40 1.0 7
+electricMotor 1940 802 24 150 7
+limitSwitch 2010 786 42 32 7
+relay 2080 782 42 36 7
+fuse 2150 794 52 22 1.2 7
+magnet 2240 785 32 500 7
+piston 1860 570 54 18 1 0 90 1.8 7
+hydraulicCylinder 2040 570 64 20 1 0 85 1.2 7
+electricalArc 2220 430 2460 430 1.7 7
+speedSensor 2320 780 54 32 120 8
+beamSensor 2410 650 1 0 170 8
+battery 2480 782 44 38 1.0 8
+limitSwitch 2550 786 44 32 8
+collectible 2450 800 12
+key 2620 800 13
+oil 1840 824 130 26
+mud 1990 824 130 26
+button 2530 830 70 18
+ball 2300 808 16 1.0
+
+# =============================================================================
+# FLOOR 2D - FLUIDS AND FORCE GENERATORS
+# =============================================================================
+label 2740 70 FLOOR 2D - FLUIDS AND FORCES
+fan 2740 360 1 0 230 90 360 1.0
+pinwheel 3010 360 24
+rocketThruster 3100 330 1 0 180 70 260 7
+steamVent 3400 500 0 -1 170 70 280 1.8
+magnet 2780 790 32 480
+ball 2840 806 16 1.0
+
+# Four compact, isolated vats. Their 90-pixel rims sit below the player's
+# full-jump height, and each vat has its own bottom-to-rim ladder. The reduced
+# simulation bounds also keep the fluids lightweight while preserving their
+# distinct behavior.
+solid 2860 760 16 90
+solid 3030 760 16 90
+solid 3050 760 16 90
+solid 3220 760 16 90
+solid 3240 760 16 90
+solid 3410 760 16 90
+solid 3430 760 16 90
+solid 3552 760 16 90
+ladder 2882 720 44 130
+ladder 3072 720 44 130
+ladder 3262 720 44 130
+ladder 3452 720 44 130
+water 2876 760 154 70 6 0.56 1.0
+sand 3066 760 154 70 6 0.50 1.0
+gel 3256 760 154 70 12 0.44 0.9
+gas 3446 760 106 70 12 0.32 1.2
+
+# =============================================================================
+# FLOOR 1A - SAFE LOBBY AND AI
+# =============================================================================
+label 60 950 FLOOR 1A - SAFE LOBBY AND AI
+checkpoint 80 1630 28 58
+enemy 420 1430 32 38 390 570 70
+platform 100 1510 150 16
+platform 390 1470 180 16
+movingPlatform 620 1570 110 16 1 0 110 1.2
+elevator 760 1635 64 16 0 -1 180 1.0
+
+# =============================================================================
+# FLOOR 1B - DEDICATED HAZARD LAB
+# =============================================================================
+label 940 950 FLOOR 1B - HAZARD LAB
+pendulumBob 1020 1060 180 21 0 1.45
+swingingHammer 1260 1050 190 30 0.8 1.25
+crushingBlock 1480 1170 72 48 0 1 220 1.0
+sawBlade 1660 1450 26 0 1 120 1.45
+arrowTrap 1690 1630 -1 0 2.4 420
+breakableTile 980 1560 82 22 1.6
+breakableTile 1065 1560 82 22 1.6
+platform 970 1582 190 14
+platform 1430 1500 150 14
+
+# =============================================================================
+# FLOOR 1C - CLASSIC MACHINE PARTS
+# =============================================================================
+label 1840 950 FLOOR 1C - CLASSIC MACHINE PARTS
+pulley 1940 1110
+pulley 2190 1110
+weight 0 42 0.0 1.0 44 56
+weight 1 42 1.8 1.2 44 56
+rotaryLatch 2440 1240 38 60 270 8 115
+fan 1840 1500 1 0 290 110 410 1.0
+pinwheel 2170 1500 28
+screw 2370 1590 210 14 0 190
+trapDoor 2500 1680 130 16 0
+seeSaw 2260 1600 240 18 -20 20 7
+platform 1840 1620 180 16
+button 2540 1680 70 18
+
+# =============================================================================
+# FLOOR 1D - IMPACT, FLEXIBLES, AND PROJECTILES
+# =============================================================================
+label 2740 950 FLOOR 1D - IMPACT AND PROJECTILES
+ramp 2860 1610 250 18 -20
+seeSaw 3160 1600 250 18 -20 20 7
+boulder 2800 1510 28 3.2
+physicsWheel 3000 1560 26 1.8
+gear 3260 1540 28 2.0
+flywheel 3370 1535 34 4.2 70
+steeringWheel 3480 1450 28 0
+arrowTrap 3500 1590 -1 0 2.2 460
+breakableTile 3300 1668 80 30 2.0
+breakableTile 3380 1668 80 30 2.0
