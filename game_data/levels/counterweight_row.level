@@ -8,10 +8,11 @@ playerStart 78 140
 solid 0 0 1600 28
 solid 0 28 28 152
 
-# Start balcony and one continuous inclined ramp. The ramp's upper surface meets
-# both adjoining platforms within two pixels, so visual and physics edges agree.
+# Start balcony and one continuous inclined ramp. Its collision surface ends
+# exactly at the two platform corners. Do not overlap the landing: the ramp and
+# rectangular floor would otherwise compete for the player in the same frame.
 solid 0 180 370 32
-ramp 518 282 360 32 30
+ramp 516.966 283.837 358.469 32 30.1414
 platform 680 360 170 32
 
 # First descent: ramp landing to the firing-gallery floor.

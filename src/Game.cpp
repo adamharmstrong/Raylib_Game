@@ -2222,14 +2222,27 @@ namespace {
 
     bool ResolvePlayerRampStanding(
         Player& player,
+        float previousFootX,
         float previousFootY,
         const std::vector<Ramp>& ramps,
         float dt
     ) {
         if (player.velocity.y < 0.0f) return false;
 
+        // ResolveVertical runs immediately before this function. If it found a
+        // rectangular floor, keep that result instead of allowing an
+        // overlapping ramp to pull the player to a second, different surface
+        // in the same frame. Level 4 joins its slide directly to masonry at
+        // both ends, so deterministic floor precedence is especially
+        // important at those seams.
+        if (player.onGround) return false;
+
         const float footX = RectCenterX(player.rect);
         const float footY = player.rect.y + player.rect.height;
+        if (!std::isfinite(previousFootX) || !std::isfinite(previousFootY) ||
+            !std::isfinite(footX) || !std::isfinite(footY)) {
+            return false;
+        }
 
         for (const Ramp& ramp : ramps) {
             const float angle = ramp.angle * DEG2RAD;
@@ -2247,22 +2260,28 @@ namespace {
             if (footX < minimumX || footX > maximumX) continue;
 
             const float surfaceY = GetRampSurfaceY(ramp, footX);
-            const float slopeTravel =
-                fabsf(player.velocity.x * dt * tanf(angle));
+            const float previousSurfaceY = GetRampSurfaceY(ramp, previousFootX);
+            if (!std::isfinite(surfaceY) || !std::isfinite(previousSurfaceY)) continue;
+
+            const float surfaceTravel = fabsf(surfaceY - previousSurfaceY);
             const float downwardTravel =
                 fmaxf(0.0f, player.velocity.y * dt);
-            const float contactTolerance = std::clamp(
-                downwardTravel + slopeTravel + 4.0f,
-                6.0f,
-                36.0f
+            const float correction = surfaceY - footY;
+            const float correctionBudget = std::clamp(
+                downwardTravel + surfaceTravel + 3.0f,
+                5.0f,
+                32.0f
             );
 
-            // Only accept contact when the feet crossed (or closely followed)
-            // the top surface this frame. This prevents a corner or underside
-            // overlap from snapping the player a large distance onto the ramp.
-            if (previousFootY <= surfaceY + 4.0f &&
-                footY >= surfaceY - contactTolerance &&
-                footY <= surfaceY + contactTolerance) {
+            // Compare each foot position with the surface beneath that same X.
+            // Using the new surface for both frames turns normal slope travel
+            // into apparent penetration and can produce violent endpoint snaps.
+            // GetRampSurfaceY clamps to the nearest endpoint, so this also
+            // handles stepping onto the ramp cleanly from either platform.
+            const bool wasAboveSurface = previousFootY <= previousSurfaceY + 4.0f;
+            const bool reachedSurface = footY >= surfaceY - correctionBudget;
+            const bool correctionIsLocal = fabsf(correction) <= correctionBudget;
+            if (wasAboveSurface && reachedSurface && correctionIsLocal) {
                 player.rect.y = surfaceY - player.rect.height;
                 player.velocity.y = 0.0f;
                 player.onGround = true;
@@ -4666,6 +4685,8 @@ void Game::UpdatePlayer(Player& activePlayer, const PlayerControls& controls, fl
         std::vector<Rectangle> solids = BuildSolids(level);
         AppendFlexibleObjectColliders(solids, level);
 
+        const float previousFootX = RectCenterX(activePlayer.rect);
+        const float previousFootY = activePlayer.rect.y + activePlayer.rect.height;
         activePlayer.rect.x += activePlayer.velocity.x * dt;
         ResolveHorizontal(activePlayer, solids);
 
@@ -4797,7 +4818,6 @@ void Game::UpdatePlayer(Player& activePlayer, const PlayerControls& controls, fl
             }
         }
 
-        const float previousFootY = activePlayer.rect.y + activePlayer.rect.height;
         activePlayer.rect.y += activePlayer.velocity.y * dt;
         std::vector<Rectangle> playerSolids = solids;
         for (const StoneBlock& block : level.stoneBlocks) {
@@ -4828,7 +4848,7 @@ void Game::UpdatePlayer(Player& activePlayer, const PlayerControls& controls, fl
         ResolveVertical(activePlayer, playerSolids);
         ApplyScrewConveyor(activePlayer.rect, activePlayer.velocity, 1.0f,
             WorldLayer::Middleground, level.screws, dt);
-        ResolvePlayerRampStanding(activePlayer, previousFootY, level.ramps, dt);
+        ResolvePlayerRampStanding(activePlayer, previousFootX, previousFootY, level.ramps, dt);
         ResolveTrapDoorStanding(activePlayer.rect, activePlayer.velocity, activePlayer.onGround, level.trapDoors);
         ResolveSeeSawStanding(activePlayer.rect, activePlayer.velocity, activePlayer.onGround, level.seeSaws);
     }
@@ -8026,6 +8046,15 @@ void Game::DrawGameplay() {
         DrawWaterPit(level.waterPit);
     }
 
+    // Fixed ramps sit beneath adjoining masonry. Drawing them first lets the
+    // platform tiles cap their angled ends instead of exposing corner wedges.
+    // Portal Lift keeps its arrival ramp above its scripted blackout layer.
+    if (level.script != LevelScript::PortalLift) {
+        for (const Ramp& ramp : level.ramps) {
+            DrawRamp(ramp);
+        }
+    }
+
     // Collision-authored platforms retain exact dimensions and cropped end
     // caps. Dynamic platforms and rails must remain visible in levels whose
     // static room architecture is authored with explicit visual tiles.
@@ -8131,8 +8160,10 @@ void Game::DrawGameplay() {
         DrawArrowTrap(trap);
     }
 
-    for (const Ramp& ramp : level.ramps) {
-        DrawRamp(ramp);
+    if (level.script == LevelScript::PortalLift) {
+        for (const Ramp& ramp : level.ramps) {
+            DrawRamp(ramp);
+        }
     }
 
     for (const TrapDoor& trapDoor : level.trapDoors) {

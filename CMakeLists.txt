@@ -81,6 +81,12 @@ if (BUILD_TESTING AND NOT "${PLATFORM}" STREQUAL "Web")
     target_compile_definitions(PortalLiftLevelTests PRIVATE
         PORTAL_LIFT_LEVEL_PATH="${CMAKE_SOURCE_DIR}/game_data/levels/wendis_level_2.level")
     add_test(NAME portal_lift_level COMMAND PortalLiftLevelTests)
+
+    add_executable(CounterweightRowLevelTests tests/CounterweightRowLevelTests.cpp)
+    target_link_libraries(CounterweightRowLevelTests PRIVATE RaylibGameCore)
+    target_compile_definitions(CounterweightRowLevelTests PRIVATE
+        COUNTERWEIGHT_ROW_LEVEL_PATH="${CMAKE_SOURCE_DIR}/game_data/levels/counterweight_row.level")
+    add_test(NAME counterweight_row_level COMMAND CounterweightRowLevelTests)
 endif()
 
 # Marking these files as link dependencies makes the existing post-build copy
