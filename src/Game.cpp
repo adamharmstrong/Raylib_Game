@@ -1605,7 +1605,8 @@ namespace {
     }
 
     bool HasFloodWaterControl(const Level& level) {
-        return HasValveFluidFill(level) || HasWaterPit(level);
+        return level.script == LevelScript::FloodedFoundry &&
+            (HasValveFluidFill(level) || HasWaterPit(level));
     }
 
     float GetFloodWaterProgress(const Level& level) {
@@ -3382,6 +3383,7 @@ void Game::Load() {
     chainLinksTexture = LoadTexture("assets/first_party/machines/chain_links.png");
     // Placeholder only: swap this before final enemy art lock.
     enemyPlaceholderTexture = LoadTexture("assets/third_party/AtomicRealm/[FREE] Industrial Tileset/raw/FREE/6. Character Animations 32p/Anim_Robot_Walk1_v1.1_spritesheet.png");
+    gasMaskTexture = LoadTexture("assets/first_party/items/gasmask.png");
 
     if (playerSpritesTexture.id > 0) SetTextureFilter(playerSpritesTexture, TEXTURE_FILTER_POINT);
     if (playerFourSpritesTexture.id > 0) SetTextureFilter(playerFourSpritesTexture, TEXTURE_FILTER_POINT);
@@ -3391,6 +3393,7 @@ void Game::Load() {
     if (industrialFarBackground.id > 0) SetTextureFilter(industrialFarBackground, TEXTURE_FILTER_POINT);
     if (chainLinksTexture.id > 0) SetTextureFilter(chainLinksTexture, TEXTURE_FILTER_POINT);
     if (enemyPlaceholderTexture.id > 0) SetTextureFilter(enemyPlaceholderTexture, TEXTURE_FILTER_POINT);
+    if (gasMaskTexture.id > 0) SetTextureFilter(gasMaskTexture, TEXTURE_FILTER_POINT);
     SetTextureFilter(GetFontDefault().texture, TEXTURE_FILTER_POINT);
 
     achievements.Initialize("game_data/achievements.txt", "save/achievements.dat");
@@ -3546,6 +3549,8 @@ void Game::Reset() {
     toxinExposure = {};
     playerAir = {1.0f, 1.0f, 1.0f, 1.0f};
     playerAirWarningPhase = {};
+    playerGasMasks = {};
+    playerEnemyDamageGraceTimers = {};
     toxinEmissionAccumulator = 0.0f;
     toxinExhaustAccumulator = 0.0f;
     toxinLevelTimer = 0.0f;
@@ -3584,6 +3589,7 @@ void Game::InitializeOverworld() {
 
         {"wendis_level_1", "W1", "Wendi's Three-Step Tumble", {545.0f, 465.0f}, 1, true, false},
         {"wendis_level_2", "W2", "Portal Lift", {960.0f, 385.0f}, 1, true, false},
+        {"wendis_level_3", "W3", "Rising Water Escape", {1250.0f, 520.0f}, 1, true, false},
 
         {"test_level", "T", "Test Level", {285.0f, 405.0f}, 2, true, false},
         {"massive_test_level", "M", "Massive Object Test Facility", {500.0f, 515.0f}, 2, true, false},
@@ -3600,11 +3606,12 @@ void Game::InitializeOverworld() {
         {3, 4},
         {4, 5},
         {6, 7},
-        {8, 9},
+        {7, 8},
         {9, 10},
         {10, 11},
         {11, 12},
-        {0, 13}
+        {12, 13},
+        {0, 14}
     };
 
     selectedOverworldNode = 0;
@@ -5141,6 +5148,11 @@ void Game::UpdateNeurotoxin(
         };
         for (int index = 0; index < 4; ++index) {
             if (players[index] == nullptr) continue;
+            if (playerGasMasks[index]) {
+                toxinExposure[index] = fmaxf(0.0f, toxinExposure[index] - 0.30f * dt);
+                playerAir[index] = 1.0f;
+                continue;
+            }
             const float density = SampleFluidAroundRectangle(level, FluidType::Gas, players[index]->rect).density;
             if (density >= 0.025f) {
                 const float doseScale = 0.25f + density * 1.85f;
@@ -5178,6 +5190,7 @@ void Game::UpdatePlayerAir(float dt) {
     };
 
     for (int index = 0; index < 4; ++index) {
+        playerEnemyDamageGraceTimers[index] = fmaxf(0.0f, playerEnemyDamageGraceTimers[index] - dt);
         Player* activePlayer = players[index];
         if (activePlayer == nullptr) {
             playerAirWarningPhase[index] = 0.0f;
@@ -5186,6 +5199,7 @@ void Game::UpdatePlayerAir(float dt) {
 
         const bool toxinHazard =
             level.script == LevelScript::NeurotoxinMaze &&
+            !playerGasMasks[index] &&
             SampleFluidAroundRectangle(level, FluidType::Gas, activePlayer->rect).density >= 0.025f;
         const bool underwaterHazard =
             level.script != LevelScript::NeurotoxinMaze &&
@@ -5544,6 +5558,53 @@ void Game::UpdateMachines(
             level.buttonExitLink.activated = true;
         }
         machinePower = chamberLightPowered ? 1.0f : 0.0f;
+        if (HasArea(level.exitTrigger)) {
+            const float targetGateBottom = level.buttonExitLink.activated
+                ? level.exitTrigger.y
+                : level.exitTrigger.y + level.exitTrigger.height;
+            gateBottom = MoveTowardsFloat(gateBottom, targetGateBottom, 190.0f * dt);
+        }
+        return;
+    }
+
+    if (level.script == LevelScript::WaterEscape) {
+        // The ruptured pipe at the base of the chamber runs continuously. The
+        // shared fluid-fill settings define how quickly its water column rises.
+        if (!won && !lost) {
+            for (ButtonTrapDoorLink& link : level.buttonTrapDoorLinks) {
+                if (link.buttonIndex >= 0 && link.buttonIndex < static_cast<int>(level.buttons.size()) &&
+                    level.buttons[link.buttonIndex].pressed) {
+                    link.activated = true;
+                }
+                if (link.activated && link.trapDoorIndex >= 0 &&
+                    link.trapDoorIndex < static_cast<int>(level.trapDoors.size())) {
+                    TrapDoor& door = level.trapDoors[link.trapDoorIndex];
+                    door.angle = MoveTowardsFloat(door.angle, link.openAngle, link.speed * dt);
+                }
+            }
+
+            if (level.buttonExitLink.buttonIndex >= 0 &&
+                level.buttonExitLink.buttonIndex < static_cast<int>(level.buttons.size()) &&
+                level.buttons[level.buttonExitLink.buttonIndex].pressed) {
+                level.buttonExitLink.activated = true;
+            }
+
+            FluidField* flood = GetValveFluid(level);
+            if (HasValveFluidFill(level) && flood != nullptr && flood->cellSize > 0.0f) {
+                const float targetMass = GetValveFluidTargetMass(level, *flood);
+                const float remainingMass = fmaxf(0.0f, targetMass - GetFluidMass(*flood));
+                const float massPerVerticalPixel = static_cast<float>(flood->gridColumns) / flood->cellSize;
+                // Each deployed wooden door buffers the leak's pressure, but
+                // its floor gap still lets a meaningful amount of water pass.
+                float leakRate = level.valveFluidFill.riseRate;
+                for (const ButtonTrapDoorLink& link : level.buttonTrapDoorLinks) {
+                    if (link.activated) leakRate *= 0.72f;
+                }
+                AddCellularFluidMass(*flood, fminf(leakRate * massPerVerticalPixel * dt, remainingMass));
+            }
+        }
+
+        machinePower = HasValveFluidFill(level) ? GetValveFluidFillProgress(level) : 0.0f;
         if (HasArea(level.exitTrigger)) {
             const float targetGateBottom = level.buttonExitLink.activated
                 ? level.exitTrigger.y
@@ -6148,6 +6209,22 @@ void Game::UpdatePhysicsObjects(float dt) {
         threePlayerEnabled && player3Alive ? &player3 : nullptr,
         fourPlayerEnabled && player4Alive ? &player4 : nullptr
     };
+    for (GuideObject& object : level.guideObjects) {
+        if (object.type != GuideObjectType::GasMask || object.collected) continue;
+
+        const Rectangle maskBounds = GetGuideObjectBounds(object);
+        for (int playerIndex = 0; playerIndex < static_cast<int>(guidePlayers.size()); ++playerIndex) {
+            Player* activePlayer = guidePlayers[playerIndex];
+            if (activePlayer == nullptr || !CheckCollisionRecs(activePlayer->rect, maskBounds)) continue;
+
+            object.collected = true;
+            playerGasMasks[playerIndex] = true;
+            playerAir[playerIndex] = 1.0f;
+            playerAirWarningPhase[playerIndex] = 0.0f;
+            toxinExposure[playerIndex] = 0.0f;
+            break;
+        }
+    }
     Vector2 previousCheckpoint = checkpointRespawn;
     UpdateGuideObjects(level.guideObjects, guidePlayers, guideWorldSolids,
         Constants::Gravity, dt, checkpointRespawn);
@@ -6442,6 +6519,8 @@ void Game::KillPlayer(const Player& defeatedPlayer) {
     if (&defeatedPlayer == &player2) defeatedPlayerIndex = 1;
     else if (&defeatedPlayer == &player3) defeatedPlayerIndex = 2;
     else if (&defeatedPlayer == &player4) defeatedPlayerIndex = 3;
+    playerGasMasks[defeatedPlayerIndex] = false;
+    playerEnemyDamageGraceTimers[defeatedPlayerIndex] = 0.0f;
     const PlayerControllerSettings& controller = controllerSettings[defeatedPlayerIndex];
     const int gamepad = AvailableGamepad(controller);
     if (controller.vibration && gamepad >= 0) {
@@ -6509,14 +6588,14 @@ void Game::CheckFailureConditions() {
     if (won || lost) return;
     if (respawnGraceTimer > 0.0f) return;
 
-    const Player* players[] = {
+    Player* players[] = {
         playerAlive ? &player : nullptr,
         multiplayerEnabled && player2Alive ? &player2 : nullptr,
         threePlayerEnabled && player3Alive ? &player3 : nullptr,
         fourPlayerEnabled && player4Alive ? &player4 : nullptr
     };
     for (int playerIndex = 0; playerIndex < 4; ++playerIndex) {
-        const Player* activePlayer = players[playerIndex];
+        Player* activePlayer = players[playerIndex];
         if (activePlayer == nullptr) continue;
 
         const bool toxinSuffocation =
@@ -6570,6 +6649,19 @@ void Game::CheckFailureConditions() {
 
         for (const Enemy& enemy : level.enemies) {
             if (CheckCollisionRecs(activePlayer->rect, enemy.rect)) {
+                if (playerGasMasks[playerIndex]) {
+                    playerGasMasks[playerIndex] = false;
+                    playerAir[playerIndex] = 1.0f;
+                    playerAirWarningPhase[playerIndex] = 0.0f;
+                    toxinExposure[playerIndex] = 0.0f;
+                    playerEnemyDamageGraceTimers[playerIndex] = 0.85f;
+                    const float playerCenter = activePlayer->rect.x + activePlayer->rect.width * 0.5f;
+                    const float enemyCenter = enemy.rect.x + enemy.rect.width * 0.5f;
+                    activePlayer->velocity.x = playerCenter < enemyCenter ? -260.0f : 260.0f;
+                    activePlayer->velocity.y = -220.0f;
+                    return;
+                }
+                if (playerEnemyDamageGraceTimers[playerIndex] > 0.0f) continue;
                 KillPlayer(*activePlayer);
                 return;
             }
@@ -7538,6 +7630,38 @@ void Game::DrawNeurotoxinInfrastructure() {
     DrawValveBody(level.valve, playerNear);
 }
 
+void Game::DrawGasMaskPickup(const GuideObject& gasMask) const {
+    if (gasMask.collected || gasMaskTexture.id <= 0) return;
+
+    const float bob = sinf(static_cast<float>(GetTime()) * 3.0f + gasMask.transform.position.x * 0.03f) * 2.0f;
+    const float width = 30.0f;
+    const float height = width * static_cast<float>(gasMaskTexture.height) / gasMaskTexture.width;
+    DrawCircleV({gasMask.transform.position.x, gasMask.transform.position.y + bob}, 17.0f, Fade(LIME, 0.15f));
+    DrawTexturePro(
+        gasMaskTexture,
+        {0.0f, 0.0f, static_cast<float>(gasMaskTexture.width), static_cast<float>(gasMaskTexture.height)},
+        {gasMask.transform.position.x - width * 0.5f, gasMask.transform.position.y - height * 0.5f + bob, width, height},
+        {0.0f, 0.0f},
+        0.0f,
+        WHITE
+    );
+}
+
+void Game::DrawEquippedGasMask(const Player& activePlayer) const {
+    if (gasMaskTexture.id <= 0) return;
+
+    constexpr float width = 20.0f;
+    const float height = width * static_cast<float>(gasMaskTexture.height) / gasMaskTexture.width;
+    DrawTexturePro(
+        gasMaskTexture,
+        {0.0f, 0.0f, static_cast<float>(gasMaskTexture.width), static_cast<float>(gasMaskTexture.height)},
+        {activePlayer.rect.x + (activePlayer.rect.width - width) * 0.5f, activePlayer.rect.y + 5.0f, width, height},
+        {0.0f, 0.0f},
+        0.0f,
+        WHITE
+    );
+}
+
 void Game::DrawNeurotoxinLevel() {
     const bool active = !level.valve.opened;
 
@@ -7826,7 +7950,10 @@ void Game::DrawGameplay() {
         DrawClocktowerMovementFrame(level);
     }
     for (const GuideObject& object : level.guideObjects) {
-        if (object.layer == WorldLayer::Background) DrawGuideObject(object);
+        if (object.layer == WorldLayer::Background) {
+            if (object.type == GuideObjectType::GasMask) DrawGasMaskPickup(object);
+            else DrawGuideObject(object);
+        }
     }
     for (const StoneBlock& block : level.stoneBlocks) {
         if (block.layer == WorldLayer::Background) DrawStoneBlock(block);
@@ -7889,6 +8016,19 @@ void Game::DrawGameplay() {
                     static_cast<int>(promptY), 19, RAYWHITE);
             }
         }
+    }
+
+    if (level.script == LevelScript::WaterEscape) {
+        // The broken pipe is deliberately visible; it establishes the source
+        // of the flood before the player starts climbing.
+        const Rectangle pipeBody{1360.0f, 796.0f, 132.0f, 46.0f};
+        DrawRectangleRec(pipeBody, Color{69, 82, 89, 255});
+        DrawRectangleLinesEx(pipeBody, 4.0f, Color{25, 31, 35, 255});
+        DrawCircle(1360, 819, 34.0f, Color{83, 96, 102, 255});
+        DrawCircleLines(1360, 819, 34.0f, Color{25, 31, 35, 255});
+        DrawCircle(1360, 819, 20.0f, Color{19, 28, 33, 255});
+        DrawCircle(1345, 832, 7.0f, SKYBLUE);
+        DrawCircle(1328, 844, 5.0f, Fade(SKYBLUE, 0.82f));
     }
 
     for (const LevelLabel& label : level.labels) {
@@ -8135,7 +8275,10 @@ void Game::DrawGameplay() {
     }
 
     for (const GuideObject& object : level.guideObjects) {
-        if (object.layer == WorldLayer::Middleground) DrawGuideObject(object);
+        if (object.layer == WorldLayer::Middleground) {
+            if (object.type == GuideObjectType::GasMask) DrawGasMaskPickup(object);
+            else DrawGuideObject(object);
+        }
     }
 
     for (const Button& button : level.buttons) {
@@ -8274,6 +8417,7 @@ void Game::DrawGameplay() {
     const auto getAirWarningTint = [&](const Player& activePlayer, int playerIndex) {
         const bool toxinHazard =
             level.script == LevelScript::NeurotoxinMaze &&
+            !playerGasMasks[playerIndex] &&
             SampleFluidAroundRectangle(level, FluidType::Gas, activePlayer.rect).density >= 0.025f;
         const bool underwaterHazard =
             level.script != LevelScript::NeurotoxinMaze &&
@@ -8339,15 +8483,30 @@ void Game::DrawGameplay() {
         }
     };
 
-    if (playerAlive) drawActivePlayer(player, 0, 0.0f);
-    if (multiplayerEnabled && player2Alive) drawActivePlayer(player2, 1, 0.65f);
-    if (threePlayerEnabled && player3Alive) drawActivePlayer(player3, 2, 1.30f);
-    if (fourPlayerEnabled && player4Alive) drawActivePlayer(player4, 3, 1.95f);
+    if (playerAlive) {
+        drawActivePlayer(player, 0, 0.0f);
+        if (playerGasMasks[0]) DrawEquippedGasMask(player);
+    }
+    if (multiplayerEnabled && player2Alive) {
+        drawActivePlayer(player2, 1, 0.65f);
+        if (playerGasMasks[1]) DrawEquippedGasMask(player2);
+    }
+    if (threePlayerEnabled && player3Alive) {
+        drawActivePlayer(player3, 2, 1.30f);
+        if (playerGasMasks[2]) DrawEquippedGasMask(player3);
+    }
+    if (fourPlayerEnabled && player4Alive) {
+        drawActivePlayer(player4, 3, 1.95f);
+        if (playerGasMasks[3]) DrawEquippedGasMask(player4);
+    }
 
     // Foreground physics can obscure the player for depth, while remaining on its
     // own non-player collision plane.
     for (const GuideObject& object : level.guideObjects) {
-        if (object.layer == WorldLayer::Foreground) DrawGuideObject(object);
+        if (object.layer == WorldLayer::Foreground) {
+            if (object.type == GuideObjectType::GasMask) DrawGasMaskPickup(object);
+            else DrawGuideObject(object);
+        }
     }
     for (const StoneBlock& block : level.stoneBlocks) {
         if (block.layer == WorldLayer::Foreground) DrawStoneBlock(block);
@@ -8458,6 +8617,14 @@ void Game::DrawGameplay() {
         DrawText(objective, 34, 58, 20, stage == 3 ? GREEN : ORANGE);
     }
 
+    if (level.script == LevelScript::WaterEscape) {
+        const float waterPercent = HasValveFluidFill(level) ? GetValveFluidFillProgress(level) * 100.0f : 0.0f;
+        DrawRectangle(20, 20, 510, 66, Fade(BLACK, 0.52f));
+        DrawText(TextFormat("Rising Water: %.0f%%", waterPercent), 34, 31, 20, RAYWHITE);
+        DrawText(level.buttonExitLink.activated ? "Exit gate open - get out!" : "Climb above the leak and unlock the exit", 34, 58, 20,
+            level.buttonExitLink.activated ? GREEN : ORANGE);
+    }
+
     if (level.script == LevelScript::ClocktowerCore) {
         const int clockHandCount = CountClockHandGears(level);
         const int lockedHandCount = CountLockedClockHands(level);
@@ -8539,6 +8706,7 @@ void Game::Unload() {
     UnloadTexture(industrialFarBackground);
     UnloadTexture(chainLinksTexture);
     UnloadTexture(enemyPlaceholderTexture);
+    UnloadTexture(gasMaskTexture);
     if (titleMusicLoaded) {
         StopMusicStream(titleMusic);
         UnloadMusicStream(titleMusic);

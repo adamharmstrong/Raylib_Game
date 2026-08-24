@@ -77,6 +77,9 @@ namespace {
         if (value == "portal_lift") {
             return LevelScript::PortalLift;
         }
+        if (value == "water_escape") {
+            return LevelScript::WaterEscape;
+        }
         if (value == "neurotoxin_maze") {
             return LevelScript::NeurotoxinMaze;
         }

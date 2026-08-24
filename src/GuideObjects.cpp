@@ -705,8 +705,9 @@ bool ParseGuideObject(const std::string& command, std::istringstream& stream, Gu
         ConfigureRectangle(object, x, y, width, height, BodyType::Static);
         object.collider.isTrigger = true;
     }
-    else if (command == "collectible" || command == "key") {
-        object.type = command == "collectible" ? GuideObjectType::Collectible : GuideObjectType::Key;
+    else if (command == "collectible" || command == "key" || command == "gasMask") {
+        object.type = command == "collectible" ? GuideObjectType::Collectible :
+            (command == "key" ? GuideObjectType::Key : GuideObjectType::GasMask);
         stream >> x >> y >> object.collider.radius;
         ConfigureCircle(object, x, y, object.collider.radius, BodyType::Static);
         object.collider.isTrigger = true;
@@ -1121,7 +1122,8 @@ void UpdateGuideObjects(
                 source.triggered = true;
                 checkpoint = {sourceBounds.x + sourceBounds.width * 0.5f - playerRect.width * 0.5f, sourceBounds.y - playerRect.height};
             }
-            if ((source.type == GuideObjectType::Collectible || source.type == GuideObjectType::Key) &&
+            if ((source.type == GuideObjectType::Collectible || source.type == GuideObjectType::Key ||
+                 source.type == GuideObjectType::GasMask) &&
                 !source.collected && CheckCollisionRecs(playerRect, sourceBounds)) {
                 source.collected = true;
             }
@@ -1229,6 +1231,7 @@ const char* GetGuideObjectName(GuideObjectType type) {
         case GuideObjectType::Checkpoint: return "Checkpoint";
         case GuideObjectType::Collectible: return "Collectible";
         case GuideObjectType::Key: return "Key";
+        case GuideObjectType::GasMask: return "Gas Mask";
         case GuideObjectType::BreakableCrate: return "Breakable Crate";
         case GuideObjectType::ExplosiveBarrel: return "Explosive Barrel";
     }
@@ -1299,6 +1302,7 @@ const char* GetGuideObjectDescription(GuideObjectType type) {
         case GuideObjectType::Checkpoint: return "Updates the player respawn point when touched.";
         case GuideObjectType::Collectible: return "A pickup that disappears when collected.";
         case GuideObjectType::Key: return "A collectible key intended to unlock a matching mechanism.";
+        case GuideObjectType::GasMask: return "Protects the wearer from toxic gas until enemy contact knocks it off.";
         case GuideObjectType::BreakableCrate: return "A movable wooden crate that breaks after a sufficiently hard impact.";
         case GuideObjectType::ExplosiveBarrel: return "A movable hazard that explodes after a sufficiently hard impact.";
     }
@@ -1959,6 +1963,11 @@ void DrawGuideObject(const GuideObject& object) {
             DrawCircleLinesV(center, object.collider.radius * 0.48f, GOLD);
             DrawLineEx({center.x + object.collider.radius * 0.45f, center.y}, {center.x + object.collider.radius * 1.35f, center.y}, 5.0f, GOLD);
             DrawLineEx({center.x + object.collider.radius, center.y}, {center.x + object.collider.radius, center.y + object.collider.radius * 0.55f}, 4.0f, GOLD);
+            break;
+        case GuideObjectType::GasMask:
+            DrawCircleV(center, object.collider.radius, Color{93, 117, 92, 255});
+            DrawCircleV({center.x - object.collider.radius * 0.42f, center.y}, object.collider.radius * 0.32f, Color{31, 40, 34, 255});
+            DrawCircleV({center.x + object.collider.radius * 0.42f, center.y}, object.collider.radius * 0.32f, Color{31, 40, 34, 255});
             break;
     }
 }

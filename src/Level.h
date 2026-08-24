@@ -15,6 +15,7 @@ enum class LevelScript {
     CounterweightRow,
     ButtonSequence,
     PortalLift,
+    WaterEscape,
     NeurotoxinMaze,
     ClocktowerCore,
     TilesetReference

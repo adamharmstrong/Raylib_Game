@@ -152,6 +152,7 @@ enum class GuideObjectType {
     Checkpoint,
     Collectible,
     Key,
+    GasMask,
     BreakableCrate,
     ExplosiveBarrel
 };

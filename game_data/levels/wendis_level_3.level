@@ -1,0 +1,60 @@
+# Wendi's Level 3: Rising Water Escape
+# A ruptured pipe in the lowest chamber steadily floods the tower. Climb the
+# zig-zag route, use both swing-door buttons to buy a little time, then trigger
+# the top exit switch before the water catches the player.
+script water_escape
+bounds 0 0 1600 900
+playerStart 1330 782
+
+# The continuous leaking pipe fills this whole connected tower from the bottom.
+# At 22 vertical pixels per second, it takes roughly half a minute to reach the
+# upper escape floor, leaving room for one recovery attempt without stalling.
+water 32 28 1536 822 6 0.04 1
+valveFluidFill 0 0.96 22
+
+# Tower shell.
+solid 0 0 1600 28
+solid 0 28 32 872
+solid 1568 28 32 872
+solid 32 850 1536 50
+
+# Bottom course: start at the leak, cross left, and climb the first ladder.
+platform 760 750 760 30
+ladder 790 600 48 150
+platform 300 600 920 30
+enemy 960 560 34 40 820 1130 72
+directionalSpikeHazard up 540 574 105 26
+labelSized 1240 798 20 RUPTURED PIPE
+
+# The first button swings a wooden door down. It is a temporary flood brake,
+# with a deliberate gap at its hinged end.
+button 1080 584 76 16
+trapDoor 1020 600 170 24 0
+buttonTrapDoor 0 0 76 150
+chain 1118 580 1105 526 16 0.68 1 1
+
+# Middle course: run right, dodge the acid channel, then climb again.
+ladder 1130 450 48 150
+platform 530 450 830 30
+directionalSpikeHazard up 780 424 116 26
+enemy 620 410 34 40 575 760 66
+labelSized 796 405 18 ACID CHANNEL
+
+# The second door creates the final delay before the upper escape floor.
+button 900 434 76 16
+trapDoor 820 450 170 24 0
+buttonTrapDoor 1 1 76 150
+chain 938 430 905 376 16 0.68 1 1
+
+# Upper course and exit control. The player must cross back left after latching
+# the exit switch, then run through the raised gate.
+ladder 660 300 48 150
+platform 220 300 980 30
+enemy 980 260 34 40 880 1120 72
+platform 32 150 700 30
+ladder 650 150 48 150
+button 450 284 76 16
+buttonExit 2
+exit 88 30 96 120
+labelSized 385 245 20 EXIT RELEASE
+labelSized 95 108 24 EXIT

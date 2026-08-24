@@ -80,6 +80,15 @@ int main() {
         std::cerr << "Neurotoxin Annex did not load its five security robots.\n";
         return 1;
     }
+    const auto gasMask = std::find_if(
+        annex.guideObjects.begin(),
+        annex.guideObjects.end(),
+        [](const GuideObject& object) { return object.type == GuideObjectType::GasMask; }
+    );
+    if (gasMask == annex.guideObjects.end() || gasMask->collected || gasMask->collider.radius < 10.0f) {
+        std::cerr << "Neurotoxin Annex did not load its collectible gas mask.\n";
+        return 1;
+    }
     for (const Enemy& enemy : annex.enemies) {
         const float enemyBottom = enemy.rect.y + enemy.rect.height;
         const bool supported = std::any_of(

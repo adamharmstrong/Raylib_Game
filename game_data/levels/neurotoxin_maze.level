@@ -57,6 +57,10 @@ enemy 1320 610 34 40 1260 1410 58
 enemy 1080 410 34 40 1025 1210 62
 enemy 720 210 34 40 680 860 55
 
+# A reusable safety mask: it makes the gas traversable, but enemy contact
+# knocks it off and consumes the protection.
+gasMask 520 220 14
+
 # The sealed exit is deliberately next to the leak and starting position. The
 # player sees the goal immediately, then has to traverse the whole annex.
 # The eight-pixel frame fits exactly between the tier underside at y=682 and

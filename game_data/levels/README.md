@@ -110,7 +110,7 @@ Additional physics-guide records:
 - `speedSensor <x> <y> <width> <height> <minimumSpeed> <powerChannel>`
 - `beamSensor <x> <y> <dirX> <dirY> <length> <powerChannel>`
 - `checkpoint <x> <y> <width> <height>`
-- `collectible|key <centerX> <centerY> <radius>`
+- `collectible|key|gasMask <centerX> <centerY> <radius>`
 
 Objects on power channel `0` operate independently. Batteries, generators, and
 active sensors energize matching nonzero channels. Generator output scales with

@@ -175,6 +175,8 @@ private:
     void DrawQuitConfirmation();
     void DrawNeurotoxinInfrastructure();
     void DrawNeurotoxinLevel();
+    void DrawGasMaskPickup(const GuideObject& gasMask) const;
+    void DrawEquippedGasMask(const Player& activePlayer) const;
     void DrawDebugCollision() const;
 
     GameMode mode{GameMode::Title};
@@ -193,6 +195,7 @@ private:
     Texture2D industrialFarBackground{};
     Texture2D chainLinksTexture{};
     Texture2D enemyPlaceholderTexture{};
+    Texture2D gasMaskTexture{};
     RenderTexture2D sceneTarget{};
     Music titleMusic{};
     Music levelSelectMusic{};
@@ -315,6 +318,8 @@ private:
     std::array<float, 4> toxinExposure{};
     std::array<float, 4> playerAir{1.0f, 1.0f, 1.0f, 1.0f};
     std::array<float, 4> playerAirWarningPhase{};
+    std::array<bool, 4> playerGasMasks{};
+    std::array<float, 4> playerEnemyDamageGraceTimers{};
     float toxinEmissionAccumulator{0.0f};
     float toxinExhaustAccumulator{0.0f};
     float toxinLevelTimer{0.0f};
