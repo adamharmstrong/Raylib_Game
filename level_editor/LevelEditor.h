@@ -35,7 +35,7 @@ private:
     std::filesystem::path levelDirectory;
     std::filesystem::path currentLevelPath;
     std::vector<std::filesystem::path> levelFiles;
-    std::string statusText{"Drop a .level file here or choose one from the list."};
+    std::string statusText{"Drop a .level file here or choose one from the list."}; 
     int fileScroll{0};
     bool ownsUiFont{false};
 };
