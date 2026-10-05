@@ -720,6 +720,29 @@ bool ParseGuideObject(const std::string& command, std::istringstream& stream, Gu
     return true;
 }
 
+bool IsGuideAttachmentConstraint(GuideObjectType type) {
+    return IsSpringConstraintType(type) || type == GuideObjectType::Rod || type == GuideObjectType::FixedJoint;
+}
+
+int FindGuideAttachmentTarget(const std::vector<GuideObject>& objects, int constraintIndex) {
+    if (constraintIndex < 0 || constraintIndex >= static_cast<int>(objects.size())) return -1;
+    const GuideObject& constraint = objects[constraintIndex];
+    if (!IsGuideAttachmentConstraint(constraint.type)) return -1;
+    const Vector2 attachment = constraint.type == GuideObjectType::FixedJoint
+        ? constraint.transform.position : constraint.constraint.anchorB;
+    float closestDistanceSq = 42.0f * 42.0f;
+    int target = -1;
+    for (int index = 0; index < static_cast<int>(objects.size()); ++index) {
+        const GuideObject& body = objects[index];
+        if (body.layer != constraint.layer || !IsDynamicObject(body.type) || body.broken) continue;
+        const Vector2 center = Center(GetGuideObjectBounds(body));
+        const float dx = center.x - attachment.x, dy = center.y - attachment.y;
+        const float distanceSq = dx * dx + dy * dy;
+        if (distanceSq <= closestDistanceSq) { closestDistanceSq = distanceSq; target = index; }
+    }
+    return target;
+}
+
 void InitializeGuideObject(GuideObject& object) {
     object.body.mass = fmaxf(0.1f, object.body.mass);
     object.body.inverseMass = object.body.type == BodyType::Dynamic ? 1.0f / object.body.mass : 0.0f;
@@ -907,24 +930,9 @@ void UpdateGuideObjects(
             constraint.type != GuideObjectType::FixedJoint) continue;
 
         if (constraint.attachedObject < 0) {
-            Vector2 attachment = constraint.type == GuideObjectType::FixedJoint ?
-                constraint.transform.position : constraint.constraint.anchorB;
-            float closestDistanceSq = 42.0f * 42.0f;
-            for (int bodyIndex = 0; bodyIndex < static_cast<int>(objects.size()); bodyIndex++) {
-                if (objects[bodyIndex].layer != constraint.layer ||
-                    !IsDynamicObject(objects[bodyIndex].type) || objects[bodyIndex].broken) continue;
-                Vector2 bodyCenter = Center(GetGuideObjectBounds(objects[bodyIndex]));
-                float dx = bodyCenter.x - attachment.x;
-                float dy = bodyCenter.y - attachment.y;
-                float distanceSq = dx * dx + dy * dy;
-                if (distanceSq <= closestDistanceSq) {
-                    closestDistanceSq = distanceSq;
-                    constraint.attachedObject = bodyIndex;
-                    if (IsRotarySpringType(constraint.type)) {
-                        constraint.constraint.minimum = objects[bodyIndex].transform.rotation;
-                    }
-                }
-            }
+            constraint.attachedObject = FindGuideAttachmentTarget(objects, i);
+            if (constraint.attachedObject >= 0 && IsRotarySpringType(constraint.type))
+                constraint.constraint.minimum = objects[constraint.attachedObject].transform.rotation;
         }
         if (constraint.attachedObject < 0 || constraint.attachedObject >= static_cast<int>(objects.size())) continue;
 

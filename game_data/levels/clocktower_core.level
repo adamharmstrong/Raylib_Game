@@ -58,4 +58,4 @@ gear escape mounted vertical 1220 720 56 4.5 30 235 85 85 second
 # background brakes remain operable through middleground interaction proxies.
 layer middleground
 label 650 64 CLOCKTOWER MASTER MOVEMENT
-exit 1460 620 80 200
+exit 1460 620 85 210

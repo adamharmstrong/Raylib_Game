@@ -63,9 +63,18 @@ struct ToxinLeak {
 };
 
 enum class TileLayer {
-    FarBackground,
-    Background,
-    Foreground
+    FarBackground = 0,
+    Background = 1,
+    Foreground = 2,
+    Collision = 3,
+    User1 = 4,
+    User2 = 5,
+    User3 = 6,
+    User4 = 7,
+    User5 = 8,
+    User6 = 9,
+    User7 = 10,
+    User8 = 11
 };
 
 struct VisualTile {
@@ -73,6 +82,12 @@ struct VisualTile {
     int column{0};
     int row{0};
     Vector2 position{};
+    int quarterTurns{0};
+    bool flipX{false};
+    bool flipY{false};
+    int animationFrames{1};
+    float animationFrameSeconds{0.12f};
+    int sheetIndex{-1};
 };
 
 struct LevelLabel {
@@ -212,6 +227,9 @@ struct Level {
     std::vector<GuideObject> guideObjects;
     std::vector<Enemy> enemies;
 };
+
+inline constexpr float StandardExitDoorWidth = 85.0f;
+inline constexpr float StandardExitDoorHeight = 210.0f;
 
 Level CreatePowerPulleyPanicLevel();
 Level CreateRotaryLatchLabLevel();

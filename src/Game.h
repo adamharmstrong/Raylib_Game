@@ -93,9 +93,10 @@ struct OverworldPath {
 
 class Game {
 public:
-    void Run();
+    void Run(const std::string& playtestPath = {});
 
 private:
+    std::string playtestLevelPath;
     void Load();
     void Reset();
     void Update(float dt);

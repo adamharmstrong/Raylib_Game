@@ -191,6 +191,8 @@ struct GuideObject {
 bool ParseGuideObject(const std::string& command, std::istringstream& stream, GuideObject& object);
 void InitializeGuideObject(GuideObject& object);
 Rectangle GetGuideObjectBounds(const GuideObject& object);
+bool IsGuideAttachmentConstraint(GuideObjectType type);
+int FindGuideAttachmentTarget(const std::vector<GuideObject>& objects, int constraintIndex);
 void AppendGuideObjectSolids(std::vector<Rectangle>& solids, const std::vector<GuideObject>& objects);
 void UpdateGuideObjects(
     std::vector<GuideObject>& objects,

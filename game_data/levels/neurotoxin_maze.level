@@ -65,7 +65,7 @@ gasMask 520 220 14
 # player sees the goal immediately, then has to traverse the whole annex.
 # The eight-pixel frame fits exactly between the tier underside at y=682 and
 # the foundation at y=850, so neither edge intersects the surrounding masonry.
-exit 64 690 82 160
+exit 64 690 85 210
 valve 120 207 35
 
 # Smoke seeps steadily from the ruptured lower pipe. Exposure rate is tuned so

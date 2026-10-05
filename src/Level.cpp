@@ -107,11 +107,14 @@ namespace {
         if (value == "background") {
             return TileLayer::Background;
         }
+        if (value == "collision") return TileLayer::Collision;
+        if (value.size() == 5 && value.rfind("user", 0) == 0 && value[4] >= '1' && value[4] <= '8')
+            return static_cast<TileLayer>(3 + value[4] - '0');
 
         return TileLayer::Foreground;
     }
 
-    bool IsCollidableVisualTile(const VisualTile& tile) {
+bool IsCollidableVisualTile(const VisualTile& tile) {
         bool isVoidTile = tile.column == 1 && tile.row == 2;
         return tile.layer == TileLayer::Foreground && !isVoidTile;
     }
@@ -127,7 +130,7 @@ Level CreatePowerPulleyPanicLevel() {
         {300, 275, 960, 625},
         {1260, 0, 340, 900}
     };
-    level.exitTrigger = {1440, 430, 85, 220};
+    level.exitTrigger = {1440, 430, StandardExitDoorWidth, StandardExitDoorHeight};
 
     level.baseSolids = {
         {0, 0, 1600, 32},
@@ -318,7 +321,21 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
             std::string layer;
             VisualTile tile{};
             stream >> layer >> tile.column >> tile.row >> tile.position.x >> tile.position.y;
+            int flipX = 0;
+            int flipY = 0;
+            if (stream >> tile.quarterTurns >> flipX >> flipY) {
+                tile.quarterTurns = ((tile.quarterTurns % 4) + 4) % 4;
+                tile.flipX = flipX != 0;
+                tile.flipY = flipY != 0;
+                if (stream >> tile.animationFrames >> tile.animationFrameSeconds) {
+                    tile.animationFrames = std::clamp(tile.animationFrames, 1, 64);
+                    tile.animationFrameSeconds = std::clamp(tile.animationFrameSeconds, 0.01f, 10.0f);
+                    stream >> tile.sheetIndex;
+                }
+            }
             tile.layer = ParseTileLayer(layer);
+            if (tile.sheetIndex < 0) tile.sheetIndex = tile.layer == TileLayer::FarBackground ? 2 :
+                tile.layer == TileLayer::Background ? 1 : 0;
             level.visualTiles.push_back(tile);
         }
         else if (command == "visualTileRect") {
@@ -327,7 +344,21 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
             int columns = 0;
             int rows = 0;
             stream >> layer >> tile.column >> tile.row >> tile.position.x >> tile.position.y >> columns >> rows;
+            int flipX = 0;
+            int flipY = 0;
+            if (stream >> tile.quarterTurns >> flipX >> flipY) {
+                tile.quarterTurns = ((tile.quarterTurns % 4) + 4) % 4;
+                tile.flipX = flipX != 0;
+                tile.flipY = flipY != 0;
+                if (stream >> tile.animationFrames >> tile.animationFrameSeconds) {
+                    tile.animationFrames = std::clamp(tile.animationFrames, 1, 64);
+                    tile.animationFrameSeconds = std::clamp(tile.animationFrameSeconds, 0.01f, 10.0f);
+                    stream >> tile.sheetIndex;
+                }
+            }
             tile.layer = ParseTileLayer(layer);
+            if (tile.sheetIndex < 0) tile.sheetIndex = tile.layer == TileLayer::FarBackground ? 2 :
+                tile.layer == TileLayer::Background ? 1 : 0;
 
             for (int row = 0; row < rows; row++) {
                 for (int column = 0; column < columns; column++) {
@@ -420,6 +451,7 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
             Boulder boulder{};
             boulder.layer = currentLayer;
             stream >> boulder.center.x >> boulder.center.y >> boulder.radius >> boulder.mass;
+            if (!(stream >> boulder.rotation)) stream.clear();
             boulder.radius = fmaxf(1.0f, boulder.radius);
             boulder.mass = fmaxf(0.1f, boulder.mass);
             level.boulders.push_back(boulder);
@@ -428,6 +460,7 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
             PhysicsWheel wheel{};
             wheel.layer = currentLayer;
             stream >> wheel.center.x >> wheel.center.y >> wheel.radius >> wheel.mass;
+            if (!(stream >> wheel.rotation)) stream.clear();
             wheel.radius = fmaxf(1.0f, wheel.radius);
             wheel.mass = fmaxf(0.1f, wheel.mass);
             level.physicsWheels.push_back(wheel);
@@ -486,6 +519,7 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
             Flywheel flywheel{};
             flywheel.layer = currentLayer;
             stream >> flywheel.center.x >> flywheel.center.y >> flywheel.radius >> flywheel.mass >> flywheel.angularVelocity;
+            if (!(stream >> flywheel.rotation)) stream.clear();
             flywheel.radius = fmaxf(1.0f, flywheel.radius);
             flywheel.mass = fmaxf(0.1f, flywheel.mass);
             level.flywheels.push_back(flywheel);
@@ -507,6 +541,7 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
         else if (command == "fan") {
             Fan fan{};
             stream >> fan.center.x >> fan.center.y >> fan.direction.x >> fan.direction.y >> fan.length >> fan.width >> fan.strength >> fan.power;
+            if (!(stream >> fan.rotation)) stream.clear();
             float length = sqrtf(fan.direction.x * fan.direction.x + fan.direction.y * fan.direction.y);
             fan.direction = length > 0.0001f ? Vector2{fan.direction.x / length, fan.direction.y / length} : Vector2{1.0f, 0.0f};
             fan.length = fmaxf(1.0f, fan.length);
@@ -518,12 +553,14 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
         else if (command == "pinwheel") {
             Pinwheel pinwheel{};
             stream >> pinwheel.center.x >> pinwheel.center.y >> pinwheel.radius;
+            if (!(stream >> pinwheel.rotation)) stream.clear();
             pinwheel.radius = fmaxf(1.0f, pinwheel.radius);
             level.pinwheels.push_back(pinwheel);
         }
         else if (command == "seeSaw") {
             SeeSaw seeSaw{};
             stream >> seeSaw.pivot.x >> seeSaw.pivot.y >> seeSaw.length >> seeSaw.thickness >> seeSaw.minAngle >> seeSaw.maxAngle >> seeSaw.response;
+            if (!(stream >> seeSaw.angle)) stream.clear();
             seeSaw.length = fmaxf(1.0f, seeSaw.length);
             seeSaw.thickness = fmaxf(1.0f, seeSaw.thickness);
             seeSaw.minAngle = std::clamp(seeSaw.minAngle, -80.0f, 80.0f);
@@ -551,6 +588,10 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
         else if (command == "trapDoor") {
             TrapDoor trapDoor{};
             stream >> trapDoor.hinge.x >> trapDoor.hinge.y >> trapDoor.length >> trapDoor.thickness >> trapDoor.angle;
+            std::string style;
+            if (stream >> style) {
+                trapDoor.minimal = style == "minimal";
+            }
             trapDoor.length = fmaxf(1.0f, trapDoor.length);
             trapDoor.thickness = fmaxf(1.0f, trapDoor.thickness);
             trapDoor.angle = std::clamp(trapDoor.angle, -80.0f, 80.0f);
@@ -716,6 +757,10 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
         }
     }
 
+    if (level.exitTrigger.width > 0.0f && level.exitTrigger.height > 0.0f) {
+        level.exitTrigger.width = StandardExitDoorWidth;
+        level.exitTrigger.height = StandardExitDoorHeight;
+    }
     return level;
 }
 
@@ -744,6 +789,11 @@ std::vector<Rectangle> BuildSolids(const Level& level) {
             if (!loop.active) continue;
             solids.insert(solids.end(), loop.platforms.begin(), loop.platforms.end());
         }
+    }
+
+    for (const VisualTile& tile : level.visualTiles) {
+        if (tile.layer == TileLayer::Collision)
+            solids.push_back({tile.position.x, tile.position.y, VisualTileSize, VisualTileSize});
     }
 
     if (level.spikeHazard.width > 0.0f && level.spikeHazard.height > 0.0f) {

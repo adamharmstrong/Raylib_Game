@@ -1,60 +1,68 @@
-# Wendi's Level 3: Rising Water Escape
-# A ruptured pipe in the lowest chamber steadily floods the tower. Climb the
-# zig-zag route, use both swing-door buttons to buy a little time, then trigger
-# the top exit switch before the water catches the player.
+# Kiril's Level 3: Rising Water Escape
+# The platform stack is mapped directly from Kiril's multi-level water-escape
+# sketch: pipe and player on the bottom floor; a lower-right ladder; the broad
+# boulder lane; then increasingly staggered platforms to the top-left exit.
 script water_escape
 bounds 0 0 1600 900
-playerStart 1330 782
+playerStart 520 810
 
-# The continuous leaking pipe fills this whole connected tower from the bottom.
-# At 22 vertical pixels per second, it takes roughly half a minute to reach the
-# upper escape floor, leaving room for one recovery attempt without stalling.
+# A pipe on the bottom-left floor continually fills the connected chamber.
 water 32 28 1536 822 6 0.04 1
 valveFluidFill 0 0.96 22
 
-# Tower shell.
+# Chamber shell and bottom floor. The player begins beside the pipe outlet,
+# rather than on a platform above it.
 solid 0 0 1600 28
 solid 0 28 32 872
 solid 1568 28 32 872
 solid 32 850 1536 50
 
-# Bottom course: start at the leak, cross left, and climb the first ladder.
-platform 760 750 760 30
-ladder 790 600 48 150
-platform 300 600 920 30
-enemy 960 560 34 40 820 1130 72
-directionalSpikeHazard up 540 574 105 26
-labelSized 1240 798 20 RUPTURED PIPE
+# Lowest elevated lane and the corrected lower-right ladder. This is the first
+# climb from the pipe floor in the original design.
+platform 32 740 1438 30
+ladder 1415 740 48 110
 
-# The first button swings a wooden door down. It is a temporary flood brake,
-# with a deliberate gap at its hinged end.
-button 1080 584 76 16
-trapDoor 1020 600 170 24 0
+# Broad boulder/enemy lane.
+platform 130 627 1438 30
+enemy 455 587 34 40 325 625 68
+boulder 865 592 30 3.4
+enemy 1170 587 34 40 1080 1335 70
+
+# The first ceiling door hangs in the tall gap between this lane and the next
+# platform. Its 84px plank has clear space to swing down without touching floor.
+button 1250 611 76 16
+trapDoor 1390 502 84 8 0 minimal
 buttonTrapDoor 0 0 76 150
-chain 1118 580 1105 526 16 0.68 1 1
 
-# Middle course: run right, dodge the acid channel, then climb again.
-ladder 1130 450 48 150
-platform 530 450 830 30
-directionalSpikeHazard up 780 424 116 26
-enemy 620 410 34 40 575 760 66
-labelSized 796 405 18 ACID CHANNEL
+# Central acid lane and left-side climb.
+platform 32 472 187 30
+platform 270 472 1200 30
+ladder 430 472 48 155
+enemy 630 432 34 40 545 745 65
 
-# The second door creates the final delay before the upper escape floor.
-button 900 434 76 16
-trapDoor 820 450 170 24 0
+# The second short door is attached under the y=350 ceiling platform. Its 70px
+# plank clears the y=472 floor when it swings down.
+button 1250 456 76 16
+trapDoor 1390 380 70 8 0 minimal
 buttonTrapDoor 1 1 76 150
-chain 938 430 905 376 16 0.68 1 1
 
-# Upper course and exit control. The player must cross back left after latching
-# the exit switch, then run through the raised gate.
-ladder 660 300 48 150
-platform 220 300 980 30
-enemy 980 260 34 40 880 1120 72
-platform 32 150 700 30
-ladder 650 150 48 150
-button 450 284 76 16
+# Upper center shelf pair, reached from the central ladder.
+platform 140 350 700 30
+platform 935 350 633 30
+ladder 440 259 48 91
+enemy 1110 310 34 40 1060 1320 66
+
+# The two smaller shelves and the final ladder reproduce the split platforms
+# just below the exit route.
+platform 460 259 370 30
+platform 1035 259 370 30
+ladder 650 157 48 102
+
+# Top-left exit floor, its separate raised release-button shelf, and the
+# upper-right shelf. Keeping the release shelf detached matches the diagram.
+platform 32 157 330 30
+platform 500 90 247 30
+platform 935 157 365 30
+button 580 74 76 16
 buttonExit 2
-exit 88 30 96 120
-labelSized 385 245 20 EXIT RELEASE
-labelSized 95 108 24 EXIT
+exit 60 28 85 210

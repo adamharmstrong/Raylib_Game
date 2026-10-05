@@ -43,6 +43,11 @@ if (NOT "${PLATFORM}" STREQUAL "Web")
 endif()
 
 if (BUILD_TESTING AND NOT "${PLATFORM}" STREQUAL "Web")
+    add_executable(EditorConnectionTests tests/EditorConnectionTests.cpp level_editor/EditorConnections.cpp)
+    target_include_directories(EditorConnectionTests PRIVATE "${CMAKE_SOURCE_DIR}/level_editor")
+    target_link_libraries(EditorConnectionTests PRIVATE RaylibGameCore)
+    add_test(NAME editor_connections COMMAND EditorConnectionTests)
+
     add_executable(GearPhysicsTests tests/GearPhysicsTests.cpp)
     target_link_libraries(GearPhysicsTests PRIVATE RaylibGameCore)
     target_compile_definitions(GearPhysicsTests PRIVATE

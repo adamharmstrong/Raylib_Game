@@ -180,6 +180,7 @@ struct TrapDoor {
     float length{120.0f};
     float thickness{16.0f};
     float angle{0.0f};
+    bool minimal{false};
 };
 
 enum class FlexibleAnchorType {

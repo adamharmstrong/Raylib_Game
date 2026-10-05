@@ -436,13 +436,30 @@ void DrawRepeatingTexture(Texture2D texture, Rectangle dest, Color tint) {
     DrawTiledTextureRect(texture, sourceTile, dest, tint);
 }
 
-void DrawTilesetTile(Texture2D texture, int column, int row, Vector2 position, Color tint) {
+void DrawTilesetTile(Texture2D texture, int column, int row, Vector2 position, Color tint,
+    int quarterTurns, bool flipX, bool flipY, int animationFrames, float animationFrameSeconds, bool animate) {
     if (texture.id <= 0) {
         DrawRectangle(static_cast<int>(position.x), static_cast<int>(position.y), 32, 32, tint);
         return;
     }
 
-    DrawTilesetCell(texture, column, row, {position.x, position.y, TilesetTileSize, TilesetTileSize}, tint);
+    const int columns = std::max(1, texture.width / static_cast<int>(TilesetTileSize));
+    const int rows = std::max(1, texture.height / static_cast<int>(TilesetTileSize));
+    const int frame = animate && animationFrames > 1
+        ? static_cast<int>(GetTime() / std::max(0.01f, animationFrameSeconds)) % animationFrames : 0;
+    const int cell = std::clamp(row * columns + column + frame, 0, columns * rows - 1);
+    column = cell % columns;
+    row = cell / columns;
+    Rectangle source{
+        column * TilesetTileSize,
+        row * TilesetTileSize,
+        flipX ? -TilesetTileSize : TilesetTileSize,
+        flipY ? -TilesetTileSize : TilesetTileSize
+    };
+    const Rectangle destination{position.x + TilesetTileSize * 0.5f, position.y + TilesetTileSize * 0.5f,
+        TilesetTileSize, TilesetTileSize};
+    DrawTexturePro(texture, source, destination, {TilesetTileSize * 0.5f, TilesetTileSize * 0.5f},
+        static_cast<float>(((quarterTurns % 4) + 4) % 4) * 90.0f, tint);
 }
 
 void DrawTilesetBackgroundFill(Texture2D texture, Rectangle dest, Color tint, float detailOpacity) {
@@ -2414,6 +2431,25 @@ void DrawTrapDoor(const TrapDoor& trapDoor) {
     Vector2 normal{-axis.y, axis.x};
     Vector2 hinge = trapDoor.hinge;
     Vector2 end = GetTrapDoorRingPosition(trapDoor);
+
+    if (trapDoor.minimal) {
+        // Kiril's flood doors are deliberately just thin wooden planks on a
+        // pivot: no floor frame, latch, handles, chains, or ring hardware.
+        Vector2 p1{hinge.x - normal.x * trapDoor.thickness * 0.5f, hinge.y - normal.y * trapDoor.thickness * 0.5f};
+        Vector2 p2{end.x - normal.x * trapDoor.thickness * 0.5f, end.y - normal.y * trapDoor.thickness * 0.5f};
+        Vector2 p3{end.x + normal.x * trapDoor.thickness * 0.5f, end.y + normal.y * trapDoor.thickness * 0.5f};
+        Vector2 p4{hinge.x + normal.x * trapDoor.thickness * 0.5f, hinge.y + normal.y * trapDoor.thickness * 0.5f};
+        const Color plankWood{139, 96, 52, 255};
+        DrawSolidTriangle(p1, p2, p3, plankWood);
+        DrawSolidTriangle(p1, p3, p4, plankWood);
+        DrawLineEx(p1, p2, 1.5f, Color{70, 45, 25, 255});
+        DrawLineEx(p2, p3, 1.5f, Color{70, 45, 25, 255});
+        DrawLineEx(p3, p4, 1.5f, Color{70, 45, 25, 255});
+        DrawLineEx(p4, p1, 1.5f, Color{70, 45, 25, 255});
+        DrawCircleV(hinge, fmaxf(3.0f, trapDoor.thickness * 0.30f), Color{46, 39, 31, 255});
+        return;
+    }
+
     std::array<Vector2, 2> rings = GetTrapDoorRingPositions(trapDoor);
     float ringOuterRadius = trapDoor.thickness * 0.48f;
     float ringInnerRadius = trapDoor.thickness * 0.25f;

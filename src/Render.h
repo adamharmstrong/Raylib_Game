@@ -58,7 +58,9 @@ void DrawArrowProjectile(const ArrowProjectile& arrow);
 void DrawBreakableTile(Texture2D texture, const BreakableTile& tile);
 void DrawTiledTextureRect(Texture2D texture, Rectangle sourceTile, Rectangle dest, Color tint);
 void DrawRepeatingTexture(Texture2D texture, Rectangle dest, Color tint);
-void DrawTilesetTile(Texture2D texture, int column, int row, Vector2 position, Color tint);
+void DrawTilesetTile(Texture2D texture, int column, int row, Vector2 position, Color tint,
+    int quarterTurns = 0, bool flipX = false, bool flipY = false,
+    int animationFrames = 1, float animationFrameSeconds = 0.12f, bool animate = true);
 void DrawTilesetBackgroundFill(Texture2D texture, Rectangle dest, Color tint, float detailOpacity = 0.28f);
 void DrawTilesetSolidFill(Texture2D texture, Rectangle dest, Color tint);
 void DrawTilesetWall(Texture2D texture, Rectangle dest, Color tint);

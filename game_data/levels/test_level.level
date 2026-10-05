@@ -3,7 +3,7 @@ script power_pulley_panic
 # Start beside the fluid tank on the upper catalog floor.
 playerStart 1040 260
 
-exit 1485 430 85 220
+exit 1485 430 85 210
 
 # Middle deck, with a ladder opening and a two-tile breakable approach to the exit.
 solid 0 650 360 24
@@ -136,6 +136,7 @@ beamSensor 140 445 1 0 120 8
 checkpoint 300 592 30 56
 collectible 270 455 10
 key 315 445 11
+gasMask 225 445 14
 
 # Suspended motion and force demonstrations, kept above the walking lane.
 pendulumBob 90 70 82 15 0 1.6

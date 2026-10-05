@@ -1376,6 +1376,32 @@ namespace {
             });
     }
 
+    void CarveLadderPassThroughOpenings(std::vector<Rectangle>& solids, const Level& level) {
+        // Only platforms intersected by a ladder are split. This retains normal
+        // floor collision everywhere else while a climbing player crosses the
+        // matching floor through its ladder opening.
+        for (const Rectangle& ladder : level.ladders) {
+            std::vector<Rectangle> carved;
+            carved.reserve(solids.size() + 2);
+            for (const Rectangle& solid : solids) {
+                const bool crossesLadder =
+                    solid.x < ladder.x + ladder.width && solid.x + solid.width > ladder.x &&
+                    solid.y < ladder.y + ladder.height && solid.y + solid.height > ladder.y;
+                if (!crossesLadder) {
+                    carved.push_back(solid);
+                    continue;
+                }
+
+                const float leftWidth = ladder.x - solid.x;
+                if (leftWidth > 0.0f) carved.push_back({solid.x, solid.y, leftWidth, solid.height});
+                const float rightX = ladder.x + ladder.width;
+                const float rightWidth = solid.x + solid.width - rightX;
+                if (rightWidth > 0.0f) carved.push_back({rightX, solid.y, rightWidth, solid.height});
+            }
+            solids = std::move(carved);
+        }
+    }
+
     bool HasWaterPit(const Level& level) {
         return HasArea(level.waterPit.bounds);
     }
@@ -3167,10 +3193,16 @@ struct Game::PlayerControls {
     GamepadButton jumpButton;
 };
 
-void Game::Run() {
+void Game::Run(const std::string& playtestPath) {
+    playtestLevelPath = playtestPath;
     Load();
+    if (!playtestLevelPath.empty()) {
+        mode = GameMode::Playing;
+        SetWindowTitle("Power Pulley Panic - Playtest (F5: Return to Editor)");
+    }
 
     while (!shouldQuit && !WindowShouldClose()) {
+        if (!playtestLevelPath.empty() && IsKeyPressed(KEY_F5)) break;
         Update(GetFrameTime());
         Draw();
     }
@@ -3396,7 +3428,8 @@ void Game::Load() {
     if (gasMaskTexture.id > 0) SetTextureFilter(gasMaskTexture, TEXTURE_FILTER_POINT);
     SetTextureFilter(GetFontDefault().texture, TEXTURE_FILTER_POINT);
 
-    achievements.Initialize("game_data/achievements.txt", "save/achievements.dat");
+    if (playtestLevelPath.empty())
+        achievements.Initialize("game_data/achievements.txt", "save/achievements.dat");
 
     InitializeOverworld();
     Reset();
@@ -3479,7 +3512,8 @@ void Game::Reset() {
     else if (levelId == "lower_works") {
         fallback = CreateFloodedFoundryLevel();
     }
-    level = LoadLevelFromFile("game_data/levels/" + levelId + ".level", fallback);
+    level = LoadLevelFromFile(playtestLevelPath.empty()
+        ? "game_data/levels/" + levelId + ".level" : playtestLevelPath, fallback);
     for (RotaryLatch& latch : level.rotaryLatches) {
         ResetRotaryLatch(latch);
     }
@@ -3589,7 +3623,7 @@ void Game::InitializeOverworld() {
 
         {"wendis_level_1", "W1", "Wendi's Three-Step Tumble", {545.0f, 465.0f}, 1, true, false},
         {"wendis_level_2", "W2", "Portal Lift", {960.0f, 385.0f}, 1, true, false},
-        {"wendis_level_3", "W3", "Rising Water Escape", {1250.0f, 520.0f}, 1, true, false},
+        {"wendis_level_3", "K3", "Kiril's Rising Water Escape", {1250.0f, 520.0f}, 1, true, false},
 
         {"test_level", "T", "Test Level", {285.0f, 405.0f}, 2, true, false},
         {"massive_test_level", "M", "Massive Object Test Facility", {500.0f, 515.0f}, 2, true, false},
@@ -3683,6 +3717,10 @@ void Game::BeginLevelClear() {
 }
 
 void Game::CompleteCurrentLevelAndReturnToMap() {
+    if (!playtestLevelPath.empty()) {
+        shouldQuit = true;
+        return;
+    }
     if (!overworldNodes.empty()) {
         currentLevelNode = std::clamp(currentLevelNode, 0, static_cast<int>(overworldNodes.size()) - 1);
         overworldNodes[currentLevelNode].completed = true;
@@ -4691,11 +4729,15 @@ void Game::UpdatePlayer(Player& activePlayer, const PlayerControls& controls, fl
     if (controlsEnabled) {
         std::vector<Rectangle> solids = BuildSolids(level);
         AppendFlexibleObjectColliders(solids, level);
+        std::vector<Rectangle> playerMovementSolids = solids;
+        if (onLadder || activePlayer.climbing) {
+            CarveLadderPassThroughOpenings(playerMovementSolids, level);
+        }
 
         const float previousFootX = RectCenterX(activePlayer.rect);
         const float previousFootY = activePlayer.rect.y + activePlayer.rect.height;
         activePlayer.rect.x += activePlayer.velocity.x * dt;
-        ResolveHorizontal(activePlayer, solids);
+        ResolveHorizontal(activePlayer, playerMovementSolids);
 
         for (int i = 0; i < static_cast<int>(level.stoneBlocks.size()); i++) {
             StoneBlock& block = level.stoneBlocks[i];
@@ -4826,7 +4868,7 @@ void Game::UpdatePlayer(Player& activePlayer, const PlayerControls& controls, fl
         }
 
         activePlayer.rect.y += activePlayer.velocity.y * dt;
-        std::vector<Rectangle> playerSolids = solids;
+        std::vector<Rectangle> playerSolids = playerMovementSolids;
         for (const StoneBlock& block : level.stoneBlocks) {
             if (!IsPlayerCollisionLayer(block.layer)) continue;
             playerSolids.push_back(block.rect);
@@ -6616,6 +6658,15 @@ void Game::CheckFailureConditions() {
             return;
         }
 
+        // Kiril's acid puddle is intentionally low and jumpable, unlike the
+        // factory spike strips used by the rest of the campaign.
+        const Rectangle waterEscapeAcid{807.0f, 457.0f, 108.0f, 22.0f};
+        if (level.script == LevelScript::WaterEscape &&
+            CheckCollisionRecs(activePlayer->rect, waterEscapeAcid)) {
+            KillPlayer(*activePlayer);
+            return;
+        }
+
         for (const DirectionalSpikeHazard& hazard : level.directionalSpikeHazards) {
             if (CheckCollisionRecs(activePlayer->rect, hazard.rect)) {
                 KillPlayer(*activePlayer);
@@ -7652,10 +7703,26 @@ void Game::DrawEquippedGasMask(const Player& activePlayer) const {
 
     constexpr float width = 20.0f;
     const float height = width * static_cast<float>(gasMaskTexture.height) / gasMaskTexture.width;
+    // DrawPlayer centers a 37x47 character frame on the 31x40 physics body.
+    // Keep the mask anchored in that same frame so it tracks animation, swimming,
+    // and the mirrored character art instead of the collision rectangle alone.
+    const Rectangle playerFrame{
+        activePlayer.rect.x + (activePlayer.rect.width - 37.0f) * 0.5f,
+        activePlayer.rect.y + activePlayer.rect.height - 47.0f + 1.0f,
+        37.0f,
+        47.0f
+    };
+    const float maskLeft = playerFrame.x + (playerFrame.width - width) * 0.5f;
+    const float facingNudge = activePlayer.facingRight ? 1.0f : -1.0f;
     DrawTexturePro(
         gasMaskTexture,
-        {0.0f, 0.0f, static_cast<float>(gasMaskTexture.width), static_cast<float>(gasMaskTexture.height)},
-        {activePlayer.rect.x + (activePlayer.rect.width - width) * 0.5f, activePlayer.rect.y + 5.0f, width, height},
+        {
+            activePlayer.facingRight ? 0.0f : static_cast<float>(gasMaskTexture.width),
+            0.0f,
+            activePlayer.facingRight ? static_cast<float>(gasMaskTexture.width) : -static_cast<float>(gasMaskTexture.width),
+            static_cast<float>(gasMaskTexture.height)
+        },
+        {maskLeft + facingNudge, playerFrame.y + 6.0f, width, height},
         {0.0f, 0.0f},
         0.0f,
         WHITE
@@ -7887,16 +7954,26 @@ void Game::DrawGameplay() {
         DrawRectangleRec(backgroundBounds, Fade(Color{13, 20, 28, 255}, 0.16f));
     }
 
-    bool hasExplicitVisualTiles = !level.visualTiles.empty();
+    bool hasExplicitVisualTiles = std::any_of(level.visualTiles.begin(), level.visualTiles.end(), [](const VisualTile& tile) {
+        return tile.layer != TileLayer::Collision;
+    });
     if (hasExplicitVisualTiles) {
         for (const VisualTile& tile : level.visualTiles) {
             if (tile.layer == TileLayer::FarBackground) {
-                DrawTilesetTile(industrialFarBackground, 0, 0, tile.position, WHITE);
+                const Texture2D sheet = tile.sheetIndex == 1 ? industrialBackground :
+                    tile.sheetIndex == 0 ? industrialTiles : industrialFarBackground;
+                DrawTilesetTile(sheet, tile.sheetIndex == 2 ? 0 : tile.column,
+                    tile.sheetIndex == 2 ? 0 : tile.row, tile.position, WHITE,
+                    tile.quarterTurns, tile.flipX, tile.flipY, tile.animationFrames, tile.animationFrameSeconds);
             }
         }
         for (const VisualTile& tile : level.visualTiles) {
             if (tile.layer == TileLayer::Background) {
-                DrawTilesetTile(industrialBackground, tile.column, tile.row, tile.position, WHITE);
+                const Texture2D sheet = tile.sheetIndex == 2 ? industrialFarBackground :
+                    tile.sheetIndex == 0 ? industrialTiles : industrialBackground;
+                DrawTilesetTile(sheet, tile.sheetIndex == 2 ? 0 : tile.column,
+                    tile.sheetIndex == 2 ? 0 : tile.row, tile.position, WHITE,
+                    tile.quarterTurns, tile.flipX, tile.flipY, tile.animationFrames, tile.animationFrameSeconds);
             }
         }
         for (const FluidField& fluid : level.fluids) {
@@ -7923,7 +8000,20 @@ void Game::DrawGameplay() {
     if (hasExplicitVisualTiles) {
         for (const VisualTile& tile : level.visualTiles) {
             if (tile.layer == TileLayer::Foreground) {
-                DrawTilesetTile(industrialTiles, tile.column, tile.row, tile.position, WHITE);
+                const Texture2D sheet = tile.sheetIndex == 2 ? industrialFarBackground :
+                    tile.sheetIndex == 1 ? industrialBackground : industrialTiles;
+                DrawTilesetTile(sheet, tile.sheetIndex == 2 ? 0 : tile.column,
+                    tile.sheetIndex == 2 ? 0 : tile.row, tile.position, WHITE,
+                    tile.quarterTurns, tile.flipX, tile.flipY, tile.animationFrames, tile.animationFrameSeconds);
+            }
+        }
+        for (const VisualTile& tile : level.visualTiles) {
+            if (static_cast<int>(tile.layer) >= static_cast<int>(TileLayer::User1)) {
+                const Texture2D sheet = tile.sheetIndex == 2 ? industrialFarBackground :
+                    tile.sheetIndex == 1 ? industrialBackground : industrialTiles;
+                DrawTilesetTile(sheet, tile.sheetIndex == 2 ? 0 : tile.column,
+                    tile.sheetIndex == 2 ? 0 : tile.row, tile.position, WHITE,
+                    tile.quarterTurns, tile.flipX, tile.flipY, tile.animationFrames, tile.animationFrameSeconds);
             }
         }
     }
@@ -8016,19 +8106,6 @@ void Game::DrawGameplay() {
                     static_cast<int>(promptY), 19, RAYWHITE);
             }
         }
-    }
-
-    if (level.script == LevelScript::WaterEscape) {
-        // The broken pipe is deliberately visible; it establishes the source
-        // of the flood before the player starts climbing.
-        const Rectangle pipeBody{1360.0f, 796.0f, 132.0f, 46.0f};
-        DrawRectangleRec(pipeBody, Color{69, 82, 89, 255});
-        DrawRectangleLinesEx(pipeBody, 4.0f, Color{25, 31, 35, 255});
-        DrawCircle(1360, 819, 34.0f, Color{83, 96, 102, 255});
-        DrawCircleLines(1360, 819, 34.0f, Color{25, 31, 35, 255});
-        DrawCircle(1360, 819, 20.0f, Color{19, 28, 33, 255});
-        DrawCircle(1345, 832, 7.0f, SKYBLUE);
-        DrawCircle(1328, 844, 5.0f, Fade(SKYBLUE, 0.82f));
     }
 
     for (const LevelLabel& label : level.labels) {
@@ -8245,6 +8322,32 @@ void Game::DrawGameplay() {
 
     for (const FluidField& fluid : level.fluids) {
         DrawFluidField(fluid, splashSources);
+    }
+
+    if (level.script == LevelScript::WaterEscape) {
+        // Foreground set dressing keeps the source and hazards readable even
+        // after the room is partly submerged.
+        const Rectangle pipeBody{32.0f, 796.0f, 280.0f, 46.0f};
+        DrawRectangleRec(pipeBody, Color{69, 82, 89, 255});
+        DrawRectangleLinesEx(pipeBody, 4.0f, Color{25, 31, 35, 255});
+        DrawCircle(312, 819, 34.0f, Color{83, 96, 102, 255});
+        DrawCircleLines(312, 819, 34.0f, Color{25, 31, 35, 255});
+        DrawCircle(312, 819, 20.0f, Color{19, 28, 33, 255});
+        DrawCircle(338, 832, 7.0f, SKYBLUE);
+        DrawCircle(356, 844, 5.0f, Fade(SKYBLUE, 0.82f));
+
+        DrawEllipse(861, 470, 54, 9, Color{210, 239, 45, 255});
+        DrawEllipse(861, 468, 39, 5, YELLOW);
+        const auto drawVineCluster = [](float x, int firstY, int lastY) {
+            for (int y = firstY; y < lastY; y += 18) {
+                const float sway = static_cast<float>((y / 18) % 2 == 0 ? 7 : -7);
+                DrawLineEx({x, static_cast<float>(y)}, {x + sway, static_cast<float>(y + 18)}, 3.5f, DARKGREEN);
+                DrawLineEx({x + 16.0f, static_cast<float>(y + 4)}, {x + 16.0f - sway, static_cast<float>(y + 22)}, 3.5f, GREEN);
+            }
+        };
+        drawVineCluster(47.0f, 270, 390);
+        drawVineCluster(47.0f, 500, 704);
+        drawVineCluster(1042.0f, 259, 350);
     }
 
     // Draw ladders over simulated materials so submerged escape routes remain visible.
@@ -8481,24 +8584,13 @@ void Game::DrawGameplay() {
                 tint
             );
         }
+        if (playerGasMasks[playerIndex]) DrawEquippedGasMask(visiblePlayer);
     };
 
-    if (playerAlive) {
-        drawActivePlayer(player, 0, 0.0f);
-        if (playerGasMasks[0]) DrawEquippedGasMask(player);
-    }
-    if (multiplayerEnabled && player2Alive) {
-        drawActivePlayer(player2, 1, 0.65f);
-        if (playerGasMasks[1]) DrawEquippedGasMask(player2);
-    }
-    if (threePlayerEnabled && player3Alive) {
-        drawActivePlayer(player3, 2, 1.30f);
-        if (playerGasMasks[2]) DrawEquippedGasMask(player3);
-    }
-    if (fourPlayerEnabled && player4Alive) {
-        drawActivePlayer(player4, 3, 1.95f);
-        if (playerGasMasks[3]) DrawEquippedGasMask(player4);
-    }
+    if (playerAlive) drawActivePlayer(player, 0, 0.0f);
+    if (multiplayerEnabled && player2Alive) drawActivePlayer(player2, 1, 0.65f);
+    if (threePlayerEnabled && player3Alive) drawActivePlayer(player3, 2, 1.30f);
+    if (fourPlayerEnabled && player4Alive) drawActivePlayer(player4, 3, 1.95f);
 
     // Foreground physics can obscure the player for depth, while remaining on its
     // own non-player collision plane.

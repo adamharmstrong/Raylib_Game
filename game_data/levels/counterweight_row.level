@@ -45,4 +45,4 @@ ladder 1550 520 40 300
 button 1435 808 92 16
 
 # Wide enough for the player sprite and multiplayer characters to enter cleanly.
-exit 1415 340 120 220
+exit 1415 340 85 210

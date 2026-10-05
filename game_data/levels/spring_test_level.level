@@ -1,7 +1,7 @@
 # Dedicated laboratory for comparing every reusable spring family.
 script power_pulley_panic
 playerStart 780 810
-exit 1500 700 72 168
+exit 1500 700 85 210
 
 # Three compact galleries connected by one central ladder shaft.
 solid 0 868 1600 32

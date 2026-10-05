@@ -41,7 +41,7 @@ solid 1390 700 25 120
 button 1460 744 82 16
 
 # The exit is immediately left of Button 3's catch basin.
-exit 1270 540 110 220
+exit 1270 540 85 210
 
 # Latched cause-and-effect links from Wendi's sketch.
 buttonTrapDoor 0 0 78 115
