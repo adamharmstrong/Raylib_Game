@@ -15,6 +15,5 @@ int main(int argc, char* argv[]) {
         else initialLevel = argument;
     }
 
-    LevelEditor editor;
-    return editor.Run(initialLevel, viewportOnly, viewportParent);
+    return RunLevelEditor(initialLevel, viewportOnly, viewportParent);
 }

@@ -115,6 +115,7 @@ add("Physics Objects", "Turntable", "turntable", "Rotating horizontal disk that 
 # Power and sensing
 add("Power and Sensors", "Battery", "battery", "Steady power source that energizes every compatible object on its channel.", "battery")
 add("Power and Sensors", "Electric Motor", "electricMotor", "Powered rotor that converts channel power into continuous angular motion.", "motor")
+add("Power and Sensors", "Tesla Coil", "teslaCoil", "High-voltage resonant coil that releases radial electrical bursts and broadcasts power on a separate wireless channel.", "teslacoil")
 add("Power and Sensors", "Limit Switch", "limitSwitch", "Contact sensor with a mechanical lever that energizes its channel when triggered.", "limitswitch")
 add("Power and Sensors", "Relay", "relay", "Channel-controlled electrical switching block used to pass a power signal.", "relay")
 add("Power and Sensors", "Fuse", "fuse", "Protective link that breaks when supplied power exceeds its configured capacity.", "fuse")
@@ -434,6 +435,23 @@ def draw_icon(entry: Entry, output: Path) -> None:
         line(draw, ((160, 105), (160, 165)), GOLD, 9)
         line(draw, ((130, 135), (190, 135)), GOLD, 9)
         line(draw, ((255, 135), (315, 135)), LIGHT, 9)
+    elif kind == "teslacoil":
+        draw.rectangle((135, 190, 305, 228), fill=STEEL, outline=INK, width=7)
+        points = [(220, 190)]
+        for turn in range(1, 12):
+            amount = turn / 11
+            span = 48 - amount * 25
+            points.append((220 + (-span if turn % 2 == 0 else span), 190 - amount * 105))
+        points.append((220, 68))
+        line(draw, points, INK, 12)
+        line(draw, points, ORANGE, 6)
+        draw.ellipse((145, 45, 295, 90), fill=STEEL, outline=INK, width=7)
+        draw.ellipse((180, 57, 260, 78), fill=PANEL, outline=LIGHT, width=4)
+        for angle in (-0.8, -0.25, 0.35, 0.9):
+            end = (220 + math.cos(angle) * 180, 68 + math.sin(angle) * 120)
+            mid = ((220 + end[0]) / 2, (68 + end[1]) / 2 - 18)
+            line(draw, ((220, 68), mid, end), CYAN, 9)
+            line(draw, ((220, 68), mid, end), LIGHT, 3)
     elif kind == "beamsensor":
         draw.rectangle((65, 90, 120, 175), fill=STEEL, outline=INK, width=6)
         line(draw, ((120, 132), (380, 132)), RED, 5)

@@ -13,6 +13,7 @@
 #include <vector>
 
 class LevelEditor {
+    friend struct EditorRotationTestAccess;
 public:
     enum class EditTool {
         Select,
@@ -369,6 +370,7 @@ private:
     bool IsGroupSelected(const Selection& item) const;
     void SetPrimarySelection(const Selection& item);
     float* SelectedRotation();
+    void EnsureRotationSelectionBounds();
     const float* SelectedRotation() const;
     Vector2 SelectedRotationCenter() const;
     bool IsSelectedFluid() const;
@@ -500,3 +502,6 @@ private:
     Vector2 resizeDragStart{};
     Rectangle resizeOriginalBounds{};
 };
+
+int RunLevelEditor(const std::filesystem::path& initialLevel = {}, bool viewportOnly = false,
+    std::uintptr_t viewportParent = 0);

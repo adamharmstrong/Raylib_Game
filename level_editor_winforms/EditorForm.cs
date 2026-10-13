@@ -2790,8 +2790,7 @@ internal sealed class EditorForm : Form
             CancelViewportLink();
             DeactivatePaintTools();
             viewport.SendCommand(43, loop.Index - 1);
-            SetActiveTransformButton(Keys.Q);
-            activeToolIndicator.Text = "Active: Select";
+            RestoreSelectedTransformTool();
             cursorSizeIndicator.Text = "Cursor: Loop bounds";
             return;
         }
@@ -2801,9 +2800,18 @@ internal sealed class EditorForm : Form
         var packed = ((Math.Clamp(y, short.MinValue, short.MaxValue) & 0xffff) << 16) |
             (Math.Clamp(x, short.MinValue, short.MaxValue) & 0xffff);
         viewport.SendCommand(5, packed);
-        SetActiveTransformButton(Keys.Q);
-        activeToolIndicator.Text = "Active: Select";
+        RestoreSelectedTransformTool();
         cursorSizeIndicator.Text = "Cursor: Object bounds";
+    }
+
+    private void RestoreSelectedTransformTool()
+    {
+        var key = transformButtons.FirstOrDefault(pair => pair.Value.Checked).Key;
+        if (key == Keys.None) key = Keys.Q;
+        var mode = key == Keys.W ? 1 : key == Keys.E ? 2 : key == Keys.R ? 3 : 0;
+        viewport.SendCommand(31, mode);
+        SetActiveTransformButton(key);
+        activeToolIndicator.Text = $"Active: {(mode == 1 ? "Move" : mode == 2 ? "Rotate" : mode == 3 ? "Scale" : "Select")}";
     }
 
     private void OnDetailsPropertyValueChanged(object? sender, PropertyValueChangedEventArgs eventArgs)

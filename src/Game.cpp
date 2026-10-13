@@ -3216,6 +3216,12 @@ void Game::Run(const std::string& playtestPath) {
     Unload();
 }
 
+int RunGame(const std::string& playtestPath) {
+    Game game;
+    game.Run(playtestPath);
+    return 0;
+}
+
 void Game::ResetPendingSettings() {
     pendingWindowMode = windowMode;
     pendingResolutionIndex = selectedResolutionIndex;

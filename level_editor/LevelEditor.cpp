@@ -932,6 +932,12 @@ int LevelEditor::Run(const std::filesystem::path& initialLevel, bool useViewport
     return 0;
 }
 
+int RunLevelEditor(const std::filesystem::path& initialLevel, bool viewportOnly,
+    std::uintptr_t viewportParent) {
+    LevelEditor editor;
+    return editor.Run(initialLevel, viewportOnly, viewportParent);
+}
+
 void LevelEditor::GenerateContentThumbnails() const {
     constexpr int CellWidth = 112;
     constexpr int CellHeight = 84;
@@ -2083,6 +2089,35 @@ float LevelEditor::TransformAxisLength(Rectangle bounds, Vector2 anchor, bool ho
     return std::max(48.0f / camera.zoom, extent + outsideMargin);
 }
 
+void LevelEditor::EnsureRotationSelectionBounds() {
+    if (transformMode == TransformMode::Rotate && SelectedRotation() != nullptr &&
+        (selectedSceneBounds.width <= 0 || selectedSceneBounds.height <= 0)) {
+        // Fresh placements have an object index but may not have hit-test
+        // bounds yet. Initialize them from the authored object's geometry.
+        const int index = selection.index;
+        Vector2 center{};
+        float extent = 32;
+        if (selectedSceneName.rfind("Gear ", 0) == 0) { center = level.gears[index].center; extent = level.gears[index].radius; }
+        else if (selectedSceneName.rfind("Boulder ", 0) == 0) { center = level.boulders[index].center; extent = level.boulders[index].radius; }
+        else if (selectedSceneName.rfind("Physics Wheel ", 0) == 0) { center = level.physicsWheels[index].center; extent = level.physicsWheels[index].radius; }
+        else if (selectedSceneName.rfind("Flywheel ", 0) == 0) { center = level.flywheels[index].center; extent = level.flywheels[index].radius; }
+        else if (selectedSceneName.rfind("Steering Wheel ", 0) == 0) { center = level.steeringWheels[index].center; extent = level.steeringWheels[index].radius; }
+        else if (selectedSceneName.rfind("Rotary Latch ", 0) == 0) { center = level.rotaryLatches[index].center; extent = level.rotaryLatches[index].radius; }
+        else if (selectedSceneName.rfind("Screw ", 0) == 0) { center = level.screws[index].center; extent = level.screws[index].length * 0.5f + level.screws[index].radius; }
+        else if (selectedSceneName.rfind("Fan ", 0) == 0) { center = level.fans[index].center; extent = level.fans[index].width * 0.5f; }
+        else if (selectedSceneName.rfind("Pinwheel ", 0) == 0) { center = level.pinwheels[index].center; extent = level.pinwheels[index].radius; }
+        else if (selectedSceneName.rfind("See Saw ", 0) == 0) { center = level.seeSaws[index].pivot; extent = level.seeSaws[index].length * 0.5f + level.seeSaws[index].thickness; }
+        else if (selectedSceneName.rfind("Trap Door ", 0) == 0) { center = level.trapDoors[index].hinge; extent = level.trapDoors[index].length + level.trapDoors[index].thickness; }
+        else if (selectedSceneName.rfind("Ramp ", 0) == 0 || selectedSceneName.rfind("Wedge ", 0) == 0) { center = level.ramps[index].center; extent = level.ramps[index].length * 0.5f + level.ramps[index].thickness; }
+        selectedSceneBounds = {center.x - extent, center.y - extent, extent * 2, extent * 2};
+        selection.sceneName = selectedSceneName;
+        selection.sceneBounds = selectedSceneBounds;
+        selection.outlinerName = selectedSceneName.substr(0, selectedSceneName.find_last_of(' '));
+        selection.outlinerIndex = selection.index;
+        if (groupSelection.size() == 1) groupSelection.front() = selection;
+    }
+}
+
 float* LevelEditor::SelectedRotation() {
     if (selection.kind != SelectionKind::SceneObject || selection.index < 0) return nullptr;
     const size_t index = static_cast<size_t>(selection.index);
@@ -3082,7 +3117,6 @@ void LevelEditor::ProcessViewportHostCommand() {
             const short y = static_cast<short>((value >> 16) & 0xffff);
             tilePaintTool = TilePaintTool::None;
             activeTool = EditTool::Select;
-            transformMode = TransformMode::Select;
             selection = HitTest({static_cast<float>(x), static_cast<float>(y)});
             groupSelection.clear();
             if (selection.kind != SelectionKind::None) groupSelection.push_back(selection);
@@ -3479,10 +3513,13 @@ void LevelEditor::ProcessViewportHostCommand() {
             tilePaintTool = TilePaintTool::None;
             activeTool = EditTool::Select;
             transformMode = static_cast<TransformMode>(value);
+            if (transformMode == TransformMode::Rotate) EnsureRotationSelectionBounds();
             draggingCreate = false;
             draggingTransform = false;
             statusText = std::string("Transform: ") +
                 (value == 0 ? "Select" : value == 1 ? "Move" : value == 2 ? "Rotate" : "Scale");
+            if (value == 2 && selection.kind != SelectionKind::None && SelectedRotation() == nullptr)
+                NotifyTileOperation("toolstatus This object has no editable rotation. Select a gear, wheel, fan, ramp, or another angled machine.");
             break;
         case 32:
             camera.zoom = std::clamp(value / 100.0f, 0.05f, 8.0f);

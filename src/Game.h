@@ -344,3 +344,5 @@ private:
     bool checkpointActivated{false};
     float respawnGraceTimer{0.0f};
 };
+
+int RunGame(const std::string& playtestPath = {});
