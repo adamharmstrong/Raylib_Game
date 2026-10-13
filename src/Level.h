@@ -74,7 +74,8 @@ enum class TileLayer {
     User5 = 8,
     User6 = 9,
     User7 = 10,
-    User8 = 11
+    User8 = 11,
+    Middleground = 12
 };
 
 struct VisualTile {
@@ -88,6 +89,34 @@ struct VisualTile {
     int animationFrames{1};
     float animationFrameSeconds{0.12f};
     int sheetIndex{-1};
+};
+
+// Blocked faces in source artwork coordinates: top, right, bottom, left.
+struct TilePassage {
+    int sheetIndex{0};
+    int column{0};
+    int row{0};
+    int blockedFaces{0};
+};
+
+struct Level;
+int GetTileBlockedFaces(const Level& level, const VisualTile& tile);
+bool TileCollidesWithLayer(TileLayer tileLayer, WorldLayer bodyLayer);
+void AppendDirectionalTileSolids(std::vector<Rectangle>& solids, const Level& level,
+    WorldLayer layer, Rectangle previous, Vector2 velocity, bool horizontal);
+
+// C++ source references, keyed by the one-based occurrence of a level record.
+// JSON preserves spaces and multiple paths without changing object arguments.
+struct ObjectScriptAttachment {
+    std::string objectType;
+    int objectIndex{0};
+    std::string pathsJson;
+};
+
+struct ObjectAudioAttachment {
+    std::string objectType;
+    int objectIndex{0};
+    std::string path;
 };
 
 struct LevelLabel {
@@ -168,10 +197,14 @@ struct PlatformLoopButtonLink {
     int loopIndex{-1};
     int platformIndex{-1};
     bool activated{false};
+    Vector2 buttonSize{};
 };
 
 struct Level {
     LevelScript script{LevelScript::PowerPulleyPanic};
+    std::vector<ObjectScriptAttachment> objectScripts;
+    std::string musicPath;
+    std::vector<ObjectAudioAttachment> objectSounds;
 
     Rectangle worldBounds{0.0f, 0.0f, 1600.0f, 900.0f};
     std::vector<Rectangle> cameraZones;
@@ -181,6 +214,7 @@ struct Level {
     float spikePitTopY{682.0f};
     Rectangle exitTrigger{};
     Vector2 playerStart{80.0f, 600.0f};
+    int playerCharacter{0};
     Valve valve{};
     WaterPit waterPit{};
     ValveFluidFill valveFluidFill{};
@@ -191,6 +225,12 @@ struct Level {
     std::vector<FluidField> fluids;
     std::vector<Rectangle> darknessAreas;
     std::vector<VisualTile> visualTiles;
+    std::vector<TilePassage> tilePassages;
+    std::vector<TileLayer> customTileLayerOrder;
+    std::vector<TileLayer> customTileLayersAboveDefaults;
+    std::vector<std::string> customTileLayerNames = std::vector<std::string>(8);
+    // Custom sheet IDs start at 3; the first three IDs are built-in artwork.
+    std::vector<std::string> spriteSheetPaths;
     std::vector<LevelLabel> labels;
     std::vector<Rectangle> baseSolids;
     std::vector<Rectangle> pitPlatforms;
@@ -235,7 +275,8 @@ Level CreatePowerPulleyPanicLevel();
 Level CreateRotaryLatchLabLevel();
 Level CreateFloodedFoundryLevel();
 Level LoadLevelFromFile(const std::string& path, Level fallback);
-std::vector<Rectangle> BuildSolids(const Level& level);
+std::vector<TileLayer> GetTileLayerDrawOrder(const Level& level);
+std::vector<Rectangle> BuildSolids(const Level& level, WorldLayer layer = WorldLayer::Middleground);
 Vector2 GetButtonPlatformLoopPoint(const ButtonPlatformLoop& loop, float progress);
 void UpdateButtonPlatformLoopPositions(ButtonPlatformLoop& loop);
 void UpdatePlatformLoopButtonPositions(Level& level);

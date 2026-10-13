@@ -24,6 +24,15 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(raylib)
 
+# Vendored Lua keeps native and web builds independent of a system install.
+file(GLOB LUA_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/third_party/lua-5.4.8/src/*.c")
+list(FILTER LUA_SOURCES EXCLUDE REGEX "/(lua|luac)\\.c$")
+add_library(GameLua STATIC ${LUA_SOURCES})
+target_include_directories(GameLua PUBLIC "${CMAKE_SOURCE_DIR}/third_party/lua-5.4.8/src")
+if(UNIX AND NOT EMSCRIPTEN)
+    target_link_libraries(GameLua PUBLIC m)
+endif()
+
 # Level data is loaded at runtime, but changing it must still refresh the copy
 # beside each executable.
 file(GLOB_RECURSE GAME_DATA_FILES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/game_data/*")
@@ -36,6 +45,9 @@ add_library(RaylibGameCore STATIC)
 add_executable(${PROJECT_NAME})
 add_subdirectory(src)
 target_link_libraries(RaylibGameCore PUBLIC raylib)
+target_link_libraries(RaylibGameCore PUBLIC GameLua)
+target_include_directories(RaylibGameCore PRIVATE "${CMAKE_SOURCE_DIR}/third_party")
+target_include_directories(RaylibGameCore PRIVATE "${CMAKE_SOURCE_DIR}/script_sdk")
 target_link_libraries(${PROJECT_NAME} PRIVATE RaylibGameCore)
 
 if (NOT "${PLATFORM}" STREQUAL "Web")
@@ -43,6 +55,48 @@ if (NOT "${PLATFORM}" STREQUAL "Web")
 endif()
 
 if (BUILD_TESTING AND NOT "${PLATFORM}" STREQUAL "Web")
+    if(WIN32)
+        add_library(CppScriptFixture SHARED tests/fixtures/script_behavior.cpp)
+        target_include_directories(CppScriptFixture PRIVATE script_sdk)
+        set_target_properties(CppScriptFixture PROPERTIES PREFIX "" OUTPUT_NAME "script-fixture.cpp" SUFFIX ".dll")
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+            target_link_options(CppScriptFixture PRIVATE -static-libgcc -static-libstdc++)
+        endif()
+        add_executable(CppScriptTests tests/CppScriptTests.cpp)
+        target_link_libraries(CppScriptTests PRIVATE RaylibGameCore)
+        target_compile_definitions(CppScriptTests PRIVATE CPP_FIXTURE_PATH="$<TARGET_FILE:CppScriptFixture>")
+        add_dependencies(CppScriptTests CppScriptFixture)
+        add_test(NAME cpp_scripts COMMAND CppScriptTests)
+    endif()
+    add_executable(LuaScriptTests tests/LuaScriptTests.cpp)
+    target_link_libraries(LuaScriptTests PRIVATE RaylibGameCore)
+    add_test(NAME lua_scripts COMMAND LuaScriptTests)
+    add_executable(WedgeTests tests/WedgeTests.cpp)
+    target_link_libraries(WedgeTests PRIVATE RaylibGameCore)
+    target_compile_definitions(WedgeTests PRIVATE WEDGE_FIXTURE_PATH="${CMAKE_SOURCE_DIR}/tests/fixtures/wedges.level")
+    add_test(NAME wedges COMMAND WedgeTests)
+    add_executable(LadderCollisionTests tests/LadderCollisionTests.cpp)
+    target_link_libraries(LadderCollisionTests PRIVATE RaylibGameCore)
+    add_test(NAME ladder_collision COMMAND LadderCollisionTests)
+    add_executable(LoopEditorTests tests/LoopEditorTests.cpp)
+    target_include_directories(LoopEditorTests PRIVATE "${CMAKE_SOURCE_DIR}/level_editor")
+    add_executable(SpriteSheetTests tests/SpriteSheetTests.cpp)
+    target_link_libraries(SpriteSheetTests PRIVATE RaylibGameCore)
+    add_test(NAME sprite_sheets COMMAND SpriteSheetTests)
+    add_executable(TileSelectionTransformTests tests/TileSelectionTransformTests.cpp)
+    target_include_directories(TileSelectionTransformTests PRIVATE "${CMAKE_SOURCE_DIR}/level_editor")
+    target_link_libraries(TileSelectionTransformTests PRIVATE RaylibGameCore)
+    add_test(NAME tile_selection_transforms COMMAND TileSelectionTransformTests)
+    target_link_libraries(LoopEditorTests PRIVATE RaylibGameCore)
+    target_compile_definitions(LoopEditorTests PRIVATE
+        LOOP_EXPLICIT_PATH="${CMAKE_SOURCE_DIR}/tests/fixtures/loop_editor_explicit.level"
+        LOOP_LEGACY_PATH="${CMAKE_SOURCE_DIR}/tests/fixtures/loop_editor_legacy.level")
+    add_test(NAME loop_editor COMMAND LoopEditorTests)
+    add_executable(EditorPlacementTests tests/EditorPlacementTests.cpp)
+    target_include_directories(EditorPlacementTests PRIVATE "${CMAKE_SOURCE_DIR}/level_editor")
+    target_link_libraries(EditorPlacementTests PRIVATE RaylibGameCore)
+    add_test(NAME editor_placement COMMAND EditorPlacementTests)
+
     add_executable(EditorConnectionTests tests/EditorConnectionTests.cpp level_editor/EditorConnections.cpp)
     target_include_directories(EditorConnectionTests PRIVATE "${CMAKE_SOURCE_DIR}/level_editor")
     target_link_libraries(EditorConnectionTests PRIVATE RaylibGameCore)
@@ -68,6 +122,36 @@ if (BUILD_TESTING AND NOT "${PLATFORM}" STREQUAL "Web")
         COMPLETED_GATEHOUSE_PATH="${CMAKE_SOURCE_DIR}/game_data/levels/gatehouse.level"
         GENERATOR_TEST_LEVEL_PATH="${CMAKE_SOURCE_DIR}/game_data/levels/gatehouse_generator_test.level")
     add_test(NAME generator_physics COMMAND GeneratorPhysicsTests)
+
+    add_executable(AntiGravityPadTests tests/AntiGravityPadTests.cpp)
+    target_link_libraries(AntiGravityPadTests PRIVATE RaylibGameCore)
+    target_compile_definitions(AntiGravityPadTests PRIVATE
+        TEST_LEVEL_PATH="${CMAKE_SOURCE_DIR}/game_data/levels/test_level.level")
+    add_test(NAME anti_gravity_pad COMMAND AntiGravityPadTests)
+
+    add_executable(TeleforceTests tests/TeleforceTests.cpp)
+    target_link_libraries(TeleforceTests PRIVATE RaylibGameCore)
+    add_test(NAME teleforce COMMAND TeleforceTests)
+
+    add_executable(LeedskalninDeviceTests tests/LeedskalninDeviceTests.cpp)
+    target_link_libraries(LeedskalninDeviceTests PRIVATE RaylibGameCore)
+    target_compile_definitions(LeedskalninDeviceTests PRIVATE
+        LEEDSKALNIN_WORKSHOP_PATH="${CMAKE_SOURCE_DIR}/game_data/levels/leedskalnin_workshop.level")
+    add_test(NAME leedskalnin_devices COMMAND LeedskalninDeviceTests)
+
+    add_executable(ClassicContraptionTests tests/ClassicContraptionTests.cpp)
+    target_link_libraries(ClassicContraptionTests PRIVATE RaylibGameCore)
+    target_compile_definitions(ClassicContraptionTests PRIVATE
+        CLASSIC_LAB_LEVEL_PATH="${CMAKE_SOURCE_DIR}/game_data/levels/incredible_machine_lab.level")
+    add_test(NAME classic_contraptions COMMAND ClassicContraptionTests)
+
+    add_executable(ThermalObjectTests tests/ThermalObjectTests.cpp)
+    target_link_libraries(ThermalObjectTests PRIVATE RaylibGameCore)
+    add_test(NAME thermal_objects COMMAND ThermalObjectTests)
+
+    add_executable(SignalDustTests tests/SignalDustTests.cpp)
+    target_link_libraries(SignalDustTests PRIVATE RaylibGameCore)
+    add_test(NAME signal_dust COMMAND SignalDustTests)
 
     add_executable(FluidPhysicsTests tests/FluidPhysicsTests.cpp)
     target_link_libraries(FluidPhysicsTests PRIVATE RaylibGameCore)

@@ -1239,6 +1239,38 @@ float AddCellularFluidMass(FluidField& field, float amount, Vector2 velocity) {
     return amount - remaining;
 }
 
+float EmitCellularFluidMass(FluidField& field, Vector2 source, float amount, Vector2 velocity) {
+    if ((field.type != FluidType::Water && field.type != FluidType::Sand) ||
+        field.cells.empty() || field.gridColumns <= 0 || field.gridRows <= 0 || amount <= 0.0f) {
+        return 0.0f;
+    }
+
+    const int sourceColumn = std::clamp(static_cast<int>((source.x - field.bounds.x) / field.cellSize),
+        0, field.gridColumns - 1);
+    const int sourceRow = std::clamp(static_cast<int>((source.y - field.bounds.y) / field.cellSize),
+        0, field.gridRows - 1);
+    float remaining = amount;
+    const int maximumDistance = std::max(field.gridColumns, field.gridRows);
+    for (int distance = 0; distance <= maximumDistance && remaining > 0.0001f; ++distance) {
+        for (int row = std::max(0, sourceRow - distance);
+             row <= std::min(field.gridRows - 1, sourceRow + distance) && remaining > 0.0001f; ++row) {
+            for (int column = std::max(0, sourceColumn - distance);
+                 column <= std::min(field.gridColumns - 1, sourceColumn + distance) && remaining > 0.0001f; ++column) {
+                if (std::max(std::abs(column - sourceColumn), std::abs(row - sourceRow)) != distance) continue;
+                FluidCell& cell = field.cells[CellIndex(field, column, row)];
+                if (cell.solid || cell.mass >= 0.999f) continue;
+                const float added = fminf(remaining, 1.0f - cell.mass);
+                const float combined = cell.mass + added;
+                cell.velocity.x = (cell.velocity.x * cell.mass + velocity.x * added) / combined;
+                cell.velocity.y = (cell.velocity.y * cell.mass + velocity.y * added) / combined;
+                cell.mass = combined;
+                remaining -= added;
+            }
+        }
+    }
+    return amount - remaining;
+}
+
 int EmitParticleFluid(
     FluidField& field,
     Vector2 source,

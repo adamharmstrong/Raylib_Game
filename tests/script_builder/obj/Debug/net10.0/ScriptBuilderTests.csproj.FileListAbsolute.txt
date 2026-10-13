@@ -1,0 +1,15 @@
+C:\Users\nanob\source\repos\Raylib_Game\tests\script_builder\bin\Debug\net10.0\ScriptBuilderTests.exe
+C:\Users\nanob\source\repos\Raylib_Game\tests\script_builder\bin\Debug\net10.0\ScriptBuilderTests.deps.json
+C:\Users\nanob\source\repos\Raylib_Game\tests\script_builder\bin\Debug\net10.0\ScriptBuilderTests.runtimeconfig.json
+C:\Users\nanob\source\repos\Raylib_Game\tests\script_builder\bin\Debug\net10.0\ScriptBuilderTests.dll
+C:\Users\nanob\source\repos\Raylib_Game\tests\script_builder\bin\Debug\net10.0\ScriptBuilderTests.pdb
+C:\Users\nanob\source\repos\Raylib_Game\tests\script_builder\obj\Debug\net10.0\ScriptBuilderTests.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\nanob\source\repos\Raylib_Game\tests\script_builder\obj\Debug\net10.0\ScriptBuilderTests.AssemblyInfoInputs.cache
+C:\Users\nanob\source\repos\Raylib_Game\tests\script_builder\obj\Debug\net10.0\ScriptBuilderTests.AssemblyInfo.cs
+C:\Users\nanob\source\repos\Raylib_Game\tests\script_builder\obj\Debug\net10.0\ScriptBuilderTests.csproj.CoreCompileInputs.cache
+C:\Users\nanob\source\repos\Raylib_Game\tests\script_builder\obj\Debug\net10.0\ScriptBuilderTests.sourcelink.json
+C:\Users\nanob\source\repos\Raylib_Game\tests\script_builder\obj\Debug\net10.0\ScriptBuilderTests.dll
+C:\Users\nanob\source\repos\Raylib_Game\tests\script_builder\obj\Debug\net10.0\refint\ScriptBuilderTests.dll
+C:\Users\nanob\source\repos\Raylib_Game\tests\script_builder\obj\Debug\net10.0\ScriptBuilderTests.pdb
+C:\Users\nanob\source\repos\Raylib_Game\tests\script_builder\obj\Debug\net10.0\ScriptBuilderTests.genruntimeconfig.cache
+C:\Users\nanob\source\repos\Raylib_Game\tests\script_builder\obj\Debug\net10.0\ref\ScriptBuilderTests.dll

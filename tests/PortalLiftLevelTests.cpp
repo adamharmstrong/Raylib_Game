@@ -47,10 +47,22 @@ int main() {
     assert(level.directionalSpikeHazards.size() == 1);
     assert(level.directionalSpikeHazards.front().direction == SpikeDirection::Down);
     assert(level.darknessAreas.size() == 1);
-    assert(level.pitPlatforms.size() == 7);
+    // Two starting ledges, one fan plinth, four airborne steps, and the exit ledge.
+    assert(level.pitPlatforms.size() == 8);
     assert(level.enemies.size() == 1);
-    assert(level.ladders.front().x + level.ladders.front().width <=
-        level.pitPlatforms[1].x);
+    assert(level.ladders.size() == 1);
+    const Rectangle leftStartingLedge{48.0f, 510.0f, 20.0f, 30.0f};
+    const Rectangle rightStartingLedge{118.0f, 510.0f, 232.0f, 30.0f};
+    assert(ContainsRectangle(level.pitPlatforms, leftStartingLedge));
+    assert(ContainsRectangle(level.pitPlatforms, rightStartingLedge));
+    const Rectangle ladder = level.ladders.front();
+    assert(leftStartingLedge.x + leftStartingLedge.width <= ladder.x);
+    assert(ladder.x + ladder.width <= rightStartingLedge.x);
+    // No other fixed platform may fill the ladder opening at the ledge height.
+    const Rectangle ladderOpening{ladder.x, leftStartingLedge.y,
+        ladder.width, leftStartingLedge.height};
+    assert(std::none_of(level.pitPlatforms.begin(), level.pitPlatforms.end(),
+        [&](Rectangle platform) { return CheckCollisionRecs(platform, ladderOpening); }));
 
     const PortalPair& portal = level.portalPairs.front();
     const Ramp& arrivalRamp = level.ramps.front();

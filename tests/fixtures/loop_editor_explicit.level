@@ -1,0 +1,7 @@
+# An explicit rider may precede the ordinary button record it references.
+script power_pulley_panic
+button 64 64 32 16
+buttonPlatformLoop 0 480 360 120 200 80 28 28 4
+platformLoopButton 0 2 24 12 1
+button 0 0 32 16
+buttonExit 1

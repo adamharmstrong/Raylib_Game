@@ -4,9 +4,19 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <sstream>
 #include <vector>
 
 int main() {
+    GuideObject scuba{};
+    std::istringstream scubaStream("120 80 16");
+    if (!ParseGuideObject("scubaGear", scubaStream, scuba) ||
+        scuba.type != GuideObjectType::ScubaGear || !scuba.collider.isTrigger ||
+        scuba.collected || scuba.collider.radius != 16.0f) {
+        std::cerr << "Scuba gear did not load as an uncollected trigger.\n";
+        return 1;
+    }
+
     FluidField gas{};
     gas.type = FluidType::Gas;
     gas.bounds = {0.0f, 0.0f, 200.0f, 200.0f};

@@ -173,6 +173,8 @@ struct Ramp {
     float thickness{18.0f};
     float angle{0.0f};
     int segmentCount{4};
+    // Wedges share the slope solver and editor history with fixed ramps.
+    bool wedge{false};
 };
 
 struct TrapDoor {

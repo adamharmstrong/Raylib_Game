@@ -1,7 +1,10 @@
 #pragma once
+#include "SpriteSheetTextures.h"
 
 #include "Achievement.h"
 #include "Level.h"
+#include "LuaScripts.h"
+#include "CppScripts.h"
 #include "Player.h"
 #include "DevConsole.h"
 #include "raylib.h"
@@ -177,12 +180,22 @@ private:
     void DrawNeurotoxinInfrastructure();
     void DrawNeurotoxinLevel();
     void DrawGasMaskPickup(const GuideObject& gasMask) const;
+    void DrawEquippedScubaGear(const Player& activePlayer) const;
     void DrawEquippedGasMask(const Player& activePlayer) const;
     void DrawDebugCollision() const;
 
     GameMode mode{GameMode::Title};
     bool shouldQuit{false};
     Level level{};
+    Music customMusic{};
+    bool customMusicLoaded{false};
+    std::string customMusicPath;
+    struct ObjectSoundState { Sound sound{}; bool loaded{false}; bool overlapping{false}; };
+    std::vector<ObjectSoundState> objectSoundStates;
+    void ClearLevelAudio();
+    LuaScripts luaScripts;
+    CppScripts cppScripts;
+    bool luaExitOpen{false};
     Player player{};
     Player player2{};
     Player player3{};
@@ -192,6 +205,7 @@ private:
     Texture2D playerFourSpritesTexture{};
     Texture2D skullTexture{};
     Texture2D industrialTiles{};
+    SpriteSheetTextures spriteSheets;
     Texture2D industrialBackground{};
     Texture2D industrialFarBackground{};
     Texture2D chainLinksTexture{};
@@ -320,6 +334,7 @@ private:
     std::array<float, 4> playerAir{1.0f, 1.0f, 1.0f, 1.0f};
     std::array<float, 4> playerAirWarningPhase{};
     std::array<bool, 4> playerGasMasks{};
+    std::array<bool, 4> playerScubaGear{};
     std::array<float, 4> playerEnemyDamageGraceTimers{};
     float toxinEmissionAccumulator{0.0f};
     float toxinExhaustAccumulator{0.0f};

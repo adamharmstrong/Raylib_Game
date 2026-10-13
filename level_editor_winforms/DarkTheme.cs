@@ -105,7 +105,13 @@ internal static class DarkTheme
         foreach (ToolStripItem item in items)
         {
             item.ForeColor = Text;
-            if (item is ToolStripMenuItem menuItem) ApplyToolStripItems(menuItem.DropDownItems);
+            if (item is ToolStripDropDownItem dropDownItem)
+            {
+                dropDownItem.DropDown.BackColor = Panel;
+                dropDownItem.DropDown.ForeColor = Text;
+                dropDownItem.DropDown.Renderer = new ToolStripProfessionalRenderer(new DarkColorTable());
+                ApplyToolStripItems(dropDownItem.DropDownItems);
+            }
         }
     }
 

@@ -56,6 +56,7 @@ add("Actors", "Enemy Robot", "enemy", "Patrolling physics-aware enemy that colli
 add("World", "Floor / Solid", "solid", "Primary static collision geometry, rendered from the industrial floor, wall, ceiling, and fill tiles.", "floor")
 add("World", "Platform", "platform", "A compact static ledge used for traversal, machinery support, and fluid obstacles.", "platform")
 add("World", "Ladder", "ladder", "Climbable vertical route that supports multiple ladder shafts in a single level.", "ladder")
+add("World", "Wedge", "wedge", "A fixed triangular metal wedge with a sloped working face; supports players and physics bodies using the ramp slope solver.", "wedge")
 add("World", "Ramp", "ramp", "A fixed-angle inclined surface used by players and round or rectangular physics bodies.", "ramp")
 add("World", "One-Way Platform", "oneWayPlatform", "Supports falling bodies from above while allowing movement upward through its underside.", "oneway")
 add("World", "Guide Rail", "guideRail", "Static mechanical rail used to frame or constrain moving assemblies.", "rail")
@@ -134,6 +135,7 @@ add("Hazards", "Swinging Hammer", "swingingHammer", "Heavy pendulum hazard with 
 add("Hazards", "Saw Blade", "sawBlade", "Fast rotating toothed hazard that can also patrol along a configured path.", "saw")
 add("Hazards", "Steam Vent", "steamVent", "Periodic directional jet that visibly pushes players and loose objects.", "steam")
 add("Hazards", "Electrical Arc", "electricalArc", "Intermittent powered lightning connection that damages players crossing the beam.", "arc")
+add("Hazards", "Teleforce Projector", "teleforce", "Tesla-inspired particle projector that charges before releasing a short destructive beam with extreme directional force.", "teleforce")
 
 # Pickups and destructibles
 add("Gameplay Items", "Collectible", "collectible", "Touch pickup represented by a bright token; disappears once collected.", "collectible")
@@ -248,6 +250,9 @@ def draw_icon(entry: Entry, output: Path) -> None:
         line(draw, ((285, 48), (285, 225)), STEEL, 12)
         for y in range(62, 220, 30):
             line(draw, ((155, y), (285, y)), LIGHT, 7)
+    elif kind == "wedge":
+        draw.polygon(((65, 205), (370, 88), (370, 225)), fill=STEEL, outline=INK)
+        line(draw, ((65, 205), (370, 88)), LIGHT, 7)
     elif kind == "ramp":
         draw.polygon(((65, 205), (370, 88), (385, 130), (80, 230)), fill=BROWN, outline=INK)
         line(draw, ((65, 205), (370, 88)), (205, 155, 84), 7)
@@ -468,6 +473,14 @@ def draw_icon(entry: Entry, output: Path) -> None:
         points = [(45, 145), (95, 90), (145, 160), (205, 75), (265, 150), (325, 85), (395, 135)]
         line(draw, points, CYAN, 12)
         line(draw, points, LIGHT, 4)
+    elif kind == "teleforce":
+        draw.rectangle((55, 82, 215, 195), fill=(42, 49, 54), outline=INK, width=8)
+        for y in (105, 138, 171):
+            draw.ellipse((92, y - 13, 118, y + 13), outline=ORANGE, width=7)
+        draw.rectangle((205, 112, 285, 165), fill=STEEL, outline=INK, width=7)
+        draw.polygon(((285, 100), (325, 114), (325, 163), (285, 178)), fill=(170, 116, 41), outline=INK)
+        line(draw, ((325, 139), (405, 139)), ORANGE, 28)
+        line(draw, ((325, 139), (405, 139)), LIGHT, 8)
     elif kind in {"oil", "mud", "water", "sand", "gel", "gas", "waterpit", "toxin"}:
         colors = {
             "oil": (37, 30, 44), "mud": (91, 70, 48), "water": (45, 141, 205),

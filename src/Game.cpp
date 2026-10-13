@@ -6,6 +6,7 @@
 #include "Machine.h"
 #include "MathUtils.h"
 #include "Render.h"
+#include "ScriptWorld.h"
 
 #include <algorithm>
 #include <array>
@@ -1023,7 +1024,7 @@ namespace {
         for (const Screw& object : currentLevel.screws) consider(RotatedObjectBounds(object.center, object.length, object.radius * 2.4f, object.angle), "Screw", "A rotating helical shaft that converts rotation into linear force and can engage a gear.");
         for (const Fan& object : currentLevel.fans) considerCircle(object.center, 28.0f, "Fan", "A powered fan that creates directional wind and pushes exposed objects.");
         for (const Pinwheel& object : currentLevel.pinwheels) considerCircle(object.center, object.radius, "Pinwheel", "A lightweight rotor that spins faster when stronger wind passes over it.");
-        for (const Ramp& object : currentLevel.ramps) consider(RotatedObjectBounds(object.center, object.length, object.thickness, object.angle), "Ramp", "A fixed inclined plane that lets objects gain or lose height gradually.");
+        for (const Ramp& object : currentLevel.ramps) consider(RotatedObjectBounds(object.center, object.length, object.thickness, object.angle), object.wedge ? "Wedge" : "Ramp", object.wedge ? "A fixed triangular wedge with a sloped working face." : "A fixed inclined plane that lets objects gain or lose height gradually.");
         for (const SeeSaw& object : currentLevel.seeSaws) consider(RotatedObjectBounds(object.pivot, object.length, fmaxf(object.thickness, 36.0f), object.angle), "See-Saw", "A lever balanced on a central fulcrum; weight on one side raises the other.");
         for (const TrapDoor& object : currentLevel.trapDoors) {
             float angle = object.angle * DEG2RAD;
@@ -1374,32 +1375,6 @@ namespace {
             [rect](const ButtonLadderLink& link) {
                 return link.activated && CheckCollisionRecs(rect, GetRevealedLadderRect(link));
             });
-    }
-
-    void CarveLadderPassThroughOpenings(std::vector<Rectangle>& solids, const Level& level) {
-        // Only platforms intersected by a ladder are split. This retains normal
-        // floor collision everywhere else while a climbing player crosses the
-        // matching floor through its ladder opening.
-        for (const Rectangle& ladder : level.ladders) {
-            std::vector<Rectangle> carved;
-            carved.reserve(solids.size() + 2);
-            for (const Rectangle& solid : solids) {
-                const bool crossesLadder =
-                    solid.x < ladder.x + ladder.width && solid.x + solid.width > ladder.x &&
-                    solid.y < ladder.y + ladder.height && solid.y + solid.height > ladder.y;
-                if (!crossesLadder) {
-                    carved.push_back(solid);
-                    continue;
-                }
-
-                const float leftWidth = ladder.x - solid.x;
-                if (leftWidth > 0.0f) carved.push_back({solid.x, solid.y, leftWidth, solid.height});
-                const float rightX = ladder.x + ladder.width;
-                const float rightWidth = solid.x + solid.width - rightX;
-                if (rightWidth > 0.0f) carved.push_back({rightX, solid.y, rightWidth, solid.height});
-            }
-            solids = std::move(carved);
-        }
     }
 
     bool HasWaterPit(const Level& level) {
@@ -2856,6 +2831,36 @@ namespace {
         return acceleration;
     }
 
+    Vector2 GetAntiGravityAcceleration(
+        const Level& level,
+        Rectangle targetBounds,
+        Vector2 targetVelocity,
+        WorldLayer layer
+    ) {
+        Vector2 acceleration{};
+        for (const GuideObject& object : level.guideObjects) {
+            if (object.layer != layer || object.type != GuideObjectType::AntiGravityPad) continue;
+            const Vector2 padAcceleration = GetAntiGravityPadAcceleration(
+                object, targetBounds, targetVelocity);
+            acceleration.x += padAcceleration.x;
+            acceleration.y += padAcceleration.y;
+        }
+        return acceleration;
+    }
+
+    void ApplyAntiGravityToVelocity(
+        Vector2& velocity,
+        Rectangle targetBounds,
+        WorldLayer layer,
+        const Level& level,
+        float dt
+    ) {
+        const Vector2 acceleration = GetAntiGravityAcceleration(
+            level, targetBounds, velocity, layer);
+        velocity.x += acceleration.x * dt;
+        velocity.y += acceleration.y * dt;
+    }
+
     void DisturbFluids(
         std::vector<FluidField>& fields,
         Vector2 point,
@@ -3197,6 +3202,7 @@ void Game::Run(const std::string& playtestPath) {
     playtestLevelPath = playtestPath;
     Load();
     if (!playtestLevelPath.empty()) {
+        selectedCharacters[0] = std::clamp(level.playerCharacter, 0, 3);
         mode = GameMode::Playing;
         SetWindowTitle("Power Pulley Panic - Playtest (F5: Return to Editor)");
     }
@@ -3500,6 +3506,9 @@ void Game::UpdateGameplayCamera(float dt, bool snap) {
 }
 
 void Game::Reset() {
+    cppScripts.Clear();
+    luaScripts.Clear();
+    luaExitOpen = false;
     std::string levelId = "gatehouse";
     if (currentLevelNode >= 0 && currentLevelNode < static_cast<int>(overworldNodes.size())) {
         levelId = overworldNodes[currentLevelNode].id;
@@ -3512,8 +3521,10 @@ void Game::Reset() {
     else if (levelId == "lower_works") {
         fallback = CreateFloodedFoundryLevel();
     }
+    ClearLevelAudio();
     level = LoadLevelFromFile(playtestLevelPath.empty()
         ? "game_data/levels/" + levelId + ".level" : playtestLevelPath, fallback);
+    spriteSheets.Load(level.spriteSheetPaths);
     for (RotaryLatch& latch : level.rotaryLatches) {
         ResetRotaryLatch(latch);
     }
@@ -3584,12 +3595,25 @@ void Game::Reset() {
     playerAir = {1.0f, 1.0f, 1.0f, 1.0f};
     playerAirWarningPhase = {};
     playerGasMasks = {};
+    playerScubaGear = {};
     playerEnemyDamageGraceTimers = {};
     toxinEmissionAccumulator = 0.0f;
     toxinExhaustAccumulator = 0.0f;
     toxinLevelTimer = 0.0f;
     activeCameraZone = -1;
     UpdateGameplayCamera(0.0f, true);
+    luaScripts.Load(level, playtestLevelPath.empty()
+        ? "game_data/levels/" + levelId + ".level" : playtestLevelPath,
+        {&player, multiplayerEnabled ? &player2 : nullptr, threePlayerEnabled ? &player3 : nullptr,
+            fourPlayerEnabled ? &player4 : nullptr},
+        [this](const std::string& message) { console.AddLine(message); TraceLog(LOG_WARNING, "%s", message.c_str()); },
+        [this]() { luaExitOpen = true; });
+    cppScripts.Load(level, playtestLevelPath.empty()
+        ? "game_data/levels/" + levelId + ".level" : playtestLevelPath,
+        {&player, multiplayerEnabled ? &player2 : nullptr, threePlayerEnabled ? &player3 : nullptr,
+            fourPlayerEnabled ? &player4 : nullptr},
+        [this](const std::string& message) { console.AddLine(message); TraceLog(LOG_WARNING, "%s", message.c_str()); },
+        [this]() { luaExitOpen = true; });
 }
 
 void Game::StartGame() {
@@ -3604,7 +3628,9 @@ void Game::OpenCharacterSelect(int playerCount) {
     threePlayerEnabled = characterSelectPlayerCount >= 3;
     fourPlayerEnabled = characterSelectPlayerCount >= 4;
     characterSelectFocusPlayer = 0;
-    selectedCharacters = {0, 1, 2, 3};
+    const int defaultCharacter = std::clamp(level.playerCharacter, 0, 3);
+    selectedCharacters = {defaultCharacter, (defaultCharacter + 1) % kCharacterCount,
+        (defaultCharacter + 2) % kCharacterCount, (defaultCharacter + 3) % kCharacterCount};
     characterSelectReady = {};
     mode = GameMode::CharacterSelect;
     titleModeMenuOpen = false;
@@ -3630,7 +3656,9 @@ void Game::InitializeOverworld() {
         {"spring_test_level", "S", "Spring Laboratory", {720.0f, 375.0f}, 2, true, false},
         {"tileset_reference", "R", "Tileset Reference", {935.0f, 490.0f}, 2, true, false},
         {"gear_render_gallery", "G", "Gear Render Gallery", {1160.0f, 350.0f}, 2, true, false},
-        {"gatehouse_generator_test", "1G", "Gatehouse Generator Test", {1380.0f, 465.0f}, 2, true, false}
+        {"gatehouse_generator_test", "1G", "Gatehouse Generator Test", {1380.0f, 465.0f}, 2, true, false},
+        {"leedskalnin_workshop", "E", "Leedskalnin Workshop", {1390.0f, 250.0f}, 2, true, false},
+        {"incredible_machine_lab", "I", "Contraption Parts Laboratory", {1510.0f, 165.0f}, 2, true, false}
     };
 
     overworldPaths = {
@@ -3645,6 +3673,8 @@ void Game::InitializeOverworld() {
         {10, 11},
         {11, 12},
         {12, 13},
+        {13, 15},
+        {15, 16},
         {0, 14}
     };
 
@@ -3921,6 +3951,15 @@ void Game::Update(float dt) {
     UpdateMachines(dt, player1Input, player2Input, player3Input, player4Input);
     UpdatePlayerAir(dt);
     UpdateEnemies(dt);
+    luaScripts.Update(dt, {playerAlive ? &player : nullptr,
+        multiplayerEnabled && player2Alive ? &player2 : nullptr,
+        threePlayerEnabled && player3Alive ? &player3 : nullptr,
+        fourPlayerEnabled && player4Alive ? &player4 : nullptr});
+    cppScripts.Update(dt, {playerAlive ? &player : nullptr,
+        multiplayerEnabled && player2Alive ? &player2 : nullptr,
+        threePlayerEnabled && player3Alive ? &player3 : nullptr,
+        fourPlayerEnabled && player4Alive ? &player4 : nullptr});
+    if (luaExitOpen) gateBottom = level.exitTrigger.y;
     CheckFailureConditions();
     UpdateGameplayCamera(dt, false);
 
@@ -4729,15 +4768,25 @@ void Game::UpdatePlayer(Player& activePlayer, const PlayerControls& controls, fl
     if (controlsEnabled) {
         std::vector<Rectangle> solids = BuildSolids(level);
         AppendFlexibleObjectColliders(solids, level);
-        std::vector<Rectangle> playerMovementSolids = solids;
-        if (onLadder || activePlayer.climbing) {
-            CarveLadderPassThroughOpenings(playerMovementSolids, level);
-        }
+        std::vector<Rectangle> climbLadders = level.ladders;
+        for (const auto& link : level.buttonLadderLinks)
+            if (link.activated) climbLadders.push_back(GetRevealedLadderRect(link));
+        Rectangle climbBounds = activePlayer.rect;
+        // Include this step's horizontal travel so slight sideways movement on
+        // the ladder does not collide with the edge of its temporary opening.
+        const float horizontalStep = activePlayer.velocity.x * dt;
+        climbBounds.x += std::min(0.0f, horizontalStep);
+        climbBounds.width += fabsf(horizontalStep);
+        auto playerMovementSolids = BuildLadderMovementSolids(solids, climbLadders,
+            climbBounds, activePlayer.climbing);
 
         const float previousFootX = RectCenterX(activePlayer.rect);
         const float previousFootY = activePlayer.rect.y + activePlayer.rect.height;
         activePlayer.rect.x += activePlayer.velocity.x * dt;
         ResolveHorizontal(activePlayer, playerMovementSolids);
+        ResolveTilePassage(activePlayer, level,
+            {previousFootX - activePlayer.rect.width / 2, previousFootY - activePlayer.rect.height,
+                activePlayer.rect.width, activePlayer.rect.height}, true);
 
         for (int i = 0; i < static_cast<int>(level.stoneBlocks.size()); i++) {
             StoneBlock& block = level.stoneBlocks[i];
@@ -4895,6 +4944,9 @@ void Game::UpdatePlayer(Player& activePlayer, const PlayerControls& controls, fl
         }
 
         ResolveVertical(activePlayer, playerSolids);
+        ResolveTilePassage(activePlayer, level,
+            {activePlayer.rect.x, previousFootY - activePlayer.rect.height,
+                activePlayer.rect.width, activePlayer.rect.height}, false);
         ApplyScrewConveyor(activePlayer.rect, activePlayer.velocity, 1.0f,
             WorldLayer::Middleground, level.screws, dt);
         ResolvePlayerRampStanding(activePlayer, previousFootX, previousFootY, level.ramps, dt);
@@ -5245,6 +5297,7 @@ void Game::UpdatePlayerAir(float dt) {
             SampleFluidAroundRectangle(level, FluidType::Gas, activePlayer->rect).density >= 0.025f;
         const bool underwaterHazard =
             level.script != LevelScript::NeurotoxinMaze &&
+            !playerScubaGear[index] &&
             IsPlayerHeadSubmerged(*activePlayer, level);
 
         if (level.script != LevelScript::NeurotoxinMaze) {
@@ -5309,6 +5362,23 @@ void Game::UpdateMachines(
             player1Input, player2Input, player3Input, player4Input
         };
         flexibleInputConsumed = UpdateFlexibleEndpointInteractions(flexiblePlayers, flexibleInputs);
+        for (GuideObject& object : level.guideObjects) {
+            if (object.type != GuideObjectType::TernarySwitch || object.broken || !object.active) continue;
+            Rectangle reach = GetGuideObjectBounds(object);
+            reach.x -= 18.0f;
+            reach.y -= 18.0f;
+            reach.width += 36.0f;
+            reach.height += 36.0f;
+            for (int playerIndex = 0; playerIndex < static_cast<int>(flexiblePlayers.size()); ++playerIndex) {
+                Player* activePlayer = flexiblePlayers[playerIndex];
+                if (activePlayer == nullptr || flexibleInputConsumed[playerIndex] ||
+                    !flexibleInputs[playerIndex].interactPressed ||
+                    !CheckCollisionRecs(activePlayer->rect, reach)) continue;
+                CycleTernarySwitch(object);
+                flexibleInputConsumed[playerIndex] = true;
+                break;
+            }
+        }
 
         const Rectangle flexibleSimulationBounds{
             gameplayCamera.target.x - Constants::ScreenWidth * 0.5f - 240.0f,
@@ -5339,9 +5409,17 @@ void Game::UpdateMachines(
                     (chain.points[i].y - chain.previousPoints[i].y) / fmaxf(0.001f, dt)
                 };
                 Vector2 fluidAcceleration = GetFlexibleFluidAcceleration(level, chain.points[i], pointVelocity, 0.24f, 4.2f);
+                const float pointRadius = fmaxf(1.0f, chain.collisionRadius);
+                Vector2 antiGravityAcceleration = GetAntiGravityAcceleration(
+                    level,
+                    {chain.points[i].x - pointRadius, chain.points[i].y - pointRadius,
+                     pointRadius * 2.0f, pointRadius * 2.0f},
+                    pointVelocity,
+                    WorldLayer::Middleground
+                );
                 chainWind[i] = {
-                    wind.x * 0.30f + fluidAcceleration.x,
-                    wind.y * 0.30f + fluidAcceleration.y
+                    wind.x * 0.30f + fluidAcceleration.x + antiGravityAcceleration.x,
+                    wind.y * 0.30f + fluidAcceleration.y + antiGravityAcceleration.y
                 };
             }
             UpdateChainPhysics(chain, colliders, chainWind, dt);
@@ -5376,9 +5454,17 @@ void Game::UpdateMachines(
                     (rope.points[i].y - rope.previousPoints[i].y) / fmaxf(0.001f, dt)
                 };
                 Vector2 fluidAcceleration = GetFlexibleFluidAcceleration(level, rope.points[i], pointVelocity, 0.96f, 5.8f);
+                const float pointRadius = fmaxf(1.0f, rope.thickness * 0.5f);
+                Vector2 antiGravityAcceleration = GetAntiGravityAcceleration(
+                    level,
+                    {rope.points[i].x - pointRadius, rope.points[i].y - pointRadius,
+                     pointRadius * 2.0f, pointRadius * 2.0f},
+                    pointVelocity,
+                    WorldLayer::Middleground
+                );
                 ropeWind[i] = {
-                    wind.x * 0.62f + fluidAcceleration.x,
-                    wind.y * 0.62f + fluidAcceleration.y
+                    wind.x * 0.62f + fluidAcceleration.x + antiGravityAcceleration.x,
+                    wind.y * 0.62f + fluidAcceleration.y + antiGravityAcceleration.y
                 };
             }
             UpdatePhysicsRope(rope, colliders, ropeWind, dt);
@@ -5806,8 +5892,10 @@ void Game::UpdateEnemies(float dt) {
         ApplyWindToVelocity(enemy.velocity, RectCenter(enemy.rect), 1.0f, level, dt, 0.32f);
         ApplyFluidForcesToVelocity(enemy.velocity, enemy.rect, 1.0f, 0.82f, 4.2f, level, dt);
 
+        auto horizontalSolids = solids;
+        AppendDirectionalTileSolids(horizontalSolids, level, WorldLayer::Middleground, enemy.rect, enemy.velocity, true);
         enemy.rect.x += enemy.velocity.x * dt;
-        bool hitWall = ResolveEnemyHorizontal(enemy, solids);
+        bool hitWall = ResolveEnemyHorizontal(enemy, horizontalSolids);
 
         if (enemy.rect.x <= enemy.patrolMinX) {
             enemy.rect.x = enemy.patrolMinX;
@@ -5821,8 +5909,10 @@ void Game::UpdateEnemies(float dt) {
             enemy.facingRight = !enemy.facingRight;
         }
 
+        auto verticalSolids = solids;
+        AppendDirectionalTileSolids(verticalSolids, level, WorldLayer::Middleground, enemy.rect, enemy.velocity, false);
         enemy.rect.y += enemy.velocity.y * dt;
-        ResolveEnemyVertical(enemy, solids);
+        ResolveEnemyVertical(enemy, verticalSolids);
         ResolveRampStanding(enemy.rect, enemy.velocity, enemy.onGround, level.ramps);
         ResolveTrapDoorStanding(enemy.rect, enemy.velocity, enemy.onGround, level.trapDoors);
         ResolveSeeSawStanding(enemy.rect, enemy.velocity, enemy.onGround, level.seeSaws);
@@ -5885,11 +5975,24 @@ void Game::UpdateFluids(float dt) {
 }
 
 void Game::UpdatePhysicsObjects(float dt) {
+    auto movementSolids = [&](const std::vector<Rectangle>& base, WorldLayer layer,
+        Rectangle previous, Vector2 velocity, bool horizontal) {
+        auto result = base;
+        AppendDirectionalTileSolids(result, level, layer, previous, velocity, horizontal);
+        return result;
+    };
     std::vector<Rectangle> solids = BuildSolids(level);
     std::array<std::vector<Rectangle>, WorldLayerCount> dynamicWorldSolids{
-        solids, solids, solids
+        BuildSolids(level, WorldLayer::Background), solids, BuildSolids(level, WorldLayer::Foreground)
     };
     AppendFlexibleObjectColliders(dynamicWorldSolids[WorldLayerIndex(WorldLayer::Middleground)], level);
+    for (size_t layerIndex = 0; layerIndex < WorldLayerCount; ++layerIndex) {
+        std::vector<GuideObject> layerObjects;
+        for (const GuideObject& object : level.guideObjects) {
+            if (WorldLayerIndex(object.layer) == layerIndex) layerObjects.push_back(object);
+        }
+        AppendGuideObjectSolids(dynamicWorldSolids[layerIndex], layerObjects);
+    }
     for (const GuideObject& object : level.guideObjects) {
         if (object.body.type == BodyType::Dynamic && !object.broken && object.active) {
             dynamicWorldSolids[WorldLayerIndex(object.layer)].push_back(GetGuideObjectBounds(object));
@@ -5911,14 +6014,17 @@ void Game::UpdatePhysicsObjects(float dt) {
         }
 
         block.velocity.y += Constants::Gravity * dt;
+        ApplyAntiGravityToVelocity(block.velocity, block.rect, block.layer, level, dt);
         ApplyWindToVelocity(block.velocity, RectCenter(block.rect), block.mass, level, dt, 0.40f);
         ApplyFluidForcesToVelocity(block.velocity, block.rect, block.mass, 0.30f, 5.6f, level, dt);
 
+        const Rectangle previousBlockHorizontal = block.rect;
         block.rect.x += block.velocity.x * dt;
-        ResolveStoneBlockHorizontal(block, blockSolids);
+        ResolveStoneBlockHorizontal(block, movementSolids(blockSolids, block.layer, previousBlockHorizontal, block.velocity, true));
 
+        const Rectangle previousBlockVertical = block.rect;
         block.rect.y += block.velocity.y * dt;
-        ResolveStoneBlockVertical(block, blockSolids);
+        ResolveStoneBlockVertical(block, movementSolids(blockSolids, block.layer, previousBlockVertical, block.velocity, false));
         ApplyScrewConveyor(block.rect, block.velocity, block.mass, block.layer, level.screws, dt);
         ResolveRampStanding(block.rect, block.velocity, block.onGround, level.ramps);
         ResolveTrapDoorStanding(block.rect, block.velocity, block.onGround, level.trapDoors);
@@ -5950,6 +6056,7 @@ void Game::UpdatePhysicsObjects(float dt) {
 
         boulder.onGround = false;
         boulder.velocity.y += Constants::Gravity * dt;
+        ApplyAntiGravityToVelocity(boulder.velocity, GetBoulderBounds(boulder), boulder.layer, level, dt);
         ApplyWindToVelocity(boulder.velocity, boulder.center, boulder.mass, level, dt, 0.45f);
         ApplyFluidForcesToVelocity(
             boulder.velocity,
@@ -5961,12 +6068,14 @@ void Game::UpdatePhysicsObjects(float dt) {
             dt
         );
 
+        const Rectangle previousBoulderHorizontal = GetBoulderBounds(boulder);
         boulder.center.x += boulder.velocity.x * dt;
-        ResolveBoulderCollisions(boulder, boulderSolids);
+        ResolveBoulderCollisions(boulder, movementSolids(boulderSolids, boulder.layer, previousBoulderHorizontal, boulder.velocity, true));
 
         const float previousBoulderFootY = boulder.center.y + boulder.radius;
+        const Rectangle previousBoulderVertical = GetBoulderBounds(boulder);
         boulder.center.y += boulder.velocity.y * dt;
-        ResolveBoulderCollisions(boulder, boulderSolids);
+        ResolveBoulderCollisions(boulder, movementSolids(boulderSolids, boulder.layer, previousBoulderVertical, boulder.velocity, false));
         ApplyScrewConveyor(boulder, boulder.radius, level.screws, dt);
         ResolveBoulderRampStanding(boulder, level.ramps, dt, previousBoulderFootY);
         ResolveBoulderTrapDoorStanding(boulder, level.trapDoors, dt);
@@ -5997,6 +6106,7 @@ void Game::UpdatePhysicsObjects(float dt) {
 
         wheel.onGround = false;
         wheel.velocity.y += Constants::Gravity * dt;
+        ApplyAntiGravityToVelocity(wheel.velocity, GetWheelBounds(wheel), wheel.layer, level, dt);
         ApplyWindToVelocity(wheel.velocity, wheel.center, wheel.mass, level, dt, 0.70f);
         ApplyFluidForcesToVelocity(
             wheel.velocity,
@@ -6008,11 +6118,13 @@ void Game::UpdatePhysicsObjects(float dt) {
             dt
         );
 
+        const Rectangle previousWheelHorizontal = GetWheelBounds(wheel);
         wheel.center.x += wheel.velocity.x * dt;
-        ResolveWheelCollisions(wheel, wheelSolids);
+        ResolveWheelCollisions(wheel, movementSolids(wheelSolids, wheel.layer, previousWheelHorizontal, wheel.velocity, true));
 
+        const Rectangle previousWheelVertical = GetWheelBounds(wheel);
         wheel.center.y += wheel.velocity.y * dt;
-        ResolveWheelCollisions(wheel, wheelSolids);
+        ResolveWheelCollisions(wheel, movementSolids(wheelSolids, wheel.layer, previousWheelVertical, wheel.velocity, false));
         ApplyScrewConveyor(wheel, wheel.radius, level.screws, dt);
         ResolveWheelRampStanding(wheel, level.ramps, dt);
         ResolveWheelTrapDoorStanding(wheel, level.trapDoors, dt);
@@ -6045,6 +6157,7 @@ void Game::UpdatePhysicsObjects(float dt) {
 
         gear.onGround = false;
         gear.velocity.y += Constants::Gravity * dt;
+        ApplyAntiGravityToVelocity(gear.velocity, GetGearBounds(gear), gear.layer, level, dt);
         ApplyWindToVelocity(gear.velocity, gear.center, gear.mass, level, dt, 0.55f);
         ApplyFluidForcesToVelocity(
             gear.velocity,
@@ -6055,10 +6168,12 @@ void Game::UpdatePhysicsObjects(float dt) {
             level,
             dt
         );
+        const Rectangle previousGearHorizontal = GetGearBounds(gear);
         gear.center.x += gear.velocity.x * dt;
-        ResolveGearCollisions(gear, gearSolids);
+        ResolveGearCollisions(gear, movementSolids(gearSolids, gear.layer, previousGearHorizontal, gear.velocity, true));
+        const Rectangle previousGearVertical = GetGearBounds(gear);
         gear.center.y += gear.velocity.y * dt;
-        ResolveGearCollisions(gear, gearSolids);
+        ResolveGearCollisions(gear, movementSolids(gearSolids, gear.layer, previousGearVertical, gear.velocity, false));
         ApplyScrewGearCoupling(gear, level.screws, dt);
         ResolveRoundBodyRampStanding(gear, level.ramps, gear.radius * GearOuterRadiusScale, dt, 0.38f);
         ResolveRoundBodyTrapDoorStanding(gear, level.trapDoors, gear.radius * GearOuterRadiusScale, dt, 0.36f);
@@ -6087,6 +6202,7 @@ void Game::UpdatePhysicsObjects(float dt) {
 
         flywheel.onGround = false;
         flywheel.velocity.y += Constants::Gravity * dt;
+        ApplyAntiGravityToVelocity(flywheel.velocity, GetFlywheelBounds(flywheel), flywheel.layer, level, dt);
         ApplyWindToVelocity(flywheel.velocity, flywheel.center, flywheel.mass, level, dt, 0.35f);
         ApplyFluidForcesToVelocity(
             flywheel.velocity,
@@ -6097,10 +6213,12 @@ void Game::UpdatePhysicsObjects(float dt) {
             level,
             dt
         );
+        const Rectangle previousFlywheelHorizontal = GetFlywheelBounds(flywheel);
         flywheel.center.x += flywheel.velocity.x * dt;
-        ResolveFlywheelCollisions(flywheel, flywheelSolids);
+        ResolveFlywheelCollisions(flywheel, movementSolids(flywheelSolids, flywheel.layer, previousFlywheelHorizontal, flywheel.velocity, true));
+        const Rectangle previousFlywheelVertical = GetFlywheelBounds(flywheel);
         flywheel.center.y += flywheel.velocity.y * dt;
-        ResolveFlywheelCollisions(flywheel, flywheelSolids);
+        ResolveFlywheelCollisions(flywheel, movementSolids(flywheelSolids, flywheel.layer, previousFlywheelVertical, flywheel.velocity, false));
         ApplyScrewConveyor(flywheel, flywheel.radius, level.screws, dt);
         ResolveRoundBodyRampStanding(flywheel, level.ramps, flywheel.radius, dt, 0.22f);
         ResolveRoundBodyTrapDoorStanding(flywheel, level.trapDoors, flywheel.radius, dt, 0.20f);
@@ -6227,9 +6345,16 @@ void Game::UpdatePhysicsObjects(float dt) {
     }
 
     std::array<std::vector<Rectangle>, WorldLayerCount> guideWorldSolids{
-        solids, solids, solids
+        BuildSolids(level, WorldLayer::Background), solids, BuildSolids(level, WorldLayer::Foreground)
     };
     AppendFlexibleObjectColliders(guideWorldSolids[WorldLayerIndex(WorldLayer::Middleground)], level);
+    for (size_t layerIndex = 0; layerIndex < WorldLayerCount; ++layerIndex) {
+        std::vector<GuideObject> layerObjects;
+        for (const GuideObject& object : level.guideObjects) {
+            if (WorldLayerIndex(object.layer) == layerIndex) layerObjects.push_back(object);
+        }
+        AppendGuideObjectSolids(guideWorldSolids[layerIndex], layerObjects);
+    }
     for (const StoneBlock& block : level.stoneBlocks) {
         guideWorldSolids[WorldLayerIndex(block.layer)].push_back(block.rect);
     }
@@ -6252,7 +6377,7 @@ void Game::UpdatePhysicsObjects(float dt) {
         fourPlayerEnabled && player4Alive ? &player4 : nullptr
     };
     for (GuideObject& object : level.guideObjects) {
-        if (object.type != GuideObjectType::GasMask || object.collected) continue;
+        if ((object.type != GuideObjectType::GasMask && object.type != GuideObjectType::ScubaGear) || object.collected) continue;
 
         const Rectangle maskBounds = GetGuideObjectBounds(object);
         for (int playerIndex = 0; playerIndex < static_cast<int>(guidePlayers.size()); ++playerIndex) {
@@ -6260,7 +6385,8 @@ void Game::UpdatePhysicsObjects(float dt) {
             if (activePlayer == nullptr || !CheckCollisionRecs(activePlayer->rect, maskBounds)) continue;
 
             object.collected = true;
-            playerGasMasks[playerIndex] = true;
+            if (object.type == GuideObjectType::ScubaGear) playerScubaGear[playerIndex] = true;
+            else playerGasMasks[playerIndex] = true;
             playerAir[playerIndex] = 1.0f;
             playerAirWarningPhase[playerIndex] = 0.0f;
             toxinExposure[playerIndex] = 0.0f;
@@ -6269,7 +6395,8 @@ void Game::UpdatePhysicsObjects(float dt) {
     }
     Vector2 previousCheckpoint = checkpointRespawn;
     UpdateGuideObjects(level.guideObjects, guidePlayers, guideWorldSolids,
-        Constants::Gravity, dt, checkpointRespawn);
+        Constants::Gravity, dt, checkpointRespawn, &level.fluids,
+        SelectedFluidMode(advancedFluidSimulation), &level);
     if (checkpointRespawn.x != previousCheckpoint.x || checkpointRespawn.y != previousCheckpoint.y) {
         checkpointActivated = true;
     }
@@ -6562,6 +6689,7 @@ void Game::KillPlayer(const Player& defeatedPlayer) {
     else if (&defeatedPlayer == &player3) defeatedPlayerIndex = 2;
     else if (&defeatedPlayer == &player4) defeatedPlayerIndex = 3;
     playerGasMasks[defeatedPlayerIndex] = false;
+    playerScubaGear[defeatedPlayerIndex] = false;
     playerEnemyDamageGraceTimers[defeatedPlayerIndex] = 0.0f;
     const PlayerControllerSettings& controller = controllerSettings[defeatedPlayerIndex];
     const int gamepad = AvailableGamepad(controller);
@@ -6645,6 +6773,7 @@ void Game::CheckFailureConditions() {
             SampleFluidAroundRectangle(level, FluidType::Gas, activePlayer->rect).density >= 0.025f;
         const bool underwaterSuffocation =
             level.script != LevelScript::NeurotoxinMaze &&
+            !playerScubaGear[playerIndex] &&
             IsPlayerHeadSubmerged(*activePlayer, level);
         if (suffocationKills && playerAir[playerIndex] <= 0.001f &&
             (toxinSuffocation || underwaterSuffocation)) {
@@ -6700,8 +6829,10 @@ void Game::CheckFailureConditions() {
 
         for (const Enemy& enemy : level.enemies) {
             if (CheckCollisionRecs(activePlayer->rect, enemy.rect)) {
-                if (playerGasMasks[playerIndex]) {
-                    playerGasMasks[playerIndex] = false;
+                if (playerEnemyDamageGraceTimers[playerIndex] > 0.0f) continue;
+                if (playerGasMasks[playerIndex] || playerScubaGear[playerIndex]) {
+                    if (playerScubaGear[playerIndex]) playerScubaGear[playerIndex] = false;
+                    else playerGasMasks[playerIndex] = false;
                     playerAir[playerIndex] = 1.0f;
                     playerAirWarningPhase[playerIndex] = 0.0f;
                     toxinExposure[playerIndex] = 0.0f;
@@ -6762,7 +6893,7 @@ void Game::CheckWinCondition(float gateBottom) {
         };
         bool playerCenteredInDoorway = fabsf(playerCenter.x - doorwayCenterX) <= DoorwayCenterTolerance;
         bool doorRaisedPastPlayer = gateBottom <= activePlayer->rect.y + 4.0f;
-        bool doorUnlocked = latchesComplete && doorRaisedPastPlayer && (!hasFactoryMachine || machinePower > 0.05f);
+        bool doorUnlocked = luaExitOpen || (latchesComplete && doorRaisedPastPlayer && (!hasFactoryMachine || machinePower > 0.05f));
 
         if (doorUnlocked && playerCenteredInDoorway && CheckCollisionPointRec(playerCenter, level.exitTrigger)) {
             BeginLevelClear();
@@ -7698,6 +7829,15 @@ void Game::DrawGasMaskPickup(const GuideObject& gasMask) const {
     );
 }
 
+void Game::DrawEquippedScubaGear(const Player& activePlayer) const {
+    const Rectangle r = activePlayer.rect;
+    const float back = activePlayer.facingRight ? r.x - 5.0f : r.x + r.width - 4.0f;
+    DrawRectangleRounded({back, r.y + r.height * 0.3f, 9.0f, r.height * 0.55f}, 0.5f, 4, YELLOW);
+    const float face = activePlayer.facingRight ? r.x + r.width * 0.5f : r.x;
+    DrawRectangleRounded({face, r.y + r.height * 0.18f, r.width * 0.5f, 7.0f}, 0.4f, 4, DARKBLUE);
+    DrawRectangleRounded({face + 2, r.y + r.height * 0.18f + 1, r.width * 0.5f - 4, 4}, 0.4f, 4, SKYBLUE);
+}
+
 void Game::DrawEquippedGasMask(const Player& activePlayer) const {
     if (gasMaskTexture.id <= 0) return;
 
@@ -7954,14 +8094,29 @@ void Game::DrawGameplay() {
         DrawRectangleRec(backgroundBounds, Fade(Color{13, 20, 28, 255}, 0.16f));
     }
 
+    const auto drawCustomLayers = [&](bool front) {
+        for (const TileLayer drawLayer : GetTileLayerDrawOrder(level)) {
+            const int id = static_cast<int>(drawLayer);
+            if (id < 4 || id > 11) continue;
+            const bool above = std::find(level.customTileLayersAboveDefaults.begin(), level.customTileLayersAboveDefaults.end(), drawLayer)
+                != level.customTileLayersAboveDefaults.end();
+            if (above != front) continue;
+            for (const VisualTile& tile : level.visualTiles) {
+                if (tile.layer != drawLayer) continue;
+                const Texture2D sheet = spriteSheets.Get(tile.sheetIndex, industrialTiles, industrialBackground, industrialFarBackground);
+                DrawTilesetTile(sheet, tile.sheetIndex == 2 ? 0 : tile.column, tile.sheetIndex == 2 ? 0 : tile.row,
+                    tile.position, WHITE, tile.quarterTurns, tile.flipX, tile.flipY, tile.animationFrames, tile.animationFrameSeconds);
+            }
+        }
+    };
     bool hasExplicitVisualTiles = std::any_of(level.visualTiles.begin(), level.visualTiles.end(), [](const VisualTile& tile) {
         return tile.layer != TileLayer::Collision;
     });
     if (hasExplicitVisualTiles) {
+        drawCustomLayers(false);
         for (const VisualTile& tile : level.visualTiles) {
             if (tile.layer == TileLayer::FarBackground) {
-                const Texture2D sheet = tile.sheetIndex == 1 ? industrialBackground :
-                    tile.sheetIndex == 0 ? industrialTiles : industrialFarBackground;
+                const Texture2D sheet = spriteSheets.Get(tile.sheetIndex, industrialTiles, industrialBackground, industrialFarBackground);
                 DrawTilesetTile(sheet, tile.sheetIndex == 2 ? 0 : tile.column,
                     tile.sheetIndex == 2 ? 0 : tile.row, tile.position, WHITE,
                     tile.quarterTurns, tile.flipX, tile.flipY, tile.animationFrames, tile.animationFrameSeconds);
@@ -7969,8 +8124,7 @@ void Game::DrawGameplay() {
         }
         for (const VisualTile& tile : level.visualTiles) {
             if (tile.layer == TileLayer::Background) {
-                const Texture2D sheet = tile.sheetIndex == 2 ? industrialFarBackground :
-                    tile.sheetIndex == 0 ? industrialTiles : industrialBackground;
+                const Texture2D sheet = spriteSheets.Get(tile.sheetIndex, industrialTiles, industrialBackground, industrialFarBackground);
                 DrawTilesetTile(sheet, tile.sheetIndex == 2 ? 0 : tile.column,
                     tile.sheetIndex == 2 ? 0 : tile.row, tile.position, WHITE,
                     tile.quarterTurns, tile.flipX, tile.flipY, tile.animationFrames, tile.animationFrameSeconds);
@@ -8000,22 +8154,13 @@ void Game::DrawGameplay() {
     if (hasExplicitVisualTiles) {
         for (const VisualTile& tile : level.visualTiles) {
             if (tile.layer == TileLayer::Foreground) {
-                const Texture2D sheet = tile.sheetIndex == 2 ? industrialFarBackground :
-                    tile.sheetIndex == 1 ? industrialBackground : industrialTiles;
+                const Texture2D sheet = spriteSheets.Get(tile.sheetIndex, industrialTiles, industrialBackground, industrialFarBackground);
                 DrawTilesetTile(sheet, tile.sheetIndex == 2 ? 0 : tile.column,
                     tile.sheetIndex == 2 ? 0 : tile.row, tile.position, WHITE,
                     tile.quarterTurns, tile.flipX, tile.flipY, tile.animationFrames, tile.animationFrameSeconds);
             }
         }
-        for (const VisualTile& tile : level.visualTiles) {
-            if (static_cast<int>(tile.layer) >= static_cast<int>(TileLayer::User1)) {
-                const Texture2D sheet = tile.sheetIndex == 2 ? industrialFarBackground :
-                    tile.sheetIndex == 1 ? industrialBackground : industrialTiles;
-                DrawTilesetTile(sheet, tile.sheetIndex == 2 ? 0 : tile.column,
-                    tile.sheetIndex == 2 ? 0 : tile.row, tile.position, WHITE,
-                    tile.quarterTurns, tile.flipX, tile.flipY, tile.animationFrames, tile.animationFrameSeconds);
-            }
-        }
+        drawCustomLayers(true);
     }
     else {
         for (const Rectangle& solid : level.baseSolids) {
@@ -8524,6 +8669,7 @@ void Game::DrawGameplay() {
             SampleFluidAroundRectangle(level, FluidType::Gas, activePlayer.rect).density >= 0.025f;
         const bool underwaterHazard =
             level.script != LevelScript::NeurotoxinMaze &&
+            !playerScubaGear[playerIndex] &&
             IsPlayerHeadSubmerged(activePlayer, level);
         if (!toxinHazard && !underwaterHazard) {
             return WHITE;
@@ -8584,6 +8730,7 @@ void Game::DrawGameplay() {
                 tint
             );
         }
+        if (playerScubaGear[playerIndex]) DrawEquippedScubaGear(visiblePlayer);
         if (playerGasMasks[playerIndex]) DrawEquippedGasMask(visiblePlayer);
     };
 
@@ -8743,6 +8890,43 @@ void Game::UpdateMusic() {
     const bool titleActive = mode == GameMode::Title || mode == GameMode::CharacterSelect;
     const bool levelSelectActive = mode == GameMode::Overworld;
     const bool gameplayMusicActive = mode == GameMode::Playing || mode == GameMode::Paused;
+    if (IsAudioDeviceReady() && gameplayMusicActive) {
+        if (customMusicPath != level.musicPath) {
+            ClearLevelAudio();
+            customMusicPath = level.musicPath;
+            if (!customMusicPath.empty()) {
+                customMusic = LoadMusicStream(customMusicPath.c_str());
+                customMusicLoaded = IsMusicValid(customMusic);
+                customMusic.looping = true;
+            }
+        }
+        if (objectSoundStates.empty()) {
+            for (const auto& attachment : level.objectSounds) {
+                ObjectSoundState state;
+                state.sound = LoadSound(attachment.path.c_str());
+                state.loaded = IsSoundValid(state.sound);
+                objectSoundStates.push_back(state);
+            }
+        }
+        if (mode == GameMode::Playing) {
+            for (size_t i = 0; i < objectSoundStates.size(); ++i) {
+                auto& state = objectSoundStates[i];
+                const auto& attachment = level.objectSounds[i];
+                Rectangle bounds{};
+                const bool found = ScriptTarget(level, attachment.objectType, attachment.objectIndex, bounds);
+                // Solid objects stop players at the surface; include that contact.
+                bounds.x -= 2.0f; bounds.y -= 2.0f;
+                bounds.width += 4.0f; bounds.height += 4.0f;
+                const bool overlap = found && (ScriptOverlap(bounds, player.rect) ||
+                    (multiplayerEnabled && ScriptOverlap(bounds, player2.rect)));
+                if (state.loaded) {
+                    SetSoundVolume(state.sound, soundEffectsVolume);
+                    if (overlap && !state.overlapping) PlaySound(state.sound);
+                }
+                state.overlapping = overlap;
+            }
+        }
+    }
     const bool levelOneActive = currentLevelNode == 0 &&
         (mode == GameMode::Playing || mode == GameMode::Paused);
     const bool levelTwoActive = currentLevelNode == 1 &&
@@ -8766,7 +8950,7 @@ void Game::UpdateMusic() {
 
     auto updateTrack = [&](Music& music, bool loaded, bool active) {
         if (!loaded) return;
-        if (active) {
+        if (active && (&music == &customMusic || !gameplayMusicActive || !customMusicLoaded)) {
             if (!IsMusicStreamPlaying(music)) PlayMusicStream(music);
             SetMusicVolume(music, musicVolume);
             UpdateMusicStream(music);
@@ -8776,6 +8960,7 @@ void Game::UpdateMusic() {
         }
     };
 
+    updateTrack(customMusic, customMusicLoaded, gameplayMusicActive);
     updateTrack(titleMusic, titleMusicLoaded, titleActive);
     updateTrack(levelSelectMusic, levelSelectMusicLoaded, levelSelectActive);
     updateTrack(levelOneMusic, levelOneMusicLoaded, levelOneActive);
@@ -8788,13 +8973,25 @@ void Game::UpdateMusic() {
     updateTrack(portalLiftMusic, portalLiftMusicLoaded, portalLiftActive);
 }
 
+void Game::ClearLevelAudio() {
+    if (customMusicLoaded) UnloadMusicStream(customMusic);
+    customMusicLoaded = false;
+    customMusicPath.clear();
+    for (auto& state : objectSoundStates) if (state.loaded) UnloadSound(state.sound);
+    objectSoundStates.clear();
+}
+
 void Game::Unload() {
+    ClearLevelAudio();
+    cppScripts.Clear();
+    luaScripts.Clear();
     if (sceneTarget.id > 0) UnloadRenderTexture(sceneTarget);
     UnloadTexture(playerSpritesTexture);
     UnloadTexture(playerFourSpritesTexture);
     UnloadTexture(skullTexture);
     UnloadTexture(industrialTiles);
     UnloadTexture(industrialBackground);
+    spriteSheets.Clear();
     UnloadTexture(industrialFarBackground);
     UnloadTexture(chainLinksTexture);
     UnloadTexture(enemyPlaceholderTexture);

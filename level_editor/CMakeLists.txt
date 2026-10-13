@@ -2,6 +2,8 @@ add_executable(LevelEditorViewport
     main.cpp
     LevelEditor.cpp
     LevelEditor.h
+    EditorObjectPlacement.h
+    EditorLoops.h
     EditorConnections.cpp
     EditorConnections.h
 )
@@ -30,7 +32,14 @@ add_custom_command(
 )
 
 if (WIN32)
+    file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/LevelEditor/script_sdk")
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        file(WRITE "${CMAKE_BINARY_DIR}/LevelEditor/script_sdk/compiler.txt" "${CMAKE_CXX_COMPILER}")
+    else()
+        file(WRITE "${CMAKE_BINARY_DIR}/LevelEditor/script_sdk/compiler.txt" "")
+    endif()
     add_custom_target(LevelEditor ALL
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/script_sdk" "${CMAKE_BINARY_DIR}/LevelEditor/script_sdk"
         COMMAND dotnet build "${CMAKE_SOURCE_DIR}/level_editor_winforms/LevelEditor.WinForms.csproj"
             --configuration Debug
             --output "${CMAKE_BINARY_DIR}/LevelEditor"
