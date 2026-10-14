@@ -342,7 +342,7 @@ bool ReadAssetCommand(IDataObject* data, int& assetCommand) {
     if (text != nullptr) {
         wchar_t* end = nullptr;
         const long value = wcstol(text, &end, 10);
-        valid = end != text && *end == L'\0' && value >= 0 && value <= 158;
+        valid = end != text && *end == L'\0' && value >= 0 && value <= 160;
         if (valid) assetCommand = static_cast<int>(value);
         GlobalUnlock(medium.hGlobal);
     }
@@ -514,6 +514,7 @@ const char* ToolName(LevelEditor::EditTool tool) {
     case LevelEditor::EditTool::Wedge: return "Wedge";
     case LevelEditor::EditTool::Teleforce: return "Teleforce Projector";
     case LevelEditor::EditTool::TeslaCoil: return "Tesla Coil";
+    case LevelEditor::EditTool::PlatformLoop: return "Platform Loop";
     case LevelEditor::EditTool::SeeSaw: return "See Saw";
     case LevelEditor::EditTool::TrapDoor: return "Trap Door";
     case LevelEditor::EditTool::Chain: return "Chain";
@@ -967,7 +968,7 @@ void LevelEditor::GenerateContentThumbnails() const {
         "Pinball Flipper", "Laser Emitter", "Laser Mixer", "Laser Detector", "Hot-Air Balloon", "Blimp",
         "Leaky Bucket", "Destructible Wood", "Destructible Brick", "Destructible Glass",
         "Glass Pane", "Glass Block", "Ice Block", "Ice Sheet", "Heater", "Campfire", "Torch", "Bucket of Water",
-        "Signal Dust", "Ternary Trace", "Ternary Switch", "TNT", "Wedge", "Scuba Gear", "Teleforce Projector", "Tesla Coil", "Rock"
+        "Signal Dust", "Ternary Trace", "Ternary Switch", "TNT", "Wedge", "Scuba Gear", "Teleforce Projector", "Tesla Coil", "Rock", "Platform Loop"
     };
     constexpr int Count = static_cast<int>(std::size(names));
     constexpr int Rows = (Count + Columns - 1) / Columns;
@@ -984,6 +985,11 @@ void LevelEditor::GenerateContentThumbnails() const {
         const std::string name = names[index];
         if (name == "Solid" || name == "Platform") {
             DrawTilesetSolid(industrialTiles, {left + 12.0f, top + 31.0f, 88.0f, name == "Solid" ? 38.0f : 18.0f}, WHITE);
+        }
+        else if (name == "Platform Loop") {
+            DrawRectangleRoundedLinesEx({left + 24, top + 10, 64, 64}, 0.8f, 16, 2, SKYBLUE);
+            DrawRectangleRec({left + 12, top + 30, 32, 8}, GOLD);
+            DrawRectangleRec({left + 68, top + 48, 32, 8}, GOLD);
         }
         else if (name == "Ladder") {
             DrawLineEx({center.x - 18.0f, top + 12.0f}, {center.x - 18.0f, top + 72.0f}, 5.0f, Color{115, 82, 48, 255});
@@ -3553,6 +3559,7 @@ void LevelEditor::ProcessViewportHostCommand() {
             else if (value == 157) activeTool = EditTool::Teleforce;
             else if (value == 158) activeTool = EditTool::TeslaCoil;
             else if (value == 159) activeTool = EditTool::Rock;
+            else if (value == 160) activeTool = EditTool::PlatformLoop;
             else break;
             {
                 tilePaintTool = TilePaintTool::None;
@@ -6150,6 +6157,24 @@ void LevelEditor::UpdateEditing(Rectangle canvas) {
             selectedSceneBounds = rect;
             MarkDirty("Placed water pit.");
             break;
+        case EditTool::PlatformLoop: {
+            ButtonPlatformLoop loop{};
+            loop.buttonIndex = -1;
+            loop.active = true;
+            loop.center = world;
+            loop.radius = {120, 200};
+            loop.platformSize = {80, 28};
+            loop.speed = 28;
+            loop.platforms.resize(4);
+            UpdateButtonPlatformLoopPositions(loop);
+            level.buttonPlatformLoops.push_back(loop);
+            const int index = static_cast<int>(level.buttonPlatformLoops.size()) - 1;
+            selectedSceneName = "Platform Loop " + std::to_string(index + 1);
+            selectedSceneBounds = EditorLoopBounds(loop);
+            selection = {SelectionKind::SceneObject, index, selectedSceneName, selectedSceneBounds, "Platform Loop", index};
+            MarkDirty("Placed platform loop.");
+            break;
+        }
         case EditTool::ClockFace:
             level.clockFaceCenter = world;
             level.clockFaceRadius = 64.0f;
@@ -6402,6 +6427,27 @@ void LevelEditor::DrawCanvas(Rectangle canvas) const {
     DrawUiText(uiFont, "SHOW", viewportStrip.x + 50.0f, viewportStrip.y + 7.0f, 14.0f, SecondaryText);
     DrawUiText(uiFont, TextFormat("SNAP %.0f", gridSnap), viewportStrip.x + 102.0f, viewportStrip.y + 7.0f,
         14.0f, Warning);
+
+    if (showConnections && (visibleTileLayerMask & TileLayerBit(TileLayer::Middleground)) != 0) {
+        const float width = std::max(0.0f, std::min(360.0f, canvas.width - 16.0f));
+        if (width >= 180.0f) {
+            const Rectangle legend{canvas.x + 8.0f, canvas.y + 44.0f, width, 56.0f};
+            DrawRectangleRounded(legend, 0.14f, 5, Color{15, 18, 23, 232});
+            DrawRectangleRoundedLines(legend, 0.14f, 5, PanelBorder);
+            const char* lines[] = {
+                "Gold: power | Green: attachment",
+                "Blue: path | Purple: control | Red: warning",
+                "Alt-click an endpoint to select"
+            };
+            float longestLine = 0.0f;
+            for (const char* line : lines)
+                longestLine = std::max(longestLine, MeasureUiText(uiFont, line, 12.0f));
+            const float fontSize = std::min(12.0f, 12.0f * (width - 16.0f) / longestLine);
+            for (int index = 0; index < 3; ++index)
+                DrawUiText(uiFont, lines[index], legend.x + 8.0f, legend.y + 5.0f + index * 16.0f,
+                    fontSize, index == 0 ? PrimaryText : SecondaryText);
+        }
+    }
 }
 
 int LevelEditor::SelectedConnectionNode(const EditorConnections& graph) const {
@@ -6585,11 +6631,6 @@ void LevelEditor::DrawConnectionOverlay() const {
             DrawUiText(uiFont, text.c_str(), item.position.x + 17 * unit, item.position.y - 22 * unit, 13 * unit, color);
         }
     }
-    const auto canvas = GetCanvasBounds();
-    const Vector2 legend = GetScreenToWorld2D({canvas.x + 12, canvas.y + 12}, camera);
-    DrawRectangleRec({legend.x - 4 * unit, legend.y - 3 * unit, 440 * unit, 42 * unit}, Color{15, 18, 23, 225});
-    DrawUiText(uiFont, "Gold = channel, green = attachment, blue = path, purple = control", legend.x, legend.y, 12 * unit, PrimaryText);
-    DrawUiText(uiFont, "Red = unresolved. Alt+click an endpoint to select it.", legend.x, legend.y + 19 * unit, 12 * unit, SecondaryText);
 }
 
 void LevelEditor::DrawEditOverlay() const {

@@ -168,7 +168,7 @@ places a gear with Mounted selected in its properties.
 
 ## Connections
 
-Use **Object > Add Platform Loop...** to create a loop with its center, path
+Drag **Platform Loop** from the content browser into the viewport to place it. Edit its center, path
 size, platform size/count, and speed. New loops run continuously; select a button
 and use **Link...** to make that button activate a loop instead.
 

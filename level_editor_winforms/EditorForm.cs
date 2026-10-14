@@ -33,7 +33,7 @@ internal sealed class EditorForm : Form
         "Pinball Flipper", "Laser Emitter", "Laser Mixer", "Laser Detector", "Hot-Air Balloon", "Blimp",
         "Leaky Bucket", "Destructible Wood", "Destructible Brick", "Destructible Glass", "Glass Pane", "Glass Block",
         "Ice Block", "Ice Sheet", "Heater", "Campfire", "Torch", "Bucket of Water", "Signal Dust",
-        "Ternary Trace", "Ternary Switch", "TNT", "Wedge", "Scuba Gear", "Teleforce Projector", "Tesla Coil", "Rock"
+        "Ternary Trace", "Ternary Switch", "TNT", "Wedge", "Scuba Gear", "Teleforce Projector", "Tesla Coil", "Rock", "Platform Loop"
     ];
 
     private readonly LevelDocument document = new();
@@ -449,7 +449,6 @@ internal sealed class EditorForm : Form
 
         var objects = new ToolStripMenuItem("&Object");
         var placeObject = new ToolStripMenuItem("&Place");
-        objects.DropDownItems.Add(MenuItem("Add Platform Loop...", Keys.None, (_, _) => AddPlatformLoop()));
         objects.DropDownItems.Add(MenuItem("Attach Riding Button...", Keys.None, (_, _) => AttachRidingButton()));
         objects.DropDownItems.Add(MenuItem("Attach C++ Script...", Keys.None, (_, _) => AttachCppScript()));
         objects.DropDownItems.Add(MenuItem("Attach Sound Effect...", Keys.None, (_, _) => ImportAudio(false)));
@@ -465,6 +464,7 @@ internal sealed class EditorForm : Form
         placeObject.DropDownItems.Add(new ToolStripSeparator());
         for (var index = 11; index < AssetNames.Length; ++index)
         {
+            if (AssetNames[index] == "Platform Loop") continue;
             var assetIndex = index;
             placeObject.DropDownItems.Add(MenuItem(AssetNames[index], Keys.None,
                 (_, _) => ActivateAsset(AssetNames[assetIndex])));
@@ -1625,6 +1625,7 @@ internal sealed class EditorForm : Form
 
     private static string GetAssetCategory(int index) => GetAssetCommandIndex(index) switch
     {
+        160 => "Mechanical",
         11 or 16 or 17 or 18 or 19 or 20 or 22 or 23 or 24 or 71 or 105 or 155 => "Simple Machines",
         0 or 1 or 2 or 44 or 46 or 159 => "Geometry",
         3 or 4 => "Regions",
@@ -3022,39 +3023,6 @@ internal sealed class EditorForm : Form
         } catch (InvalidOperationException exception) {
             CancelViewportLink(); statusLabel.Text = exception.Message;
         }
-    }
-
-    private sealed class LoopSettings
-    {
-        [Category("Center")] public float X { get; set; } = 480;
-        [Category("Center")] public float Y { get; set; } = 360;
-        [Category("Path")] public float HorizontalRadius { get; set; } = 120;
-        [Category("Path")] public float VerticalRadius { get; set; } = 200;
-        [Category("Platforms")] public float PlatformWidth { get; set; } = 80;
-        [Category("Platforms")] public float PlatformHeight { get; set; } = 28;
-        [Category("Platforms")] public int PlatformCount { get; set; } = 4;
-        [Category("Motion")] public float Speed { get; set; } = 28;
-    }
-
-    private void AddPlatformLoop()
-    {
-        var settings = new LoopSettings();
-        using var dialog = new Form { Text = "Add Platform Loop", Size = new Size(420, 430),
-            StartPosition = FormStartPosition.CenterParent, MinimizeBox = false, MaximizeBox = false };
-        var grid = new PropertyGrid { Dock = DockStyle.Fill, SelectedObject = settings, ToolbarVisible = false };
-        var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 45, FlowDirection = FlowDirection.RightToLeft };
-        var apply = new Button { Text = "Create Loop", DialogResult = DialogResult.OK, AutoSize = true };
-        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel };
-        buttons.Controls.AddRange([cancel, apply]); dialog.Controls.Add(grid); dialog.Controls.Add(buttons);
-        dialog.AcceptButton = apply; dialog.CancelButton = cancel; DarkTheme.Apply(dialog);
-        if (dialog.ShowDialog(this) != DialogResult.OK) return;
-        try {
-            document.AddPlatformLoop(settings.X, settings.Y, settings.HorizontalRadius, settings.VerticalRadius,
-                settings.PlatformWidth, settings.PlatformHeight, settings.Speed, settings.PlatformCount);
-            SetDirty(true, "Platform loop created"); RebuildOutliner(); RefreshViewportFromDetails();
-            connectionsButton.Checked = true;
-            statusLabel.Text = "Loop created — use Link to activate it with a button, or Attach Riding Button.";
-        } catch (InvalidOperationException exception) { statusLabel.Text = exception.Message; }
     }
 
     private void ImportAudio(bool music)

@@ -88,3 +88,13 @@ C:\Users\nanob\source\repos\Raylib_Game\tmp\audio-editor-build\LevelEditor.deps.
 C:\Users\nanob\source\repos\Raylib_Game\tmp\audio-editor-build\LevelEditor.runtimeconfig.json
 C:\Users\nanob\source\repos\Raylib_Game\tmp\audio-editor-build\LevelEditor.dll
 C:\Users\nanob\source\repos\Raylib_Game\tmp\audio-editor-build\LevelEditor.pdb
+C:\Users\nanob\source\repos\Raylib_Game\tmp\loop-dialog-build\Debug\net10.0-windows\LevelEditor.exe
+C:\Users\nanob\source\repos\Raylib_Game\tmp\loop-dialog-build\Debug\net10.0-windows\LevelEditor.deps.json
+C:\Users\nanob\source\repos\Raylib_Game\tmp\loop-dialog-build\Debug\net10.0-windows\LevelEditor.runtimeconfig.json
+C:\Users\nanob\source\repos\Raylib_Game\tmp\loop-dialog-build\Debug\net10.0-windows\LevelEditor.dll
+C:\Users\nanob\source\repos\Raylib_Game\tmp\loop-dialog-build\Debug\net10.0-windows\LevelEditor.pdb
+C:\Users\nanob\source\repos\Raylib_Game\tmp\platform-loop-build\LevelEditor.exe
+C:\Users\nanob\source\repos\Raylib_Game\tmp\platform-loop-build\LevelEditor.deps.json
+C:\Users\nanob\source\repos\Raylib_Game\tmp\platform-loop-build\LevelEditor.runtimeconfig.json
+C:\Users\nanob\source\repos\Raylib_Game\tmp\platform-loop-build\LevelEditor.dll
+C:\Users\nanob\source\repos\Raylib_Game\tmp\platform-loop-build\LevelEditor.pdb

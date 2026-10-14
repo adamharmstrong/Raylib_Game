@@ -176,6 +176,7 @@ public:
         Teleforce,
         TeslaCoil,
         Rock,
+        PlatformLoop,
 
     };
 
