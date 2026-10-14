@@ -5342,7 +5342,7 @@ void LevelEditor::UpdateEditing(Rectangle canvas) {
                     level.playerStart = {transformOriginalPoint.x + constrainedDelta.x,
                         transformOriginalPoint.y + constrainedDelta.y};
                 }
-                else if (Rectangle* rect = SelectedRectangle(); rect != nullptr && selection.kind != SelectionKind::Exit) {
+                else if (Rectangle* rect = SelectedRectangle(); rect != nullptr) {
                     rect->x = transformOriginalRect.x + constrainedDelta.x;
                     rect->y = transformOriginalRect.y + constrainedDelta.y;
                 }
