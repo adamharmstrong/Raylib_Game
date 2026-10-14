@@ -6429,23 +6429,22 @@ void LevelEditor::DrawCanvas(Rectangle canvas) const {
         14.0f, Warning);
 
     if (showConnections && (visibleTileLayerMask & TileLayerBit(TileLayer::Middleground)) != 0) {
-        const float width = std::max(0.0f, std::min(360.0f, canvas.width - 16.0f));
-        if (width >= 180.0f) {
-            const Rectangle legend{canvas.x + 8.0f, canvas.y + 44.0f, width, 56.0f};
+        const float width = std::max(0.0f, std::min(280.0f, canvas.width - 16.0f));
+        if (width >= 190.0f) {
+            const Rectangle legend{canvas.x + 8.0f, canvas.y + 44.0f, width, 118.0f};
             DrawRectangleRounded(legend, 0.14f, 5, Color{15, 18, 23, 232});
             DrawRectangleRoundedLines(legend, 0.14f, 5, PanelBorder);
             const char* lines[] = {
-                "Gold: power | Green: attachment",
-                "Blue: path | Purple: control | Red: warning",
-                "Alt-click an endpoint to select"
+                "Gold: power",
+                "Green: attachment",
+                "Blue: path",
+                "Purple: control",
+                "Red: warning",
+                "Alt-click endpoint to select"
             };
-            float longestLine = 0.0f;
-            for (const char* line : lines)
-                longestLine = std::max(longestLine, MeasureUiText(uiFont, line, 12.0f));
-            const float fontSize = std::min(12.0f, 12.0f * (width - 16.0f) / longestLine);
-            for (int index = 0; index < 3; ++index)
-                DrawUiText(uiFont, lines[index], legend.x + 8.0f, legend.y + 5.0f + index * 16.0f,
-                    fontSize, index == 0 ? PrimaryText : SecondaryText);
+            for (int index = 0; index < 6; ++index)
+                DrawUiText(uiFont, lines[index], legend.x + 8.0f, legend.y + 5.0f + index * 18.0f,
+                    14.0f, index == 0 ? PrimaryText : SecondaryText);
         }
     }
 }
