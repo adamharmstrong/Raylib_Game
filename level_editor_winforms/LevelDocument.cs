@@ -652,7 +652,7 @@ internal sealed class LevelDocument
             "buttonPlatformLoop", "platformLoopButton", "buttonTrapDoor", "buttonLadder", "buttonExit", "buttonFan", "buttonPlatform", "buttonSpikeHazard", "valveFluidFill",
             "cam", "conveyorBelt", "turntable", "battery", "electricMotor", "generator", "limitSwitch", "relay", "fuse", "magnet", "antiGravityPad", "tripodDerrick", "chainHoist", "blockAndTackle", "comeAlong", "manualBenchGrinder", "loadCart", "revolvingStoneGate", "rockHammer", "fieldCoil", "spokePress", "polarisTelescope", "leedskalninSundial", "perpetualMotionHolder",
             "bellows", "trampoline", "boxingGlove", "vacuum", "magnifyingGlass", "lightSource", "ignitableFuse", "programmableBall", "transRotoConverter", "rotoTransConverter", "acceleratorTube", "pinballBumper", "pinballFlipper", "laserEmitter", "laserMixer", "laserDetector", "hotAirBalloon", "blimp", "leakyBucket", "destructibleWood", "destructibleBrick", "destructibleGlass", "glassPane", "glassBlock", "iceBlock", "iceSheet", "heater", "campfire", "torch", "waterBucket",
-            "piston", "hydraulicCylinder", "rocketThruster", "crushingBlock", "swingingHammer", "sawBlade", "spinnerTrap", "steamVent", "electricalArc", "oil", "mud", "speedSensor", "beamSensor", "key", "gasMask", "scubaGear", "breakableCrate", "explosiveBarrel", "tnt", "teleforce", "teslaCoil"
+            "piston", "hydraulicCylinder", "rocketThruster", "crushingBlock", "swingingHammer", "sawBlade", "spinnerTrap", "steamVent", "electricalArc", "oil", "mud", "speedSensor", "beamSensor", "key", "gasMask", "scubaGear", "breakableCrate", "explosiveBarrel", "tnt", "teleforce", "teslaCoil", "rock"
         };
         ReplaceLabels(records);
         foreach (var type in synchronizedTypes)

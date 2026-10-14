@@ -14,6 +14,7 @@ struct AdvancedPlacement {
     const char* defaults;
 };
 constexpr AdvancedPlacement AdvancedPlacements[] = {
+    {LevelEditor::EditTool::Rock, GuideObjectType::Rock, "Rock", "rock", "0 0 32 32"},
     {LevelEditor::EditTool::Cam, GuideObjectType::Cam, "Cam", "cam", "0 0 24 90 8 0"},
     {LevelEditor::EditTool::ConveyorBelt, GuideObjectType::ConveyorBelt, "Conveyor Belt", "conveyorBelt", "0 0 96 20 80"},
     {LevelEditor::EditTool::Turntable, GuideObjectType::Turntable, "Turntable", "turntable", "0 0 32 90 0"},
@@ -185,6 +186,7 @@ inline std::string AdvancedObjectRecord(const GuideObject& object) {
     case GuideObjectType::TernaryTrace: output << ' ' << object.transform.position.x + object.direction.x * object.length << ' ' << object.transform.position.y + object.direction.y * object.length << ' ' << object.sensor.channel << ' ' << object.power.channel; break;
     case GuideObjectType::TernarySwitch: output << ' ' << object.collider.size.x << ' ' << object.collider.size.y << ' ' << std::clamp(object.signalMask, -1, 1); break;
     case GuideObjectType::Teleforce: output << ' ' << object.collider.size.x << ' ' << object.collider.size.y << ' ' << object.direction.x << ' ' << object.direction.y << ' ' << object.length << ' ' << object.width << ' ' << object.strength << ' ' << object.capacity << ' ' << object.damage << ' ' << object.speed << ' ' << object.power.channel; break;
+    case GuideObjectType::Rock: output << ' ' << object.collider.size.x << ' ' << object.collider.size.y << ' ' << object.transform.rotation; break;
     case GuideObjectType::TeslaCoil: output << ' ' << object.collider.size.x << ' ' << object.collider.size.y << ' ' << object.length << ' ' << object.strength << ' ' << object.capacity << ' ' << object.damage << ' ' << object.speed << ' ' << object.power.channel << ' ' << object.sensor.channel; break;
     default: break;
     }

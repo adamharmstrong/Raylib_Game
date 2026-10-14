@@ -3424,6 +3424,10 @@ void Game::Load() {
     industrialTiles = LoadTexture("assets/third_party/AtomicRealm/[FREE] Industrial Tileset/raw/FREE/5. Industrial Tileset - Starter Pack 32p/1_Industrial_Tileset_1.png");
     industrialBackground = LoadTexture("assets/third_party/AtomicRealm/[FREE] Industrial Tileset/raw/FREE/5. Industrial Tileset - Starter Pack 32p/2_Industrial_Tileset_1_Background.png");
     industrialFarBackground = LoadTexture("assets/third_party/AtomicRealm/[FREE] Industrial Tileset/raw/FREE/5. Industrial Tileset - Starter Pack 32p/3_Far_Background_Tile.png");
+    boulderTexture = LoadTexture("assets/first_party/environments/kiril-boulder.png");
+    rockTexture = LoadTexture("assets/first_party/environments/kiril-rock.png");
+    if (boulderTexture.id != 0) SetTextureFilter(boulderTexture, TEXTURE_FILTER_POINT);
+    if (rockTexture.id != 0) SetTextureFilter(rockTexture, TEXTURE_FILTER_POINT);
     chainLinksTexture = LoadTexture("assets/first_party/machines/chain_links.png");
     // Placeholder only: swap this before final enemy art lock.
     enemyPlaceholderTexture = LoadTexture("assets/third_party/AtomicRealm/[FREE] Industrial Tileset/raw/FREE/6. Character Animations 32p/Anim_Robot_Walk1_v1.1_spritesheet.png");
@@ -7120,7 +7124,7 @@ void Game::DrawTitleScreen() {
     };
     boulder.radius = 28.0f;
     boulder.rotation = (boulderMovingRight ? 1.0f : -1.0f) * rotation * 1.8f;
-    DrawBoulder(boulder);
+    DrawBoulder(boulder, boulderTexture);
 
     DrawRectangle(68, 464, 434, 294, Fade(BLACK, 0.34f));
     DrawRectangleLinesEx({68, 464, 434, 294}, 2.0f, Fade(RAYWHITE, 0.17f));
@@ -8193,14 +8197,14 @@ void Game::DrawGameplay() {
     for (const GuideObject& object : level.guideObjects) {
         if (object.layer == WorldLayer::Background) {
             if (object.type == GuideObjectType::GasMask) DrawGasMaskPickup(object);
-            else DrawGuideObject(object);
+            else DrawGuideObject(object, rockTexture);
         }
     }
     for (const StoneBlock& block : level.stoneBlocks) {
         if (block.layer == WorldLayer::Background) DrawStoneBlock(block);
     }
     for (const Boulder& boulder : level.boulders) {
-        if (boulder.layer == WorldLayer::Background) DrawBoulder(boulder);
+        if (boulder.layer == WorldLayer::Background) DrawBoulder(boulder, boulderTexture);
     }
     for (const PhysicsWheel& wheel : level.physicsWheels) {
         if (wheel.layer == WorldLayer::Background) DrawPhysicsWheel(wheel);
@@ -8531,7 +8535,7 @@ void Game::DrawGameplay() {
     for (const GuideObject& object : level.guideObjects) {
         if (object.layer == WorldLayer::Middleground) {
             if (object.type == GuideObjectType::GasMask) DrawGasMaskPickup(object);
-            else DrawGuideObject(object);
+            else DrawGuideObject(object, rockTexture);
         }
     }
 
@@ -8576,7 +8580,7 @@ void Game::DrawGameplay() {
     }
 
     for (const Boulder& boulder : level.boulders) {
-        if (boulder.layer == WorldLayer::Middleground) DrawBoulder(boulder);
+        if (boulder.layer == WorldLayer::Middleground) DrawBoulder(boulder, boulderTexture);
     }
 
     for (const PhysicsWheel& wheel : level.physicsWheels) {
@@ -8750,14 +8754,14 @@ void Game::DrawGameplay() {
     for (const GuideObject& object : level.guideObjects) {
         if (object.layer == WorldLayer::Foreground) {
             if (object.type == GuideObjectType::GasMask) DrawGasMaskPickup(object);
-            else DrawGuideObject(object);
+            else DrawGuideObject(object, rockTexture);
         }
     }
     for (const StoneBlock& block : level.stoneBlocks) {
         if (block.layer == WorldLayer::Foreground) DrawStoneBlock(block);
     }
     for (const Boulder& boulder : level.boulders) {
-        if (boulder.layer == WorldLayer::Foreground) DrawBoulder(boulder);
+        if (boulder.layer == WorldLayer::Foreground) DrawBoulder(boulder, boulderTexture);
     }
     for (const PhysicsWheel& wheel : level.physicsWheels) {
         if (wheel.layer == WorldLayer::Foreground) DrawPhysicsWheel(wheel);
@@ -8999,6 +9003,8 @@ void Game::Unload() {
     UnloadTexture(industrialBackground);
     spriteSheets.Clear();
     UnloadTexture(industrialFarBackground);
+    UnloadTexture(boulderTexture);
+    UnloadTexture(rockTexture);
     UnloadTexture(chainLinksTexture);
     UnloadTexture(enemyPlaceholderTexture);
     UnloadTexture(gasMaskTexture);

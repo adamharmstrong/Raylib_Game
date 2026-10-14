@@ -124,6 +124,7 @@ LevelEditor::EditTool GuideObjectTool(GuideObjectType type) {
 const char* GuideObjectCategory(GuideObjectType type) {
     if (type >= GuideObjectType::Spring && type <= GuideObjectType::CompositeSpring) return "Springs";
     switch (type) {
+    case GuideObjectType::Rock: return "Geometry";
     case GuideObjectType::Ball:
     case GuideObjectType::Barrel:
     case GuideObjectType::PendulumBob:
@@ -273,7 +274,7 @@ const std::vector<CatalogEntry>& AssetCatalog() {
             {"Toxin Leak", "Hazards", LevelEditor::EditTool::ToxinLeak, true}, {"Valve Fluid Fill", "Logic"}
         };
         for (int value = static_cast<int>(GuideObjectType::Ball);
-            value <= static_cast<int>(GuideObjectType::TeslaCoil); ++value) {
+            value <= static_cast<int>(GuideObjectType::Rock); ++value) {
             const GuideObjectType type = static_cast<GuideObjectType>(value);
             const LevelEditor::EditTool tool = GuideObjectTool(type);
             entries.push_back({GetGuideObjectName(type), GuideObjectCategory(type), tool,
@@ -312,8 +313,8 @@ HMENU PreferencesMenu = nullptr;
 unsigned int PendingMenuCommand = 0;
 bool AllowWindowClose = false;
 constexpr UINT ViewportHostCommandMessage = WM_APP + 120;
-std::array<int, 45> PendingViewportValues{};
-std::array<bool, 45> PendingViewportCommands{};
+std::array<int, 47> PendingViewportValues{};
+std::array<bool, 47> PendingViewportCommands{};
 bool PendingAssetDrop = false;
 Vector2 PendingAssetDropScreenPosition{};
 std::string PendingDocumentReload;
@@ -865,6 +866,10 @@ int LevelEditor::Run(const std::filesystem::path& initialLevel, bool useViewport
     enemySprites = LoadTexture("assets/third_party/AtomicRealm/[FREE] Industrial Tileset/raw/FREE/6. Character Animations 32p/Anim_Robot_Walk1_v1.1_spritesheet.png");
     if (playerSprites.id != 0) SetTextureFilter(playerSprites, TEXTURE_FILTER_POINT);
     if (playerFourSprites.id != 0) SetTextureFilter(playerFourSprites, TEXTURE_FILTER_POINT);
+    boulderTexture = LoadTexture("assets/first_party/environments/kiril-boulder.png");
+    rockTexture = LoadTexture("assets/first_party/environments/kiril-rock.png");
+    if (boulderTexture.id != 0) SetTextureFilter(boulderTexture, TEXTURE_FILTER_POINT);
+    if (rockTexture.id != 0) SetTextureFilter(rockTexture, TEXTURE_FILTER_POINT);
     chainLinks = LoadTexture("assets/first_party/machines/chain_links.png");
     toolbarIcons = LoadTexture("assets/first_party/ui/editor_transform_icons.png");
     if (viewportOnly) {
@@ -922,6 +927,8 @@ int LevelEditor::Run(const std::filesystem::path& initialLevel, bool useViewport
     if (playerFourSprites.id != 0) UnloadTexture(playerFourSprites);
     if (enemySprites.id != 0) UnloadTexture(enemySprites);
     if (contentPreviewAtlas.id != 0) UnloadTexture(contentPreviewAtlas);
+    if (boulderTexture.id != 0) UnloadTexture(boulderTexture);
+    if (rockTexture.id != 0) UnloadTexture(rockTexture);
     if (chainLinks.id != 0) UnloadTexture(chainLinks);
     if (toolbarIcons.id != 0) UnloadTexture(toolbarIcons);
 #if defined(_WIN32)
@@ -960,7 +967,7 @@ void LevelEditor::GenerateContentThumbnails() const {
         "Pinball Flipper", "Laser Emitter", "Laser Mixer", "Laser Detector", "Hot-Air Balloon", "Blimp",
         "Leaky Bucket", "Destructible Wood", "Destructible Brick", "Destructible Glass",
         "Glass Pane", "Glass Block", "Ice Block", "Ice Sheet", "Heater", "Campfire", "Torch", "Bucket of Water",
-        "Signal Dust", "Ternary Trace", "Ternary Switch", "TNT", "Wedge", "Scuba Gear"
+        "Signal Dust", "Ternary Trace", "Ternary Switch", "TNT", "Wedge", "Scuba Gear", "Teleforce Projector", "Tesla Coil", "Rock"
     };
     constexpr int Count = static_cast<int>(std::size(names));
     constexpr int Rows = (Count + Columns - 1) / Columns;
@@ -998,7 +1005,7 @@ void LevelEditor::GenerateContentThumbnails() const {
         else if (name == "Hanging Weight") { HangingWeight value{}; value.pulley = {center.x, top + 20.0f}; value.pulleyRadius = 14.0f; value.rect = {center.x - 19.0f, top + 43.0f, 38.0f, 30.0f}; DrawHazardWeight(value); }
         else if (name == "Rotary Latch") { RotaryLatch value{}; value.center = center; value.radius = 28.0f; DrawRotaryLatch(value, false, ""); }
         else if (name == "Stone Block") { StoneBlock value{}; value.rect = {center.x - 27.0f, center.y - 24.0f, 54.0f, 48.0f}; DrawStoneBlock(value); }
-        else if (name == "Boulder") { Boulder value{}; value.center = center; value.radius = 28.0f; DrawBoulder(value); }
+        else if (name == "Boulder") { Boulder value{}; value.center = center; value.radius = 28.0f; DrawBoulder(value, boulderTexture); }
         else if (name == "Physics Wheel") { PhysicsWheel value{}; value.center = center; value.radius = 28.0f; DrawPhysicsWheel(value); }
         else if (name == "Gear") { Gear value{}; value.center = center; value.radius = 28.0f; DrawGear(value); }
         else if (name == "Flywheel") { Flywheel value{}; value.center = center; value.radius = 31.0f; DrawFlywheel(value); }
@@ -1020,7 +1027,7 @@ void LevelEditor::GenerateContentThumbnails() const {
         else if (name == "Visual Tile") DrawTilesetTile(industrialTiles, 1, 0, {center.x - 16.0f, center.y - 16.0f}, WHITE);
         else if (name == "Label") { DrawRectangleRounded({left + 10.0f, center.y - 16.0f, 92.0f, 32.0f}, 0.2f, 4, Color{22, 28, 34, 255}); DrawText("LABEL", static_cast<int>(left + 28.0f), static_cast<int>(center.y - 8.0f), 16, RAYWHITE); }
         else if (name == "Valve") { Valve value{}; value.center = center; value.radius = 29.0f; DrawValveBody(value, false); }
-        else if (name == "Checkpoint" || name == "Collectible") { GuideObject value{}; std::istringstream stream(name == "Checkpoint" ? "56 14 30 56" : "56 42 12"); ParseGuideObject(name == "Checkpoint" ? "checkpoint" : "collectible", stream, value); value.transform.position.x += left; value.transform.position.y += top; DrawGuideObject(value); }
+        else if (name == "Checkpoint" || name == "Collectible") { GuideObject value{}; std::istringstream stream(name == "Checkpoint" ? "56 14 30 56" : "56 42 12"); ParseGuideObject(name == "Checkpoint" ? "checkpoint" : "collectible", stream, value); value.transform.position.x += left; value.transform.position.y += top; DrawGuideObject(value, rockTexture); }
         else if (name == "Ball" || name == "Barrel" || name == "Moving Platform" || name == "Elevator") {
             GuideObject value{};
             const char* command = name == "Ball" ? "ball" : name == "Barrel" ? "barrel" :
@@ -1032,7 +1039,7 @@ void LevelEditor::GenerateContentThumbnails() const {
             value.transform.position.x += left;
             value.transform.position.y += top;
             value.origin = value.transform.position;
-            DrawGuideObject(value);
+            DrawGuideObject(value, rockTexture);
         }
         else if (name == "Pendulum Bob" || name == "One-Way Platform" || name == "Ceiling Hook" || name == "Guide Rail") {
             GuideObject value{};
@@ -1046,7 +1053,7 @@ void LevelEditor::GenerateContentThumbnails() const {
             value.origin.y += top;
             value.transform.position = value.origin;
             if (name == "Pendulum Bob") value.transform.position.y += value.length;
-            DrawGuideObject(value);
+            DrawGuideObject(value, rockTexture);
         }
         else if (name == "Spring" || name == "Compression Spring" || name == "Extension Spring" || name == "Torsion Spring") {
             GuideObject value{};
@@ -1058,7 +1065,7 @@ void LevelEditor::GenerateContentThumbnails() const {
             value.constraint.anchorA.y += top;
             value.constraint.anchorB.x += left;
             value.constraint.anchorB.y += top;
-            DrawGuideObject(value);
+            DrawGuideObject(value, rockTexture);
         }
         else if (name == "Garter Spring" || name == "Volute Spring" || name == "Spiral Spring" || name == "Constant-Force Spring") {
             GuideObject value{};
@@ -1073,7 +1080,7 @@ void LevelEditor::GenerateContentThumbnails() const {
             value.constraint.anchorA.y += top;
             value.constraint.anchorB.x += left;
             value.constraint.anchorB.y += top;
-            DrawGuideObject(value);
+            DrawGuideObject(value, rockTexture);
         }
         else if (name == "Constant-Torque Spring" || name == "Leaf Spring" || name == "Beam Spring" || name == "Disc Spring") {
             GuideObject value{};
@@ -1088,7 +1095,7 @@ void LevelEditor::GenerateContentThumbnails() const {
             value.constraint.anchorA.y += top;
             value.constraint.anchorB.x += left;
             value.constraint.anchorB.y += top;
-            DrawGuideObject(value);
+            DrawGuideObject(value, rockTexture);
         }
         else if (name == "Wave Spring" || name == "Wave Washer" || name == "Torsion Bar" || name == "Ring Spring") {
             GuideObject value{};
@@ -1103,7 +1110,7 @@ void LevelEditor::GenerateContentThumbnails() const {
             value.constraint.anchorA.y += top;
             value.constraint.anchorB.x += left;
             value.constraint.anchorB.y += top;
-            DrawGuideObject(value);
+            DrawGuideObject(value, rockTexture);
         }
         else if (name == "Elastomer Spring" || name == "Pneumatic Spring" || name == "Gas Spring" || name == "Hydropneumatic Spring") {
             GuideObject value{};
@@ -1118,7 +1125,7 @@ void LevelEditor::GenerateContentThumbnails() const {
             value.constraint.anchorA.y += top;
             value.constraint.anchorB.x += left;
             value.constraint.anchorB.y += top;
-            DrawGuideObject(value);
+            DrawGuideObject(value, rockTexture);
         }
         else if (name == "Magnetic Spring" || name == "Composite Spring" || name == "Rod" || name == "Fixed Joint") {
             GuideObject value{};
@@ -1140,7 +1147,7 @@ void LevelEditor::GenerateContentThumbnails() const {
                 value.constraint.anchorB.x += left;
                 value.constraint.anchorB.y += top;
             }
-            DrawGuideObject(value);
+            DrawGuideObject(value, rockTexture);
         }
         else if (name == "Crank" || name == "Ratchet" || name == "Clutch" || name == "Brake") {
             GuideObject value{};
@@ -1153,7 +1160,7 @@ void LevelEditor::GenerateContentThumbnails() const {
             value.transform.position.x += left;
             value.transform.position.y += top;
             value.origin = value.transform.position;
-            DrawGuideObject(value);
+            DrawGuideObject(value, rockTexture);
         }
         else if (name == "Clock Face") {
             DrawCircleLines(static_cast<int>(left + 56), static_cast<int>(top + 42), 30, GOLD);
@@ -1183,7 +1190,7 @@ void LevelEditor::GenerateContentThumbnails() const {
                 object.origin.x += offset.x; object.origin.y += offset.y;
                 object.constraint.anchorA.x += offset.x; object.constraint.anchorA.y += offset.y;
                 object.constraint.anchorB.x += offset.x; object.constraint.anchorB.y += offset.y;
-                DrawGuideObject(object);
+                DrawGuideObject(object, rockTexture);
                 break;
             }
         }
@@ -1237,6 +1244,8 @@ void LevelEditor::DiscoverLevels() {
 }
 
 bool LevelEditor::LoadLevel(const std::filesystem::path& path) {
+    pivotUnlocked = false;
+    draggingAnchorPoint = false;
     pickingControlTarget = false;
     selectedLinkType.clear(); selectedLinkIndex = -1;
     std::error_code error;
@@ -1270,7 +1279,8 @@ bool LevelEditor::LoadLevel(const std::filesystem::path& path) {
 }
 
 bool LevelEditor::CanSaveCurrentLevel() const {
-    return !currentLevelPath.empty() && level.guideObjects.empty();
+    return !currentLevelPath.empty() && std::all_of(level.guideObjects.begin(), level.guideObjects.end(),
+        [](const GuideObject& object) { return object.type == GuideObjectType::Rock; });
 }
 
 bool LevelEditor::SaveLevel() {
@@ -1326,6 +1336,9 @@ bool LevelEditor::SaveLevel() {
         output << (ramp.wedge ? "wedge " : "ramp ") << ramp.center.x << ' ' << ramp.center.y << ' '
             << ramp.length << ' ' << ramp.thickness << ' ' << ramp.angle << ' ' << ramp.segmentCount << "\n";
     }
+    for (const GuideObject& object : level.guideObjects) {
+        output << AdvancedObjectRecord(object) << "\n";
+    }
     for (const LevelLabel& label : level.labels) {
         output << "labelSized " << label.position.x << ' ' << label.position.y << ' ' <<
             label.fontSize << ' ' << label.text << "\n";
@@ -1359,7 +1372,8 @@ bool LevelEditor::OpenLevelDialog() {
 
 bool LevelEditor::SaveLevelAs() {
 #if defined(_WIN32)
-    if (!level.guideObjects.empty()) {
+    if (std::any_of(level.guideObjects.begin(), level.guideObjects.end(),
+        [](const GuideObject& object) { return object.type != GuideObjectType::Rock; })) {
         statusText = "Save is disabled for levels with guide objects until full round-trip support lands.";
         return false;
     }
@@ -2089,12 +2103,43 @@ float LevelEditor::TransformAxisLength(Rectangle bounds, Vector2 anchor, bool ho
     return std::max(48.0f / camera.zoom, extent + outsideMargin);
 }
 
+std::array<Vector2, 3> LevelEditor::ScaleHandlePositions(Rectangle bounds) const {
+    const Vector2 anchor = TransformAnchorPoint(bounds);
+    const float margin = 24.0f / camera.zoom;
+    return {{{anchor.x + TransformAxisLength(bounds, anchor, true), anchor.y},
+        {anchor.x, anchor.y - TransformAxisLength(bounds, anchor, false)},
+        {bounds.x + bounds.width + margin, bounds.y + bounds.height + margin}}};
+}
+
+void LevelEditor::TogglePivotLock() {
+    if (pivotToggledThisFrame) return;
+    pivotToggledThisFrame = true;
+    pivotUnlocked = !pivotUnlocked;
+    if (!pivotUnlocked && draggingAnchorPoint) {
+        draggingAnchorPoint = false;
+        activeTransformHandle = TransformHandle::None;
+        SetMouseCursor(MOUSE_CURSOR_DEFAULT);
+        if (transformAnchorIndex != transformOriginalAnchorIndex)
+            NotifyTileOperation("anchorpoint " + std::to_string(transformAnchorIndex));
+    }
+    statusText = pivotUnlocked ? "Pivot unlocked — drag it to move. Insert locks it again."
+        : "Pivot locked — press Insert to unlock it.";
+    NotifyTileOperation("toolstatus " + statusText);
+}
+
 void LevelEditor::EnsureRotationSelectionBounds() {
     if (transformMode == TransformMode::Rotate && SelectedRotation() != nullptr &&
         (selectedSceneBounds.width <= 0 || selectedSceneBounds.height <= 0)) {
         // Fresh placements have an object index but may not have hit-test
         // bounds yet. Initialize them from the authored object's geometry.
         const int index = selection.index;
+        if (selectedSceneName.rfind("Guide Object ", 0) == 0) {
+            selectedSceneBounds = GetGuideObjectBounds(level.guideObjects[index]);
+            selection.sceneName = selectedSceneName;
+            selection.sceneBounds = selectedSceneBounds;
+            selection.outlinerName = GetGuideObjectName(level.guideObjects[index].type);
+            return;
+        }
         Vector2 center{};
         float extent = 32;
         if (selectedSceneName.rfind("Gear ", 0) == 0) { center = level.gears[index].center; extent = level.gears[index].radius; }
@@ -2121,6 +2166,8 @@ void LevelEditor::EnsureRotationSelectionBounds() {
 float* LevelEditor::SelectedRotation() {
     if (selection.kind != SelectionKind::SceneObject || selection.index < 0) return nullptr;
     const size_t index = static_cast<size_t>(selection.index);
+    if (selectedSceneName.rfind("Guide Object ", 0) == 0 && index < level.guideObjects.size() &&
+        level.guideObjects[index].type == GuideObjectType::Rock) return &level.guideObjects[index].transform.rotation;
     if (selectedSceneName.rfind("Boulder ", 0) == 0 && index < level.boulders.size()) return &level.boulders[index].rotation;
     if (selectedSceneName.rfind("Physics Wheel ", 0) == 0 && index < level.physicsWheels.size()) return &level.physicsWheels[index].rotation;
     if (selectedSceneName.rfind("Rotary Latch ", 0) == 0 && index < level.rotaryLatches.size()) return &level.rotaryLatches[index].angle;
@@ -2506,7 +2553,7 @@ bool LevelEditor::IsSelectedFluid() const {
 
 LevelEditor::TransformHandle LevelEditor::TransformHandleAt(Vector2 world) const {
     const Rectangle gizmoBounds = SelectedTransformBounds();
-    if (gizmoBounds.width > 0.0f && gizmoBounds.height > 0.0f &&
+    if (pivotUnlocked && gizmoBounds.width > 0.0f && gizmoBounds.height > 0.0f &&
         CheckCollisionPointCircle(world, TransformAnchorPoint(gizmoBounds), 6.5f / camera.zoom))
         return TransformHandle::AnchorPivot;
 
@@ -2566,9 +2613,8 @@ LevelEditor::TransformHandle LevelEditor::TransformHandleAt(Vector2 world) const
         if (selection.kind == SelectionKind::Exit && groupSelection.size() <= 1) return TransformHandle::None;
         const Rectangle bounds = groupSelection.size() > 1 ? groupBounds :
             (rect != nullptr ? *rect : selectedSceneBounds);
-        const Vector2 xHandle{bounds.x + bounds.width, bounds.y + bounds.height * 0.5f};
-        const Vector2 yHandle{bounds.x + bounds.width * 0.5f, bounds.y};
-        const Vector2 corner{bounds.x + bounds.width, bounds.y + bounds.height};
+        const auto points = ScaleHandlePositions(bounds);
+        const Vector2 xHandle = points[0], yHandle = points[1], corner = points[2];
         if (CheckCollisionPointCircle(world, xHandle, hitRadius)) return TransformHandle::ScaleX;
         if (CheckCollisionPointCircle(world, yHandle, hitRadius)) return TransformHandle::ScaleY;
         if (CheckCollisionPointCircle(world, corner, hitRadius)) return TransformHandle::ScaleBottomRight;
@@ -2897,7 +2943,9 @@ void LevelEditor::UpdateDocking() {
 }
 
 void LevelEditor::Update() {
+    pivotToggledThisFrame = false;
     if (viewportOnly) ProcessViewportHostCommand();
+    if (IsKeyPressed(KEY_INSERT)) TogglePivotLock();
     if (!viewportOnly) {
         ProcessNativeMenuCommand();
         UpdateDocking();
@@ -3234,6 +3282,9 @@ void LevelEditor::ProcessViewportHostCommand() {
         case 45:
             collisionTileLayerMask = value & 0x1FFF;
             break;
+        case 46:
+            TogglePivotLock();
+            break;
         case 28:
             paintTileSelectionWidth = std::clamp(value & 0xffff, 1, 64);
             paintTileSelectionHeight = std::clamp((value >> 16) & 0xffff, 1, 64);
@@ -3501,6 +3552,7 @@ void LevelEditor::ProcessViewportHostCommand() {
             else if (value == 156) activeTool = EditTool::ScubaGear;
             else if (value == 157) activeTool = EditTool::Teleforce;
             else if (value == 158) activeTool = EditTool::TeslaCoil;
+            else if (value == 159) activeTool = EditTool::Rock;
             else break;
             {
                 tilePaintTool = TilePaintTool::None;
@@ -5006,7 +5058,7 @@ void LevelEditor::UpdateEditing(Rectangle canvas) {
                     transformOriginalRect = level.fluids[static_cast<size_t>(selection.index)].bounds;
                 else if (selection.kind == SelectionKind::SceneObject)
                     transformOriginalRect = selectedSceneBounds;
-                if (activeTransformHandle == TransformHandle::AnchorPivot) {
+                if (pivotUnlocked && activeTransformHandle == TransformHandle::AnchorPivot) {
                     transformOriginalAnchorIndex = transformAnchorIndex;
                     draggingAnchorPoint = true;
                     SetMouseCursor(MOUSE_CURSOR_POINTING_HAND);
@@ -6207,6 +6259,7 @@ void LevelEditor::UpdateEditing(Rectangle canvas) {
         case EditTool::TernarySwitch:
         case EditTool::Tnt:
         case EditTool::Teleforce:
+        case EditTool::Rock:
         case EditTool::TeslaCoil:
         {
             const auto* entry = FindAdvancedPlacement(activeTool);
@@ -6577,11 +6630,7 @@ void LevelEditor::DrawEditOverlay() const {
     const auto drawScaleHandles = [&](Rectangle bounds, TransformHandle hovered) {
         const float baseSize = 8.0f / camera.zoom;
         const Vector2 center = TransformAnchorPoint(bounds);
-        const Vector2 points[] = {
-            {bounds.x + bounds.width, bounds.y + bounds.height * 0.5f},
-            {bounds.x + bounds.width * 0.5f, bounds.y},
-            {bounds.x + bounds.width, bounds.y + bounds.height}
-        };
+        const auto points = ScaleHandlePositions(bounds);
         const TransformHandle types[] = {
             TransformHandle::ScaleX, TransformHandle::ScaleY, TransformHandle::ScaleBottomRight
         };
@@ -6598,7 +6647,8 @@ void LevelEditor::DrawEditOverlay() const {
         const float unit = 1.0f / camera.zoom;
         const bool hovered = draggingAnchorPoint || TransformHandleAt(GetScreenToWorld2D(GetMousePosition(), camera)) ==
             TransformHandle::AnchorPivot;
-        const Color color = hovered ? Color{255, 231, 128, 255} : Warning;
+        const Color color = !pivotUnlocked ? Color{168, 178, 191, 255} :
+            (hovered ? Color{255, 231, 128, 255} : Warning);
         DrawLineEx({point.x - 8.0f * unit, point.y}, {point.x + 8.0f * unit, point.y}, 1.5f * unit, color);
         DrawLineEx({point.x, point.y - 8.0f * unit}, {point.x, point.y + 8.0f * unit}, 1.5f * unit, color);
         DrawCircleV(point, hovered ? 3.0f * unit : 2.5f * unit, color);
@@ -6982,7 +7032,7 @@ void LevelEditor::DrawLevelPreview() const {
         DrawStoneBlock(block);
     }
     for (const Boulder& boulder : level.boulders) {
-        DrawBoulder(boulder);
+        DrawBoulder(boulder, boulderTexture);
     }
     for (const PhysicsWheel& wheel : level.physicsWheels) {
         DrawPhysicsWheel(wheel);
@@ -7054,7 +7104,7 @@ void LevelEditor::DrawLevelPreview() const {
         DrawEnemy(enemy, enemySprites);
     }
     for (const GuideObject& object : level.guideObjects) {
-        DrawGuideObject(object);
+        DrawGuideObject(object, rockTexture);
     }
     for (const LevelLabel& label : level.labels) {
         const int padding = std::max(5, static_cast<int>(roundf(label.fontSize * 0.42f)));
@@ -7276,7 +7326,7 @@ void LevelEditor::DrawContentBrowser(Rectangle browser) const {
             Boulder boulder{};
             boulder.center = {sample.x + sample.width * 0.5f, sample.y + sample.height * 0.5f};
             boulder.radius = std::min(sample.width, sample.height) * 0.42f;
-            DrawBoulder(boulder);
+            DrawBoulder(boulder, boulderTexture);
             break;
         }
         case EditTool::PhysicsWheel: {
@@ -7463,7 +7513,7 @@ void LevelEditor::DrawContentBrowser(Rectangle browser) const {
             ParseGuideObject(asset.tool == EditTool::Checkpoint ? "checkpoint" : "collectible", stream, object);
             object.transform.position = {sample.x + sample.width * 0.5f, sample.y + sample.height * 0.5f};
             object.origin = object.transform.position;
-            DrawGuideObject(object);
+            DrawGuideObject(object, rockTexture);
             break;
         }
         case EditTool::Ball:
@@ -7481,7 +7531,7 @@ void LevelEditor::DrawContentBrowser(Rectangle browser) const {
             ParseGuideObject(command, stream, object);
             object.transform.position = {sample.x + sample.width * 0.5f, sample.y + sample.height * 0.5f};
             object.origin = object.transform.position;
-            DrawGuideObject(object);
+            DrawGuideObject(object, rockTexture);
             break;
         }
         case EditTool::PendulumBob:
@@ -7501,7 +7551,7 @@ void LevelEditor::DrawContentBrowser(Rectangle browser) const {
                 sample.y + (asset.tool == EditTool::PendulumBob ? 5.0f : sample.height * 0.5f)};
             object.transform.position = object.origin;
             if (asset.tool == EditTool::PendulumBob) object.transform.position.y += object.length;
-            DrawGuideObject(object);
+            DrawGuideObject(object, rockTexture);
             break;
         }
         case EditTool::Spring:
@@ -7571,7 +7621,7 @@ void LevelEditor::DrawContentBrowser(Rectangle browser) const {
             const Vector2 offset{sample.x + 6.0f, sample.y + sample.height * 0.5f};
             object.constraint.anchorA = offset;
             object.constraint.anchorB = {offset.x + sample.width - 12.0f, offset.y};
-            DrawGuideObject(object);
+            DrawGuideObject(object, rockTexture);
             break;
         }
         case EditTool::Rod:
@@ -7587,7 +7637,7 @@ void LevelEditor::DrawContentBrowser(Rectangle browser) const {
                 object.transform.position = {sample.x + sample.width * 0.5f, sample.y + sample.height * 0.5f};
                 object.origin = object.transform.position;
             }
-            DrawGuideObject(object);
+            DrawGuideObject(object, rockTexture);
             break;
         }
         case EditTool::Crank:
@@ -7605,7 +7655,7 @@ void LevelEditor::DrawContentBrowser(Rectangle browser) const {
             ParseGuideObject(command, stream, object);
             object.transform.position = {sample.x + sample.width * 0.5f, sample.y + sample.height * 0.5f};
             object.origin = object.transform.position;
-            DrawGuideObject(object);
+            DrawGuideObject(object, rockTexture);
             break;
         }
         case EditTool::Select:
@@ -7629,7 +7679,7 @@ void LevelEditor::DrawContentBrowser(Rectangle browser) const {
                     object.constraint.anchorA.y += offset.y;
                     object.constraint.anchorB.x += offset.x;
                     object.constraint.anchorB.y += offset.y;
-                    DrawGuideObject(object);
+                    DrawGuideObject(object, rockTexture);
                 }
             }
             break;

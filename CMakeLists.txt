@@ -210,6 +210,8 @@ if ("${PLATFORM}" STREQUAL "Web")
         "assets/first_party/characters/Player_Sprites.png"
         "assets/first_party/characters/knight.png"
         "assets/first_party/characters/skull.png"
+        "assets/first_party/environments/kiril-rock.png"
+        "assets/first_party/environments/kiril-boulder.png"
         "assets/first_party/machines/chain_links.png"
         "assets/third_party/AtomicRealm/[FREE] Industrial Tileset/raw/FREE/5. Industrial Tileset - Starter Pack 32p/1_Industrial_Tileset_1.png"
         "assets/third_party/AtomicRealm/[FREE] Industrial Tileset/raw/FREE/5. Industrial Tileset - Starter Pack 32p/2_Industrial_Tileset_1_Background.png"

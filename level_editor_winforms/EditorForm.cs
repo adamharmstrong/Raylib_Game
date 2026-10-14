@@ -33,7 +33,7 @@ internal sealed class EditorForm : Form
         "Pinball Flipper", "Laser Emitter", "Laser Mixer", "Laser Detector", "Hot-Air Balloon", "Blimp",
         "Leaky Bucket", "Destructible Wood", "Destructible Brick", "Destructible Glass", "Glass Pane", "Glass Block",
         "Ice Block", "Ice Sheet", "Heater", "Campfire", "Torch", "Bucket of Water", "Signal Dust",
-        "Ternary Trace", "Ternary Switch", "TNT", "Wedge", "Scuba Gear", "Teleforce Projector", "Tesla Coil"
+        "Ternary Trace", "Ternary Switch", "TNT", "Wedge", "Scuba Gear", "Teleforce Projector", "Tesla Coil", "Rock"
     ];
 
     private readonly LevelDocument document = new();
@@ -1626,7 +1626,7 @@ internal sealed class EditorForm : Form
     private static string GetAssetCategory(int index) => GetAssetCommandIndex(index) switch
     {
         11 or 16 or 17 or 18 or 19 or 20 or 22 or 23 or 24 or 71 or 105 or 155 => "Simple Machines",
-        0 or 1 or 2 or 44 or 46 => "Geometry",
+        0 or 1 or 2 or 44 or 46 or 159 => "Geometry",
         3 or 4 => "Regions",
         5 or 6 or 35 or 37 => "Markers",
         >= 7 and <= 10 or 36 or 94 or 95 or 102 or 139 or 150 => "Fluids",
@@ -3404,6 +3404,11 @@ internal sealed class EditorForm : Form
 
     private void OnEditorKeyDown(object? sender, KeyEventArgs eventArgs)
     {
+        if (eventArgs.KeyCode == Keys.Insert) {
+            viewport.SendCommand(46, 1);
+            eventArgs.SuppressKeyPress = true;
+            return;
+        }
         if (eventArgs.KeyCode == Keys.Escape && selectingConnectionRecord) {
             selectingConnectionRecord = false;
             viewport.SendCommand(44, 0);

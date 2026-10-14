@@ -29,5 +29,18 @@ int main() {
         if (bounds.width <= 0 || bounds.height <= 0)
             throw std::runtime_error(std::string("Unselectable placement: ") + entry.name);
     }
+    GuideObject rock{};
+    std::istringstream rockArgs("12 24 32 32 45");
+    if (!ParseGuideObject("rock", rockArgs, rock) || rock.transform.rotation != 45 ||
+        !rock.collider.isTrigger || rock.body.type != BodyType::Static)
+        throw std::runtime_error("Rock must preserve rotation and remain a static decoration.");
+    std::vector<Rectangle> rockSolids;
+    AppendGuideObjectSolids(rockSolids, {rock});
+    if (!rockSolids.empty()) throw std::runtime_error("Decorative rocks must not block movement.");
+    const auto rockRecord = AdvancedObjectRecord(rock);
+    GuideObject restoredRock{};
+    std::istringstream restoredArgs(rockRecord.substr(5));
+    if (!ParseGuideObject("rock", restoredArgs, restoredRock) || restoredRock.transform.rotation != 45)
+        throw std::runtime_error("Rock rotation was lost during serialization.");
     std::cout << "All advanced placement defaults, transforms, bounds, and authored records passed.\n";
 }

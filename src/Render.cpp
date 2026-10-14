@@ -1520,7 +1520,14 @@ void DrawStoneBlock(const StoneBlock& block) {
     DrawCircleV({block.rect.x + block.rect.width - 14.0f, block.rect.y + block.rect.height * 0.48f}, 3.0f, DARKGRAY);
 }
 
-void DrawBoulder(const Boulder& boulder) {
+void DrawBoulder(const Boulder& boulder, Texture2D texture) {
+    if (texture.id != 0) {
+        const float diameter = boulder.radius * 2.0f;
+        DrawTexturePro(texture, {0, 0, static_cast<float>(texture.width), static_cast<float>(texture.height)},
+            {boulder.center.x, boulder.center.y, diameter, diameter},
+            {boulder.radius, boulder.radius}, boulder.rotation, WHITE);
+        return;
+    }
     float rotation = boulder.rotation * DEG2RAD;
     auto rotateOffset = [&](float x, float y) {
         return Vector2{

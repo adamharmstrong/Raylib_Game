@@ -175,6 +175,7 @@ public:
         ScubaGear,
         Teleforce,
         TeslaCoil,
+        Rock,
 
     };
 
@@ -367,10 +368,12 @@ private:
     Vector2 TransformAnchorPoint(Rectangle bounds) const;
     int NearestTransformAnchor(Vector2 world, Rectangle bounds) const;
     float TransformAxisLength(Rectangle bounds, Vector2 anchor, bool horizontal) const;
+    std::array<Vector2, 3> ScaleHandlePositions(Rectangle bounds) const;
     bool IsGroupSelected(const Selection& item) const;
     void SetPrimarySelection(const Selection& item);
     float* SelectedRotation();
     void EnsureRotationSelectionBounds();
+    void TogglePivotLock();
     const float* SelectedRotation() const;
     Vector2 SelectedRotationCenter() const;
     bool IsSelectedFluid() const;
@@ -392,6 +395,8 @@ private:
     Texture2D playerSprites{};
     Texture2D playerFourSprites{};
     Texture2D enemySprites{};
+    Texture2D boulderTexture{};
+    Texture2D rockTexture{};
     Texture2D chainLinks{};
     Texture2D toolbarIcons{};
     Texture2D contentPreviewAtlas{};
@@ -469,6 +474,8 @@ private:
     int transformAnchorIndex{4};
     int transformOriginalAnchorIndex{4};
     bool draggingAnchorPoint{false};
+    bool pivotUnlocked{false};
+    bool pivotToggledThisFrame{false};
     bool draggingTransform{false};
     Vector2 transformDragStart{};
     Rectangle transformOriginalRect{};

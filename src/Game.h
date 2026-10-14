@@ -208,6 +208,8 @@ private:
     SpriteSheetTextures spriteSheets;
     Texture2D industrialBackground{};
     Texture2D industrialFarBackground{};
+    Texture2D boulderTexture{};
+    Texture2D rockTexture{};
     Texture2D chainLinksTexture{};
     Texture2D enemyPlaceholderTexture{};
     Texture2D gasMaskTexture{};

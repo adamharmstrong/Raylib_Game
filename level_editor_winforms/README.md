@@ -141,6 +141,12 @@ recent 100 edits are retained.
 
 ## Object placement
 
+Transform pivots are locked for dragging by default. Press **Insert** to unlock
+the pivot, then drag its center marker to reposition it. Press **Insert** again
+to lock it. A locked pivot is gray; an unlocked pivot is gold. Loading a level
+locks pivot dragging again. Normal object movement through the center handle
+continues to work while the pivot is locked.
+
 The five default layers are **Foreground**, **Background**, **Far Background**,
 **Collision**, and **Middleground**. Middleground controls visibility of gameplay
 objects, including the player, and can also contain painted tiles. Hiding it

@@ -38,7 +38,7 @@ void DrawWaterPit(const WaterPit& waterPit);
 void DrawFluidBackground(const FluidField& fluid);
 void DrawFluidField(const FluidField& fluid, const std::vector<Rectangle>& splashSources = {});
 void DrawStoneBlock(const StoneBlock& block);
-void DrawBoulder(const Boulder& boulder);
+void DrawBoulder(const Boulder& boulder, Texture2D texture = {});
 void DrawPhysicsWheel(const PhysicsWheel& wheel);
 void DrawGear(const Gear& gear);
 void DrawFlywheel(const Flywheel& flywheel);

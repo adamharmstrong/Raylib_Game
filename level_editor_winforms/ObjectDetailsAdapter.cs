@@ -206,6 +206,7 @@ internal sealed class ObjectDetailsAdapter : ICustomTypeDescriptor
         ["teleforce"] = [X, Y, Width, Height, new("Direction X", "Direction"), new("Direction Y", "Direction"),
             new("Range", "Hazard"), new("Beam Width", "Hazard"), new("Force", "Hazard"),
             new("Charge Seconds", "Timing"), new("Pulse Seconds", "Timing"), new("Cooldown Seconds", "Timing"), Channel],
+        ["rock"] = [X, Y, Width, Height, new("Rotation", "Transform")],
         ["teslaCoil"] = [X, Y, Width, Height, new("Arc Range", "Hazard"), new("Arc Force", "Hazard"),
             new("Charge Seconds", "Timing"), new("Pulse Seconds", "Timing"), new("Cooldown Seconds", "Timing"),
             new("Input Channel", "Power", ObjectFieldKind.Integer), new("Wireless Output Channel", "Power", ObjectFieldKind.Integer)],

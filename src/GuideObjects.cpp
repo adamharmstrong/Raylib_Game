@@ -610,7 +610,14 @@ bool ParseGuideObject(const std::string& command, std::istringstream& stream, Gu
     float height = 0.0f;
     GuideObjectType springType = GuideObjectType::Spring;
 
-    if (command == "ball") {
+    if (command == "rock") {
+        object.type = GuideObjectType::Rock;
+        if (!(stream >> x >> y >> width >> height) || width <= 0 || height <= 0) return false;
+        if (!(stream >> object.transform.rotation)) stream.clear();
+        ConfigureRectangle(object, x, y, width, height, BodyType::Static);
+        object.collider.isTrigger = true;
+    }
+    else if (command == "ball") {
         object.type = GuideObjectType::Ball;
         stream >> x >> y >> object.collider.radius >> object.body.mass;
         ConfigureCircle(object, x, y, object.collider.radius, BodyType::Dynamic);
@@ -2553,6 +2560,7 @@ const char* GetGuideObjectName(GuideObjectType type) {
         case GuideObjectType::TernaryTrace: return "Ternary Trace";
         case GuideObjectType::TernarySwitch: return "Ternary Switch";
         case GuideObjectType::Teleforce: return "Teleforce Projector";
+        case GuideObjectType::Rock: return "Rock";
         case GuideObjectType::TeslaCoil: return "Tesla Coil";
     }
     return "Object";
@@ -2672,6 +2680,7 @@ const char* GetGuideObjectDescription(GuideObjectType type) {
         case GuideObjectType::ExplosiveBarrel: return "A movable hazard that explodes after a sufficiently hard impact.";
         case GuideObjectType::Tnt: return "A movable bundle of dynamite with a timed fuse. Heat, hard impacts, or nearby explosions ignite it.";
         case GuideObjectType::Teleforce: return "A Tesla-inspired particle projector that charges, then launches and destroys anything caught in its brief discharge.";
+        case GuideObjectType::Rock: return "A decorative rock by Kiril.";
         case GuideObjectType::TeslaCoil: return "A powered high-voltage coil that periodically arcs through its surroundings, jolts physics objects, and broadcasts wireless power while discharging.";
         case GuideObjectType::SignalDust: return "A placeable conductive trace that carries a fading 15-step signal from touching power sources into its configured channel.";
         case GuideObjectType::TernaryTrace: return "Carries a fading balanced-ternary signal: cyan for negative, gray for zero, and magenta for positive.";
@@ -2680,10 +2689,19 @@ const char* GetGuideObjectDescription(GuideObjectType type) {
     return "An interactive object in the level.";
 }
 
-void DrawGuideObject(const GuideObject& object) {
+void DrawGuideObject(const GuideObject& object, Texture2D rockTexture) {
     if (!object.active || object.collected) return;
     Rectangle bounds = GetGuideObjectBounds(object);
     Vector2 center = Center(bounds);
+    if (object.type == GuideObjectType::Rock) {
+        if (rockTexture.id != 0) {
+            DrawTexturePro(rockTexture,
+                {0, 0, static_cast<float>(rockTexture.width), static_cast<float>(rockTexture.height)},
+                {center.x, center.y, bounds.width, bounds.height},
+                {bounds.width * 0.5f, bounds.height * 0.5f}, object.transform.rotation, WHITE);
+        }
+        return;
+    }
     Color steel{102, 112, 118, 255};
     Color darkSteel{50, 57, 62, 255};
 
