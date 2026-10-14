@@ -1,4 +1,5 @@
 #pragma once
+#include "SpriteSheetTextures.h"
 
 #include "Level.h"
 #include "EditorConnections.h"
@@ -6,11 +7,13 @@
 #include <filesystem>
 #include <array>
 #include <climits>
+#include <cstdint>
 #include <string>
 #include <unordered_set>
 #include <vector>
 
 class LevelEditor {
+    friend struct EditorRotationTestAccess;
 public:
     enum class EditTool {
         Select,
@@ -87,12 +90,98 @@ public:
         Crank,
         Ratchet,
         Clutch,
-        Brake
+        Brake,
+        Cam,
+        ConveyorBelt,
+        Turntable,
+        Battery,
+        ElectricMotor,
+        Generator,
+        LimitSwitch,
+        Relay,
+        Fuse,
+        Magnet,
+        Piston,
+        HydraulicCylinder,
+        RocketThruster,
+        CrushingBlock,
+        SwingingHammer,
+        SawBlade,
+        SpinnerTrap,
+        SteamVent,
+        ElectricalArc,
+        Oil,
+        Mud,
+        SpeedSensor,
+        BeamSensor,
+        Key,
+        GasMask,
+        BreakableCrate,
+        ExplosiveBarrel,
+        WaterPit,
+        ToxinLeak,
+        ClockFace,
+        MountedGear,
+        SpikeHazard,
+        AntiGravityPad,
+        TripodDerrick,
+        ChainHoist,
+        BlockAndTackle,
+        ComeAlong,
+        ManualBenchGrinder,
+        LoadCart,
+        RevolvingStoneGate,
+        RockHammer,
+        FieldCoil,
+        SpokePress,
+        PolarisTelescope,
+        Sundial,
+        PerpetualMotionHolder,
+        Bellows,
+        Trampoline,
+        BoxingGlove,
+        Vacuum,
+        MagnifyingGlass,
+        LightSource,
+        IgnitableFuse,
+        ProgrammableBall,
+        TransRotoConverter,
+        RotoTransConverter,
+        AcceleratorTube,
+        PinballBumper,
+        PinballFlipper,
+        LaserEmitter,
+        LaserMixer,
+        LaserDetector,
+        HotAirBalloon,
+        Blimp,
+        LeakyBucket,
+        DestructibleWood,
+        DestructibleBrick,
+        DestructibleGlass,
+        GlassPane,
+        GlassBlock,
+        IceBlock,
+        IceSheet,
+        Heater,
+        Campfire,
+        Torch,
+        WaterBucket,
+        SignalDust,
+        TernaryTrace,
+        TernarySwitch,
+        Tnt,
+        Wedge,
+        ScubaGear,
+        Teleforce,
+        TeslaCoil,
+
     };
 
     enum class TransformMode { Select, Move, Rotate, Scale };
 
-    int Run(const std::filesystem::path& initialLevel = {}, bool viewportOnly = false);
+    int Run(const std::filesystem::path& initialLevel = {}, bool viewportOnly = false,
+        std::uintptr_t viewportParent = 0);
 
 private:
     enum class SelectionKind {
@@ -107,7 +196,11 @@ private:
         SceneObject
     };
     enum class TilePaintTool { None, Pencil, Brush, Eraser, Eyedropper, RectangleFill, FloodFill, TileSelect, CollisionBrush, Line, Replace, Stamp, RandomBrush, RectangleOutline, Ellipse, Measure, AutoTile, MagicWand, SelectMatching };
-    enum class TransformHandle { None, MoveCenter, MoveX, MoveY, ScaleBottomRight, RotateRing };
+    enum class TransformHandle {
+        None, AnchorPivot, MoveCenter, MoveX, MoveY, ScaleX, ScaleY, ScaleBottomRight, RotateRing,
+        FluidResizeLeft, FluidResizeRight, FluidResizeTop, FluidResizeBottom,
+        FluidResizeTopLeft, FluidResizeTopRight, FluidResizeBottomLeft, FluidResizeBottomRight
+    };
 
     struct Selection {
         SelectionKind kind{SelectionKind::None};
@@ -127,6 +220,7 @@ private:
         std::vector<Rectangle> darknessAreas;
         Rectangle exitTrigger{};
         Vector2 playerStart{};
+        int playerCharacter{};
         std::vector<FluidField> fluids;
         std::vector<Vector2> pulleys;
         std::vector<HangingWeight> weights;
@@ -154,6 +248,20 @@ private:
         std::vector<LevelLabel> labels;
         Valve valve;
         std::vector<GuideObject> guideObjects;
+        WaterPit waterPit;
+        ToxinLeak toxinLeak;
+        Vector2 clockFaceCenter;
+        float clockFaceRadius;
+        Rectangle spikeHazard;
+        std::vector<ButtonTrapDoorLink> buttonTrapDoorLinks;
+        std::vector<ButtonLadderLink> buttonLadderLinks;
+        ButtonExitLink buttonExitLink;
+        std::vector<ButtonFanLink> buttonFanLinks;
+        std::vector<ButtonPlatformLink> buttonPlatformLinks;
+        std::vector<ButtonSpikeLink> buttonSpikeLinks;
+        ValveFluidFill valveFluidFill;
+        std::vector<ButtonPlatformLoop> buttonPlatformLoops;
+        std::vector<PlatformLoopButtonLink> platformLoopButtonLinks;
     };
 
     enum class PanelId { PlaceAssets, ContentBrowser, WorldOutliner, Details, Count };
@@ -255,11 +363,17 @@ private:
     Rectangle* RectangleForSelection(const Selection& item);
     const Rectangle* RectangleForSelection(const Selection& item) const;
     Rectangle SelectionGroupBounds() const;
+    Rectangle SelectedTransformBounds() const;
+    Vector2 TransformAnchorPoint(Rectangle bounds) const;
+    int NearestTransformAnchor(Vector2 world, Rectangle bounds) const;
+    float TransformAxisLength(Rectangle bounds, Vector2 anchor, bool horizontal) const;
     bool IsGroupSelected(const Selection& item) const;
     void SetPrimarySelection(const Selection& item);
     float* SelectedRotation();
+    void EnsureRotationSelectionBounds();
     const float* SelectedRotation() const;
     Vector2 SelectedRotationCenter() const;
+    bool IsSelectedFluid() const;
     bool TranslateSelectedScene(Vector2 delta);
     bool ScaleSelectedScene(Vector2 delta);
     bool DeleteSelectedSceneObject();
@@ -272,12 +386,15 @@ private:
     Camera2D camera{};
     Font uiFont{};
     Texture2D industrialTiles{};
+    SpriteSheetTextures spriteSheets;
     Texture2D industrialBackground{};
     Texture2D industrialFarBackground{};
     Texture2D playerSprites{};
+    Texture2D playerFourSprites{};
     Texture2D enemySprites{};
     Texture2D chainLinks{};
     Texture2D toolbarIcons{};
+    Texture2D contentPreviewAtlas{};
     std::filesystem::path levelDirectory;
     std::filesystem::path currentLevelPath;
     std::vector<std::filesystem::path> levelFiles;
@@ -292,6 +409,9 @@ private:
     int paintTileSheet{0};
     int paintTileColumn{0};
     int paintTileRow{0};
+    int paintQuarterTurns{0};
+    bool paintFlipX{false};
+    bool paintFlipY{false};
     int paintTileSelectionWidth{1};
     int paintTileSelectionHeight{1};
     int paintBrushSize{1};
@@ -309,7 +429,8 @@ private:
     int tileSelectionBottom{0};
     std::vector<VisualTile> tileClipboard;
     std::unordered_set<unsigned long long> tileSelectionCells;
-    int visibleTileLayerMask{0xFFF};
+    int visibleTileLayerMask{0x1FFF};
+    int collisionTileLayerMask{0x1FFF};
     int lockedTileLayerMask{0};
     bool showGrid{true};
     int tileSymmetryMask{0};
@@ -319,7 +440,15 @@ private:
     std::vector<TileEditSnapshot> tileUndoHistory;
     std::vector<TileEditSnapshot> tileRedoHistory;
     EditTool activeTool{EditTool::Select};
+    EditTool pendingAssetDropTool{EditTool::Select};
+    int dragPreviewAssetIndex{-1};
+    Vector2 dragPreviewScreenPosition{};
     Selection selection{};
+    bool pickingControlTarget{false};
+    bool controlSourceIsValve{false};
+    Vector2 controlSourcePosition{};
+    std::string selectedLinkType;
+    int selectedLinkIndex{-1};
     std::vector<Selection> groupSelection;
     bool draggingMarquee{false};
     Vector2 marqueeStart{};
@@ -329,6 +458,7 @@ private:
     Rectangle transformOriginalGroupBounds{};
     float transformOriginalRotation{0.0f};
     float transformDragStartAngle{0.0f};
+    Vector2 transformPivot{};
     Vector2 transformLastWorld{};
     bool draggingCreate{false};
     Vector2 dragStart{};
@@ -336,6 +466,9 @@ private:
     bool dirty{false};
     float gridSnap{32.0f};
     TransformMode transformMode{TransformMode::Select};
+    int transformAnchorIndex{4};
+    int transformOriginalAnchorIndex{4};
+    bool draggingAnchorPoint{false};
     bool draggingTransform{false};
     Vector2 transformDragStart{};
     Rectangle transformOriginalRect{};
@@ -369,3 +502,6 @@ private:
     Vector2 resizeDragStart{};
     Rectangle resizeOriginalBounds{};
 };
+
+int RunLevelEditor(const std::filesystem::path& initialLevel = {}, bool viewportOnly = false,
+    std::uintptr_t viewportParent = 0);

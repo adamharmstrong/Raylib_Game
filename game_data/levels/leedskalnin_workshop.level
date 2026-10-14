@@ -1,0 +1,58 @@
+# A playful workshop of machines documented at Coral Castle or described by Edward Leedskalnin.
+script power_pulley_panic
+playerStart 45 805
+
+solid 0 850 1600 50
+solid 0 0 28 900
+solid 1572 0 28 900
+platform 28 470 930 20
+platform 1010 470 562 20
+ladder 900 470 44 380
+exit 1490 650 70 200
+
+label 470 28 LEEDSKALNIN WORKSHOP
+labelSized 55 72 20 LIFTING MACHINES
+labelSized 1010 72 20 MAGNETISM AND STONEWORK
+
+# Tripod-mounted lifting equipment and live suspended loads.
+tripodDerrick 55 105 250 345
+chainHoist 180 120 280 1.1 240
+loadCart 145 412 70 38 3.2
+
+tripodDerrick 340 105 250 345
+blockAndTackle 465 120 280 0.72 420
+rockHammer 435 410 60 24 2.5
+
+# A ratcheting puller draws the second cart toward its wall anchor.
+comeAlong 650 395 825 420 1.8 95
+loadCart 795 402 72 38 3.4
+
+# Observational and electrical devices.
+polarisTelescope 1040 185 165 -35 12
+leedskalninSundial 1300 205 54 4.0 11
+electricMotor 1410 205 25 145 11
+
+# Ground-floor tools and mechanisms.
+manualBenchGrinder 1480 432 38 300
+fieldCoil 315 770 58 720
+ball 360 770 14 1.0
+
+polarisTelescope 485 735 170 0 12
+electricMotor 690 735 24 130 12
+
+# A pulse from the switch magnetizes the holder; its latch persists afterward.
+limitSwitch 790 812 54 28 13
+perpetualMotionHolder 885 748 92 78 125 1050 13
+ball 930 720 13 1.0
+
+spokePress 1080 665 76 42 0 1 105 1.35
+breakableCrate 1098 805 42 40 1.4
+
+revolvingStoneGate 1320 590 72 230 0.32
+
+labelSized 1395 360 18 GRINDER
+labelSized 260 520 18 FIELD COIL
+labelSized 470 520 18 POLARIS SIGHT
+labelSized 780 520 18 MAGNETIC HOLDER
+labelSized 1070 520 18 SPOKE PRESS
+labelSized 1285 520 18 NINE-TON GATE

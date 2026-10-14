@@ -12,7 +12,5 @@ int main(int argc, char* argv[]) {
         }
         playtestPath = argv[2];
     }
-    Game game;
-    game.Run(playtestPath);
-    return 0;
+    return RunGame(playtestPath);
 }

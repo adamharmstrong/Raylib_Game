@@ -1,14 +1,20 @@
 #include "LevelEditor.h"
+#include <iomanip>
 
 #include "GuideObjects.h"
+#include "EditorObjectPlacement.h"
+#include "EditorLoops.h"
+#include "TileSelectionTransform.h"
 #include "Render.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
 #include <functional>
 #include <iomanip>
+#include <limits>
 #include <queue>
 #include <system_error>
 #include <unordered_set>
@@ -23,9 +29,12 @@
 #define ShowCursor Win32ShowCursor
 #include <windows.h>
 #include <commdlg.h>
+#include <ole2.h>
+#include <oleidl.h>
 #undef Rectangle
 #undef CloseWindow
 #undef ShowCursor
+#undef LoadImage
 #undef DrawText
 #undef DrawTextEx
 #endif
@@ -36,7 +45,17 @@ constexpr int InitialWindowHeight = 900;
 constexpr float ToolbarHeight = 64.0f;
 constexpr float StatusBarHeight = 26.0f;
 constexpr float AssetRowHeight = 38.0f;
-constexpr float ContentFolderWidth = 170.0f;
+constexpr float ContentFolderWidth = 330.0f;
+constexpr float ContentTileWidth = 112.0f;
+constexpr float ContentTileGap = 6.0f;
+constexpr int ContentCategoryColumns = 3;
+constexpr float ContentCategoryRowHeight = 20.0f;
+
+constexpr const char* ContentCategories[] = {
+    "All", "Geometry", "Regions", "Markers", "Fluids", "Materials", "Physics",
+    "Springs", "Simple Machines", "Mechanical", "Rigging", "Power", "Logic", "Sensors", "Forces",
+    "Transport", "Hazards", "Optics", "Thermal", "Gameplay", "Characters", "Set Dressing"
+};
 
 constexpr Color WindowBackground{20, 23, 29, 255};
 constexpr Color PanelBackground{29, 33, 41, 255};
@@ -64,6 +83,7 @@ const char* TileLayerName(TileLayer layer) {
     case TileLayer::Background: return "background";
     case TileLayer::Foreground: return "foreground";
     case TileLayer::Collision: return "collision";
+    case TileLayer::Middleground: return "middleground";
     case TileLayer::User1: return "user1";
     case TileLayer::User2: return "user2";
     case TileLayer::User3: return "user3";
@@ -77,25 +97,8 @@ const char* TileLayerName(TileLayer layer) {
 }
 
 TileLayer TileLayerFromId(int id) {
-    return id >= 0 && id <= 11 ? static_cast<TileLayer>(id) : TileLayer::Foreground;
+    return id >= 0 && id <= 12 ? static_cast<TileLayer>(id) : TileLayer::Foreground;
 }
-
-struct AssetEntry {
-    const char* name;
-    const char* category;
-    LevelEditor::EditTool tool;
-    Color color;
-};
-
-constexpr AssetEntry Assets[] = {
-    {"Solid", "GEOMETRY", LevelEditor::EditTool::Solid, Color{83, 218, 157, 255}},
-    {"Platform", "", LevelEditor::EditTool::Platform, Color{91, 190, 235, 255}},
-    {"Ladder", "", LevelEditor::EditTool::Ladder, Color{226, 166, 83, 255}},
-    {"Camera Zone", "REGIONS", LevelEditor::EditTool::CameraZone, Color{69, 154, 255, 255}},
-    {"Darkness", "", LevelEditor::EditTool::Darkness, Color{133, 113, 184, 255}},
-    {"Player Start", "MARKERS", LevelEditor::EditTool::PlayerStart, Color{255, 207, 76, 255}},
-    {"Exit", "", LevelEditor::EditTool::Exit, Color{240, 91, 109, 255}},
-};
 
 struct CatalogEntry {
     std::string name;
@@ -104,37 +107,177 @@ struct CatalogEntry {
     bool placeable{false};
 };
 
+LevelEditor::EditTool GuideObjectTool(GuideObjectType type) {
+    if (type >= GuideObjectType::Ball && type <= GuideObjectType::Brake) {
+        return static_cast<LevelEditor::EditTool>(
+            static_cast<int>(LevelEditor::EditTool::Ball) +
+            static_cast<int>(type) - static_cast<int>(GuideObjectType::Ball));
+    }
+    if (type == GuideObjectType::Checkpoint) return LevelEditor::EditTool::Checkpoint;
+    if (type == GuideObjectType::Collectible) return LevelEditor::EditTool::Collectible;
+    for (const auto& placement : AdvancedPlacements) {
+        if (placement.type == type) return placement.tool;
+    }
+    return LevelEditor::EditTool::Select;
+}
+
+const char* GuideObjectCategory(GuideObjectType type) {
+    if (type >= GuideObjectType::Spring && type <= GuideObjectType::CompositeSpring) return "Springs";
+    switch (type) {
+    case GuideObjectType::Ball:
+    case GuideObjectType::Barrel:
+    case GuideObjectType::PendulumBob:
+    case GuideObjectType::ProgrammableBall:
+    case GuideObjectType::PinballBumper:
+    case GuideObjectType::Trampoline:
+    case GuideObjectType::RockHammer: return "Physics";
+    case GuideObjectType::MovingPlatform:
+    case GuideObjectType::Elevator:
+    case GuideObjectType::ConveyorBelt:
+    case GuideObjectType::Turntable:
+    case GuideObjectType::LoadCart:
+    case GuideObjectType::HotAirBalloon:
+    case GuideObjectType::Blimp: return "Transport";
+    case GuideObjectType::OneWayPlatform:
+    case GuideObjectType::GuideRail: return "Geometry";
+    case GuideObjectType::CeilingHook:
+    case GuideObjectType::Rod:
+    case GuideObjectType::FixedJoint:
+    case GuideObjectType::TripodDerrick:
+    case GuideObjectType::ChainHoist:
+    case GuideObjectType::BlockAndTackle:
+    case GuideObjectType::ComeAlong: return "Rigging";
+    case GuideObjectType::Crank: return "Simple Machines";
+    case GuideObjectType::Ratchet:
+    case GuideObjectType::Clutch:
+    case GuideObjectType::Brake:
+    case GuideObjectType::Cam:
+    case GuideObjectType::ManualBenchGrinder:
+    case GuideObjectType::RevolvingStoneGate:
+    case GuideObjectType::SpokePress:
+    case GuideObjectType::TransRotoConverter:
+    case GuideObjectType::RotoTransConverter:
+    case GuideObjectType::PinballFlipper: return "Mechanical";
+    case GuideObjectType::Battery:
+    case GuideObjectType::ElectricMotor:
+    case GuideObjectType::Generator:
+    case GuideObjectType::Fuse:
+    case GuideObjectType::FieldCoil:
+    case GuideObjectType::PerpetualMotionHolder: return "Power";
+    case GuideObjectType::TeslaCoil: return "Power";
+    case GuideObjectType::Relay:
+    case GuideObjectType::IgnitableFuse:
+    case GuideObjectType::SignalDust:
+    case GuideObjectType::TernaryTrace:
+    case GuideObjectType::TernarySwitch: return "Logic";
+    case GuideObjectType::LimitSwitch:
+    case GuideObjectType::SpeedSensor:
+    case GuideObjectType::BeamSensor:
+    case GuideObjectType::PolarisTelescope:
+    case GuideObjectType::Sundial: return "Sensors";
+    case GuideObjectType::Magnet:
+    case GuideObjectType::AntiGravityPad:
+    case GuideObjectType::Bellows:
+    case GuideObjectType::Vacuum:
+    case GuideObjectType::AcceleratorTube: return "Forces";
+    case GuideObjectType::Piston:
+    case GuideObjectType::HydraulicCylinder:
+    case GuideObjectType::BoxingGlove: return "Mechanical";
+    case GuideObjectType::RocketThruster:
+    case GuideObjectType::CrushingBlock:
+    case GuideObjectType::SwingingHammer:
+    case GuideObjectType::SawBlade:
+    case GuideObjectType::SpinnerTrap:
+    case GuideObjectType::SteamVent:
+    case GuideObjectType::ElectricalArc:
+    case GuideObjectType::ExplosiveBarrel:
+    case GuideObjectType::Tnt:
+    case GuideObjectType::Teleforce: return "Hazards";
+    case GuideObjectType::Oil:
+    case GuideObjectType::Mud:
+    case GuideObjectType::LeakyBucket:
+    case GuideObjectType::WaterBucket: return "Fluids";
+    case GuideObjectType::MagnifyingGlass:
+    case GuideObjectType::LightSource:
+    case GuideObjectType::LaserEmitter:
+    case GuideObjectType::LaserMixer:
+    case GuideObjectType::LaserDetector: return "Optics";
+    case GuideObjectType::DestructibleWood:
+    case GuideObjectType::DestructibleBrick:
+    case GuideObjectType::DestructibleGlass:
+    case GuideObjectType::GlassPane:
+    case GuideObjectType::GlassBlock:
+    case GuideObjectType::BreakableCrate: return "Materials";
+    case GuideObjectType::IceBlock:
+    case GuideObjectType::IceSheet:
+    case GuideObjectType::Heater:
+    case GuideObjectType::Campfire:
+    case GuideObjectType::Torch: return "Thermal";
+    case GuideObjectType::Checkpoint:
+    case GuideObjectType::Collectible:
+    case GuideObjectType::Key:
+    case GuideObjectType::ScubaGear:
+    case GuideObjectType::GasMask: return "Gameplay";
+    }
+    return "Gameplay";
+}
+
 const std::vector<CatalogEntry>& AssetCatalog() {
     static const std::vector<CatalogEntry> catalog = [] {
         std::vector<CatalogEntry> entries{
             {"Solid", "Geometry", LevelEditor::EditTool::Solid, true},
             {"Platform", "Geometry", LevelEditor::EditTool::Platform, true},
             {"Ladder", "Geometry", LevelEditor::EditTool::Ladder, true},
-            {"Visual Tile", "Geometry"}, {"Breakable Tile", "Geometry"}, {"Ramp", "Geometry"},
+            {"Visual Tile", "Geometry"},
+            {"Breakable Tile", "Materials", LevelEditor::EditTool::BreakableTile, true},
+            {"Ramp", "Simple Machines", LevelEditor::EditTool::Ramp, true},
+            {"Wedge", "Simple Machines", LevelEditor::EditTool::Wedge, true},
             {"Player Start", "Markers", LevelEditor::EditTool::PlayerStart, true},
             {"Exit", "Markers", LevelEditor::EditTool::Exit, true},
-            {"Label", "Markers"}, {"Enemy", "Characters"},
-            {"Camera Zone", "Volumes", LevelEditor::EditTool::CameraZone, true},
-            {"Darkness", "Volumes", LevelEditor::EditTool::Darkness, true},
-            {"Water", "Fluids"}, {"Sand", "Fluids"}, {"Gel", "Fluids"}, {"Gas", "Fluids"},
-            {"Water Pit", "Fluids"}, {"Valve", "Machines"}, {"Pulley", "Machines"},
-            {"Hanging Weight", "Machines"}, {"Rotary Latch", "Machines"}, {"Gear", "Machines"},
-            {"Mounted Gear", "Machines"}, {"Flywheel", "Machines"}, {"Steering Wheel", "Machines"},
-            {"Screw", "Machines"}, {"Fan", "Machines"}, {"Pinwheel", "Machines"},
-            {"Stone Block", "Physics"}, {"Boulder", "Physics"}, {"Physics Wheel", "Physics"},
-            {"See Saw", "Physics"}, {"Trap Door", "Physics"}, {"Chain", "Physics"},
-            {"Physics Rope", "Physics"}, {"Button", "Logic"}, {"Button Trap Door Link", "Logic"},
+            {"Label", "Markers", LevelEditor::EditTool::Label, true},
+            {"Enemy", "Characters", LevelEditor::EditTool::Enemy, true},
+            {"Camera Zone", "Regions", LevelEditor::EditTool::CameraZone, true},
+            {"Darkness", "Regions", LevelEditor::EditTool::Darkness, true},
+            {"Water", "Fluids", LevelEditor::EditTool::Water, true},
+            {"Sand", "Fluids", LevelEditor::EditTool::Sand, true},
+            {"Gel", "Fluids", LevelEditor::EditTool::Gel, true},
+            {"Gas", "Fluids", LevelEditor::EditTool::Gas, true},
+            {"Water Pit", "Fluids", LevelEditor::EditTool::WaterPit, true},
+            {"Valve", "Fluids", LevelEditor::EditTool::Valve, true},
+            {"Pulley", "Simple Machines", LevelEditor::EditTool::Pulley, true},
+            {"Hanging Weight", "Rigging", LevelEditor::EditTool::HangingWeight, true},
+            {"Rotary Latch", "Mechanical", LevelEditor::EditTool::RotaryLatch, true},
+            {"Gear", "Simple Machines", LevelEditor::EditTool::Gear, true},
+            {"Mounted Gear", "Simple Machines", LevelEditor::EditTool::MountedGear, true},
+            {"Flywheel", "Simple Machines", LevelEditor::EditTool::Flywheel, true},
+            {"Steering Wheel", "Simple Machines", LevelEditor::EditTool::SteeringWheel, true},
+            {"Screw", "Simple Machines", LevelEditor::EditTool::Screw, true},
+            {"Fan", "Forces", LevelEditor::EditTool::Fan, true},
+            {"Pinwheel", "Simple Machines", LevelEditor::EditTool::Pinwheel, true},
+            {"Stone Block", "Physics", LevelEditor::EditTool::StoneBlock, true},
+            {"Boulder", "Physics", LevelEditor::EditTool::Boulder, true},
+            {"Physics Wheel", "Simple Machines", LevelEditor::EditTool::PhysicsWheel, true},
+            {"See Saw", "Simple Machines", LevelEditor::EditTool::SeeSaw, true},
+            {"Trap Door", "Mechanical", LevelEditor::EditTool::TrapDoor, true},
+            {"Chain", "Rigging", LevelEditor::EditTool::Chain, true},
+            {"Physics Rope", "Rigging", LevelEditor::EditTool::PhysicsRope, true},
+            {"Button", "Logic", LevelEditor::EditTool::Button, true}, {"Button Trap Door Link", "Logic"},
             {"Button Ladder Link", "Logic"}, {"Button Exit Link", "Logic"}, {"Button Fan Link", "Logic"},
             {"Button Platform Link", "Logic"}, {"Button Platform Loop", "Logic"},
             {"Platform Loop Button Link", "Logic"}, {"Button Spike Link", "Logic"},
-            {"Portal Pair", "Gameplay"}, {"Spike Hazard", "Hazards"},
-            {"Directional Spike Hazard", "Hazards"}, {"Arrow Trap", "Hazards"},
-            {"Clock Face", "Set Dressing"}, {"Toxin Leak", "Fluids"}, {"Valve Fluid Fill", "Logic"}
+            {"Portal Pair", "Gameplay", LevelEditor::EditTool::Portal, true},
+            {"Spike Hazard", "Hazards", LevelEditor::EditTool::SpikeHazard, true},
+            {"Directional Spike Hazard", "Hazards", LevelEditor::EditTool::DirectionalSpikes, true},
+            {"Arrow Trap", "Hazards", LevelEditor::EditTool::ArrowTrap, true},
+            {"Clock Face", "Set Dressing", LevelEditor::EditTool::ClockFace, true},
+            {"Toxin Leak", "Hazards", LevelEditor::EditTool::ToxinLeak, true}, {"Valve Fluid Fill", "Logic"}
         };
         for (int value = static_cast<int>(GuideObjectType::Ball);
-            value <= static_cast<int>(GuideObjectType::ExplosiveBarrel); ++value) {
+            value <= static_cast<int>(GuideObjectType::TeslaCoil); ++value) {
             const GuideObjectType type = static_cast<GuideObjectType>(value);
-            entries.push_back({GetGuideObjectName(type), "Guide Objects"});
+            const LevelEditor::EditTool tool = GuideObjectTool(type);
+            entries.push_back({GetGuideObjectName(type), GuideObjectCategory(type), tool,
+                tool != LevelEditor::EditTool::Select});
         }
         std::stable_sort(entries.begin(), entries.end(), [](const CatalogEntry& left, const CatalogEntry& right) {
             if (left.category != right.category) return left.category < right.category;
@@ -169,9 +312,144 @@ HMENU PreferencesMenu = nullptr;
 unsigned int PendingMenuCommand = 0;
 bool AllowWindowClose = false;
 constexpr UINT ViewportHostCommandMessage = WM_APP + 120;
-std::array<int, 37> PendingViewportValues{};
-std::array<bool, 37> PendingViewportCommands{};
+std::array<int, 45> PendingViewportValues{};
+std::array<bool, 45> PendingViewportCommands{};
+bool PendingAssetDrop = false;
+Vector2 PendingAssetDropScreenPosition{};
 std::string PendingDocumentReload;
+IDropTarget* ViewportDropTargetObject = nullptr;
+bool ViewportOleInitialized = false;
+
+void SetPendingViewportCommand(int command, int value) {
+    if (command <= 0 || command >= static_cast<int>(PendingViewportCommands.size())) return;
+    PendingViewportValues[static_cast<size_t>(command)] = value;
+    PendingViewportCommands[static_cast<size_t>(command)] = true;
+}
+
+bool ReadAssetCommand(IDataObject* data, int& assetCommand) {
+    if (data == nullptr) return false;
+    FORMATETC format{};
+    format.cfFormat = CF_UNICODETEXT;
+    format.dwAspect = DVASPECT_CONTENT;
+    format.lindex = -1;
+    format.tymed = TYMED_HGLOBAL;
+    STGMEDIUM medium{};
+    if (FAILED(data->GetData(&format, &medium))) return false;
+
+    bool valid = false;
+    const auto* text = static_cast<const wchar_t*>(GlobalLock(medium.hGlobal));
+    if (text != nullptr) {
+        wchar_t* end = nullptr;
+        const long value = wcstol(text, &end, 10);
+        valid = end != text && *end == L'\0' && value >= 0 && value <= 158;
+        if (valid) assetCommand = static_cast<int>(value);
+        GlobalUnlock(medium.hGlobal);
+    }
+    ReleaseStgMedium(&medium);
+    return valid;
+}
+
+class ViewportOleDropTarget final : public IDropTarget {
+public:
+    explicit ViewportOleDropTarget(HWND window) : window(window) {}
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** object) override {
+        if (object == nullptr) return E_POINTER;
+        *object = nullptr;
+        if (IsEqualIID(iid, IID_IUnknown) || IsEqualIID(iid, IID_IDropTarget)) {
+            *object = static_cast<IDropTarget*>(this);
+            AddRef();
+            return S_OK;
+        }
+        return E_NOINTERFACE;
+    }
+
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++references; }
+    ULONG STDMETHODCALLTYPE Release() override {
+        const ULONG remaining = --references;
+        if (remaining == 0) delete this;
+        return remaining;
+    }
+
+    HRESULT STDMETHODCALLTYPE DragEnter(IDataObject* data, DWORD, POINTL point, DWORD* effect) override {
+        int assetCommand = -1;
+        dragging = ReadAssetCommand(data, assetCommand) ? assetCommand : -1;
+        UpdatePreview(point);
+        if (effect != nullptr) *effect = dragging >= 0 ? DROPEFFECT_COPY : DROPEFFECT_NONE;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE DragOver(DWORD, POINTL point, DWORD* effect) override {
+        UpdatePreview(point);
+        if (effect != nullptr) *effect = dragging >= 0 ? DROPEFFECT_COPY : DROPEFFECT_NONE;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE DragLeave() override {
+        dragging = -1;
+        SetPendingViewportCommand(40, -1);
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE Drop(IDataObject* data, DWORD, POINTL point, DWORD* effect) override {
+        int assetCommand = -1;
+        if (ReadAssetCommand(data, assetCommand)) {
+            POINT client{point.x, point.y};
+            if (ScreenToClient(window, &client)) {
+                SetPendingViewportCommand(27, assetCommand);
+                PendingAssetDropScreenPosition = {static_cast<float>(client.x), static_cast<float>(client.y)};
+                PendingAssetDrop = true;
+                SetPendingViewportCommand(40, -1);
+                if (effect != nullptr) *effect = DROPEFFECT_COPY;
+                dragging = -1;
+                return S_OK;
+            }
+        }
+        dragging = -1;
+        SetPendingViewportCommand(40, -1);
+        if (effect != nullptr) *effect = DROPEFFECT_NONE;
+        return S_OK;
+    }
+
+private:
+    void UpdatePreview(POINTL point) const {
+        if (dragging < 0) {
+            SetPendingViewportCommand(40, -1);
+            return;
+        }
+        POINT client{point.x, point.y};
+        if (!ScreenToClient(window, &client)) return;
+        SetPendingViewportCommand(40, dragging);
+        SetPendingViewportCommand(41, ((client.y & 0xffff) << 16) | (client.x & 0xffff));
+    }
+
+    std::atomic<ULONG> references{1};
+    HWND window{};
+    int dragging{-1};
+};
+
+void RegisterViewportDropTarget(HWND window) {
+    const HRESULT initResult = OleInitialize(nullptr);
+    if (FAILED(initResult)) return;
+    ViewportOleInitialized = true;
+    ViewportDropTargetObject = new ViewportOleDropTarget(window);
+    if (FAILED(RegisterDragDrop(window, ViewportDropTargetObject))) {
+        ViewportDropTargetObject->Release();
+        ViewportDropTargetObject = nullptr;
+    }
+}
+
+void UnregisterViewportDropTarget(HWND window) {
+    if (ViewportDropTargetObject != nullptr) {
+        RevokeDragDrop(window);
+        ViewportDropTargetObject->Release();
+        ViewportDropTargetObject = nullptr;
+    }
+    if (ViewportOleInitialized) {
+        OleUninitialize();
+        ViewportOleInitialized = false;
+    }
+}
 
 LRESULT CALLBACK EditorWindowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     if (message == WM_COPYDATA) {
@@ -232,6 +510,9 @@ const char* ToolName(LevelEditor::EditTool tool) {
     case LevelEditor::EditTool::Fan: return "Fan";
     case LevelEditor::EditTool::Pinwheel: return "Pinwheel";
     case LevelEditor::EditTool::Ramp: return "Ramp";
+    case LevelEditor::EditTool::Wedge: return "Wedge";
+    case LevelEditor::EditTool::Teleforce: return "Teleforce Projector";
+    case LevelEditor::EditTool::TeslaCoil: return "Tesla Coil";
     case LevelEditor::EditTool::SeeSaw: return "See Saw";
     case LevelEditor::EditTool::TrapDoor: return "Trap Door";
     case LevelEditor::EditTool::Chain: return "Chain";
@@ -283,96 +564,33 @@ const char* ToolName(LevelEditor::EditTool tool) {
     case LevelEditor::EditTool::Clutch: return "Clutch";
     case LevelEditor::EditTool::Brake: return "Brake";
     }
+    if (tool == LevelEditor::EditTool::WaterPit) return "Water Pit";
+    if (tool == LevelEditor::EditTool::ToxinLeak) return "Toxin Leak";
+    if (tool == LevelEditor::EditTool::ClockFace) return "Clock Face";
+    if (tool == LevelEditor::EditTool::MountedGear) return "Mounted Gear";
+    if (tool == LevelEditor::EditTool::SpikeHazard) return "Spike Hazard";
+    if (const auto* entry = FindAdvancedPlacement(tool)) return entry->name;
     return "Select";
-}
-
-int AssetCategoryIndex(LevelEditor::EditTool tool) {
-    switch (tool) {
-    case LevelEditor::EditTool::Solid:
-    case LevelEditor::EditTool::Platform:
-    case LevelEditor::EditTool::Ladder: return 1;
-    case LevelEditor::EditTool::CameraZone:
-    case LevelEditor::EditTool::Darkness: return 2;
-    case LevelEditor::EditTool::PlayerStart:
-    case LevelEditor::EditTool::Exit: return 3;
-    case LevelEditor::EditTool::Water:
-    case LevelEditor::EditTool::Sand:
-    case LevelEditor::EditTool::Gel:
-    case LevelEditor::EditTool::Gas: return 4;
-    case LevelEditor::EditTool::Pulley:
-    case LevelEditor::EditTool::HangingWeight:
-    case LevelEditor::EditTool::RotaryLatch:
-    case LevelEditor::EditTool::StoneBlock:
-    case LevelEditor::EditTool::Boulder:
-    case LevelEditor::EditTool::PhysicsWheel:
-    case LevelEditor::EditTool::Gear:
-    case LevelEditor::EditTool::Flywheel:
-    case LevelEditor::EditTool::SteeringWheel:
-    case LevelEditor::EditTool::Screw:
-    case LevelEditor::EditTool::Fan:
-    case LevelEditor::EditTool::Pinwheel:
-    case LevelEditor::EditTool::Ramp:
-    case LevelEditor::EditTool::SeeSaw:
-    case LevelEditor::EditTool::TrapDoor:
-    case LevelEditor::EditTool::Chain:
-    case LevelEditor::EditTool::PhysicsRope:
-    case LevelEditor::EditTool::Button:
-    case LevelEditor::EditTool::Portal:
-    case LevelEditor::EditTool::DirectionalSpikes:
-    case LevelEditor::EditTool::ArrowTrap:
-    case LevelEditor::EditTool::BreakableTile:
-    case LevelEditor::EditTool::Enemy:
-    case LevelEditor::EditTool::Label:
-    case LevelEditor::EditTool::Valve:
-    case LevelEditor::EditTool::Checkpoint:
-    case LevelEditor::EditTool::Collectible: return 1;
-    case LevelEditor::EditTool::Ball:
-    case LevelEditor::EditTool::Barrel:
-    case LevelEditor::EditTool::MovingPlatform:
-    case LevelEditor::EditTool::Elevator: return 1;
-    case LevelEditor::EditTool::PendulumBob:
-    case LevelEditor::EditTool::OneWayPlatform:
-    case LevelEditor::EditTool::CeilingHook:
-    case LevelEditor::EditTool::GuideRail: return 1;
-    case LevelEditor::EditTool::Spring:
-    case LevelEditor::EditTool::CompressionSpring:
-    case LevelEditor::EditTool::ExtensionSpring:
-    case LevelEditor::EditTool::TorsionSpring: return 1;
-    case LevelEditor::EditTool::GarterSpring:
-    case LevelEditor::EditTool::VoluteSpring:
-    case LevelEditor::EditTool::SpiralSpring:
-    case LevelEditor::EditTool::ConstantForceSpring: return 1;
-    case LevelEditor::EditTool::ConstantTorqueSpring:
-    case LevelEditor::EditTool::LeafSpring:
-    case LevelEditor::EditTool::BeamSpring:
-    case LevelEditor::EditTool::DiscSpring: return 1;
-    case LevelEditor::EditTool::WaveSpring:
-    case LevelEditor::EditTool::WaveWasher:
-    case LevelEditor::EditTool::TorsionBar:
-    case LevelEditor::EditTool::RingSpring: return 1;
-    case LevelEditor::EditTool::ElastomerSpring:
-    case LevelEditor::EditTool::PneumaticSpring:
-    case LevelEditor::EditTool::GasSpring:
-    case LevelEditor::EditTool::HydropneumaticSpring: return 1;
-    case LevelEditor::EditTool::MagneticSpring:
-    case LevelEditor::EditTool::CompositeSpring:
-    case LevelEditor::EditTool::Rod:
-    case LevelEditor::EditTool::FixedJoint: return 1;
-    case LevelEditor::EditTool::Crank:
-    case LevelEditor::EditTool::Ratchet:
-    case LevelEditor::EditTool::Clutch:
-    case LevelEditor::EditTool::Brake: return 1;
-    case LevelEditor::EditTool::Select: return 0;
-    }
-    return 0;
 }
 
 std::vector<int> ContentAssetIndices(int category) {
     std::vector<int> indices;
-    for (int index = 0; index < static_cast<int>(std::size(Assets)); ++index) {
-        if (category == 0 || AssetCategoryIndex(Assets[index].tool) == category) indices.push_back(index);
+    const auto& catalog = AssetCatalog();
+    const bool allAssets = category <= 0 || category >= static_cast<int>(std::size(ContentCategories));
+    const std::string desiredCategory = allAssets ? "" : ContentCategories[category];
+    for (int index = 0; index < static_cast<int>(catalog.size()); ++index) {
+        if (allAssets || catalog[static_cast<size_t>(index)].category == desiredCategory) indices.push_back(index);
     }
     return indices;
+}
+
+Rectangle ContentCategoryBounds(Rectangle browser, int category) {
+    const int column = category % ContentCategoryColumns;
+    const int row = category / ContentCategoryColumns;
+    const float columnWidth = (ContentFolderWidth - 16.0f) / ContentCategoryColumns;
+    return {browser.x + 8.0f + column * columnWidth,
+        browser.y + 70.0f + row * ContentCategoryRowHeight,
+        columnWidth - 3.0f, ContentCategoryRowHeight - 2.0f};
 }
 
 const char* ScriptName(LevelScript script) {
@@ -492,6 +710,37 @@ void DrawUiText(Font font, const char* text, float x, float y, float fontSize, C
     DrawTextEx(font, text, {x, y}, fontSize, 1.0f, color);
 }
 
+Rectangle PlayerStartBounds(Vector2 start, bool hasSprite) {
+    const Player player{};
+    // Match DrawPlayer's destination, including the sprite's overhang.
+    if (hasSprite) return {start.x + (player.rect.width - 37.0f) * 0.5f,
+        start.y + player.rect.height - 47.0f + 1.0f, 37.0f, 47.0f};
+    return {start.x, start.y, player.rect.width, player.rect.height};
+}
+
+void DrawSelectionOutline(Rectangle bounds, float zoom) {
+    if (bounds.width <= 0.0f || bounds.height <= 0.0f) return;
+    const float unit = 1.0f / zoom;
+    const float dash = 6.0f * unit;
+    const float phase = static_cast<float>(fmod(GetTime() * 24.0, 12.0)) * unit;
+    const Vector2 corners[] = {{bounds.x, bounds.y}, {bounds.x + bounds.width, bounds.y},
+        {bounds.x + bounds.width, bounds.y + bounds.height}, {bounds.x, bounds.y + bounds.height}};
+    float distance = 0.0f;
+    for (int edge = 0; edge < 4; ++edge) {
+        const Vector2 start = corners[edge], end = corners[(edge + 1) % 4];
+        const float length = edge % 2 == 0 ? bounds.width : bounds.height;
+        const Vector2 direction{(end.x - start.x) / length, (end.y - start.y) / length};
+        DrawLineEx(start, end, 1.5f * unit, RAYWHITE);
+        // Keep the pattern continuous as it travels around corners.
+        for (float offset = -fmodf(distance + phase, dash * 2.0f); offset < length; offset += dash * 2.0f) {
+            const float from = std::max(0.0f, offset), to = std::min(length, offset + dash);
+            if (to > from) DrawLineEx({start.x + direction.x * from, start.y + direction.y * from},
+                {start.x + direction.x * to, start.y + direction.y * to}, 1.5f * unit, BLACK);
+        }
+        distance += length;
+    }
+}
+
 void DrawToolbarButton(Rectangle bounds, const char* label, Font font, bool active = false, bool enabled = true) {
     const bool hovered = CheckCollisionPointRec(GetMousePosition(), bounds);
     const Color fill = !enabled ? Color{34, 38, 46, 255} :
@@ -560,7 +809,8 @@ bool IsWallSolid(Rectangle rect) {
 }
 }
 
-int LevelEditor::Run(const std::filesystem::path& initialLevel, bool useViewportOnly) {
+int LevelEditor::Run(const std::filesystem::path& initialLevel, bool useViewportOnly,
+    std::uintptr_t viewportParent) {
     viewportOnly = useViewportOnly;
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT |
         (viewportOnly ? FLAG_WINDOW_UNDECORATED : 0));
@@ -573,6 +823,15 @@ int LevelEditor::Run(const std::filesystem::path& initialLevel, bool useViewport
         HWND window = static_cast<HWND>(GetWindowHandle());
         OriginalWindowProcedure = reinterpret_cast<WNDPROC>(
             SetWindowLongPtrW(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(EditorWindowProcedure)));
+        if (viewportParent != 0) {
+            const LONG_PTR style = GetWindowLongPtrW(window, GWL_STYLE);
+            SetWindowLongPtrW(window, GWL_STYLE,
+                (style & ~static_cast<LONG_PTR>(WS_POPUP)) | WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS);
+            SetParent(window, reinterpret_cast<HWND>(viewportParent));
+            SetWindowPos(window, nullptr, 0, 0, InitialWindowWidth, InitialWindowHeight,
+                SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+        }
+        RegisterViewportDropTarget(window);
     }
 #endif
 
@@ -602,10 +861,22 @@ int LevelEditor::Run(const std::filesystem::path& initialLevel, bool useViewport
     industrialBackground = LoadTexture("assets/third_party/AtomicRealm/[FREE] Industrial Tileset/raw/FREE/5. Industrial Tileset - Starter Pack 32p/2_Industrial_Tileset_1_Background.png");
     industrialFarBackground = LoadTexture("assets/third_party/AtomicRealm/[FREE] Industrial Tileset/raw/FREE/5. Industrial Tileset - Starter Pack 32p/3_Far_Background_Tile.png");
     playerSprites = LoadTexture("assets/first_party/characters/Player_Sprites.png");
+    playerFourSprites = LoadTexture("assets/first_party/characters/knight.png");
     enemySprites = LoadTexture("assets/third_party/AtomicRealm/[FREE] Industrial Tileset/raw/FREE/6. Character Animations 32p/Anim_Robot_Walk1_v1.1_spritesheet.png");
+    if (playerSprites.id != 0) SetTextureFilter(playerSprites, TEXTURE_FILTER_POINT);
+    if (playerFourSprites.id != 0) SetTextureFilter(playerFourSprites, TEXTURE_FILTER_POINT);
     chainLinks = LoadTexture("assets/first_party/machines/chain_links.png");
     toolbarIcons = LoadTexture("assets/first_party/ui/editor_transform_icons.png");
-    if (viewportOnly) GenerateContentThumbnails();
+    if (viewportOnly) {
+        GenerateContentThumbnails();
+        Image previewAtlas = LoadImage("editor_thumbnails/content_atlas.png");
+        if (previewAtlas.data != nullptr) {
+            ImageColorReplace(&previewAtlas, Color{23, 26, 32, 255}, BLANK);
+            contentPreviewAtlas = LoadTextureFromImage(previewAtlas);
+            UnloadImage(previewAtlas);
+            if (contentPreviewAtlas.id != 0) SetTextureFilter(contentPreviewAtlas, TEXTURE_FILTER_POINT);
+        }
+    }
 
     camera.zoom = 1.0f;
     camera.rotation = 0.0f;
@@ -643,16 +914,28 @@ int LevelEditor::Run(const std::filesystem::path& initialLevel, bool useViewport
     if (ownsUiFont) {
         UnloadFont(uiFont);
     }
+    spriteSheets.Clear();
     if (industrialTiles.id != 0) UnloadTexture(industrialTiles);
     if (industrialBackground.id != 0) UnloadTexture(industrialBackground);
     if (industrialFarBackground.id != 0) UnloadTexture(industrialFarBackground);
     if (playerSprites.id != 0) UnloadTexture(playerSprites);
+    if (playerFourSprites.id != 0) UnloadTexture(playerFourSprites);
     if (enemySprites.id != 0) UnloadTexture(enemySprites);
+    if (contentPreviewAtlas.id != 0) UnloadTexture(contentPreviewAtlas);
     if (chainLinks.id != 0) UnloadTexture(chainLinks);
     if (toolbarIcons.id != 0) UnloadTexture(toolbarIcons);
+#if defined(_WIN32)
+    if (viewportOnly) UnregisterViewportDropTarget(static_cast<HWND>(GetWindowHandle()));
+#endif
     RemoveNativeMenu();
     CloseWindow();
     return 0;
+}
+
+int RunLevelEditor(const std::filesystem::path& initialLevel, bool viewportOnly,
+    std::uintptr_t viewportParent) {
+    LevelEditor editor;
+    return editor.Run(initialLevel, viewportOnly, viewportParent);
 }
 
 void LevelEditor::GenerateContentThumbnails() const {
@@ -670,7 +953,14 @@ void LevelEditor::GenerateContentThumbnails() const {
         "Garter Spring", "Volute Spring", "Spiral Spring", "Constant-Force Spring", "Constant-Torque Spring",
         "Leaf Spring", "Beam Spring", "Disc Spring", "Wave Spring", "Wave Washer", "Torsion Bar", "Ring Spring",
         "Elastomer Spring", "Pneumatic Spring", "Gas Spring", "Hydropneumatic Spring",
-        "Magnetic Spring", "Composite Spring", "Rod", "Fixed Joint", "Crank", "Ratchet", "Clutch", "Brake"
+        "Magnetic Spring", "Composite Spring", "Rod", "Fixed Joint", "Crank", "Ratchet", "Clutch", "Brake",
+        "Cam", "Conveyor Belt", "Turntable", "Battery", "Electric Motor", "Generator", "Limit Switch", "Relay", "Fuse", "Magnet", "Piston", "Hydraulic Cylinder", "Rocket Thruster", "Crushing Block", "Swinging Hammer", "Saw Blade", "Spinner Trap", "Steam Vent", "Electrical Arc", "Oil", "Mud", "Speed Sensor", "Beam Sensor", "Key", "Gas Mask", "Breakable Crate", "Explosive Barrel", "Water Pit", "Toxin Leak", "Clock Face", "Mounted Gear", "Spike Hazard", "Anti-Gravity Pad", "Tripod Derrick", "Chain Hoist", "Block and Tackle", "Come-Along", "Manual Bench Grinder", "Load Cart", "Revolving Stone Gate", "Rock Hammer", "Field Coil", "Spoke Press", "Polaris Telescope", "Sundial", "Perpetual Motion Holder",
+        "Bellows", "Trampoline", "Boxing Glove", "Vacuum", "Magnifying Glass", "Light Source", "Ignitable Fuse",
+        "Programmable Ball", "Trans-Roto Converter", "Roto-Trans Converter", "Accelerator Tube", "Pinball Bumper",
+        "Pinball Flipper", "Laser Emitter", "Laser Mixer", "Laser Detector", "Hot-Air Balloon", "Blimp",
+        "Leaky Bucket", "Destructible Wood", "Destructible Brick", "Destructible Glass",
+        "Glass Pane", "Glass Block", "Ice Block", "Ice Sheet", "Heater", "Campfire", "Torch", "Bucket of Water",
+        "Signal Dust", "Ternary Trace", "Ternary Switch", "TNT", "Wedge", "Scuba Gear"
     };
     constexpr int Count = static_cast<int>(std::size(names));
     constexpr int Rows = (Count + Columns - 1) / Columns;
@@ -716,7 +1006,7 @@ void LevelEditor::GenerateContentThumbnails() const {
         else if (name == "Screw") { Screw value{}; value.center = center; value.length = 82.0f; value.radius = 10.0f; DrawScrew(value); }
         else if (name == "Fan") { Fan value{}; value.center = {left + 25.0f, center.y}; value.length = 76.0f; value.width = 48.0f; DrawFan(value); }
         else if (name == "Pinwheel") { Pinwheel value{}; value.center = center; value.radius = 29.0f; DrawPinwheel(value); }
-        else if (name == "Ramp") { Ramp value{}; value.center = center; value.length = 92.0f; value.thickness = 14.0f; value.angle = -18.0f; DrawRamp(value); }
+        else if (name == "Ramp" || name == "Wedge") { Ramp value{}; value.wedge = name == "Wedge"; value.center = center; value.length = 92.0f; value.thickness = 14.0f; value.angle = -18.0f; DrawRamp(value); }
         else if (name == "See Saw") { SeeSaw value{}; value.pivot = center; value.length = 92.0f; value.thickness = 12.0f; value.angle = -8.0f; DrawSeeSaw(value); }
         else if (name == "Trap Door") { TrapDoor value{}; value.hinge = {left + 18.0f, center.y}; value.length = 78.0f; value.thickness = 13.0f; DrawTrapDoor(value); }
         else if (name == "Chain") { Chain value{}; value.start = {center.x, top + 8.0f}; value.end = {center.x, top + 76.0f}; value.spacing = 11.0f; DrawChain(value, chainLinks); }
@@ -865,6 +1155,38 @@ void LevelEditor::GenerateContentThumbnails() const {
             value.origin = value.transform.position;
             DrawGuideObject(value);
         }
+        else if (name == "Clock Face") {
+            DrawCircleLines(static_cast<int>(left + 56), static_cast<int>(top + 42), 30, GOLD);
+            DrawLineEx({left + 56, top + 42}, {left + 56, top + 20}, 3, GOLD);
+        }
+        else if (name == "Mounted Gear") {
+            Gear gear{}; gear.center = {left + 56, top + 42}; gear.radius = 28;
+            gear.mounting = GearMounting::Mounted; DrawGear(gear);
+        }
+        else if (name == "Spike Hazard") {
+            DrawSpikes({left + 16, top + 40, 80, 24});
+        }
+        else if (name == "Water Pit" || name == "Toxin Leak") {
+            DrawRectangle(static_cast<int>(left + 16), static_cast<int>(top + 28), 80, 40,
+                name == "Water Pit" ? SKYBLUE : GREEN);
+        }
+        else {
+            for (const auto& entry : AdvancedPlacements) {
+                if (name != entry.name) continue;
+                GuideObject object{};
+                std::istringstream stream(entry.defaults);
+                if (!ParseGuideObject(entry.command, stream, object)) break;
+                const Rectangle bounds = GetGuideObjectBounds(object);
+                const Vector2 offset{left + 56 - bounds.x - bounds.width * 0.5f,
+                    top + 42 - bounds.y - bounds.height * 0.5f};
+                object.transform.position.x += offset.x; object.transform.position.y += offset.y;
+                object.origin.x += offset.x; object.origin.y += offset.y;
+                object.constraint.anchorA.x += offset.x; object.constraint.anchorA.y += offset.y;
+                object.constraint.anchorB.x += offset.x; object.constraint.anchorB.y += offset.y;
+                DrawGuideObject(object);
+                break;
+            }
+        }
         EndScissorMode();
     }
     EndTextureMode();
@@ -915,6 +1237,8 @@ void LevelEditor::DiscoverLevels() {
 }
 
 bool LevelEditor::LoadLevel(const std::filesystem::path& path) {
+    pickingControlTarget = false;
+    selectedLinkType.clear(); selectedLinkIndex = -1;
     std::error_code error;
     if (!std::filesystem::is_regular_file(path, error) || path.extension() != ".level") {
         statusText = "Could not load: choose an existing .level file.";
@@ -922,6 +1246,7 @@ bool LevelEditor::LoadLevel(const std::filesystem::path& path) {
     }
 
     level = LoadLevelFromFile(path.string(), Level{});
+    spriteSheets.Load(level.spriteSheetPaths);
     currentLevelPath = std::filesystem::weakly_canonical(path, error);
     if (error) {
         currentLevelPath = path;
@@ -964,9 +1289,26 @@ bool LevelEditor::SaveLevel() {
 
     output << std::fixed << std::setprecision(2);
     output << "# Saved by Power Pulley Panic Level Editor\n";
+    for (const auto& passage : level.tilePassages)
+        output << "tilePassage " << passage.sheetIndex << ' ' << passage.column << ' '
+            << passage.row << ' ' << passage.blockedFaces << '\n';
+    for (size_t i = 0; i < level.spriteSheetPaths.size(); ++i) {
+        if (!level.spriteSheetPaths[i].empty())
+            output << "spriteSheet " << i + 3 << ' ' << level.spriteSheetPaths[i] << '\n';
+    }
+    for (const auto layer : level.customTileLayerOrder) output << "tileLayer " << TileLayerName(layer) << '\n';
+    for (const auto layer : level.customTileLayersAboveDefaults) output << "tileLayerAbove " << TileLayerName(layer) << '\n';
+    for (size_t i = 0; i < level.customTileLayerNames.size(); ++i)
+        if (!level.customTileLayerNames[i].empty())
+            output << "tileLayerName user" << i + 1 << ' ' << level.customTileLayerNames[i] << '\n';
     output << "script " << ScriptName(level.script) << "\n";
+    for (const auto& attachment : level.objectScripts)
+        output << "objectScripts " << attachment.objectType << ' ' << attachment.objectIndex << ' ' << attachment.pathsJson << '\n';
+    if (!level.musicPath.empty()) output << "music " << std::quoted(level.musicPath) << '\n';
+    for (const auto& audio : level.objectSounds)
+        output << "objectSound " << audio.objectType << ' ' << audio.objectIndex << ' ' << std::quoted(audio.path) << '\n';
     WriteRect(output, "bounds", level.worldBounds);
-    output << "playerStart " << level.playerStart.x << ' ' << level.playerStart.y << "\n";
+    output << "playerStart " << level.playerStart.x << ' ' << level.playerStart.y << ' ' << level.playerCharacter << "\n";
     WriteRect(output, "exit", level.exitTrigger);
     output << "\n";
 
@@ -979,6 +1321,10 @@ bool LevelEditor::SaveLevel() {
         output << FluidName(fluid.type) << ' ' << fluid.bounds.x << ' ' << fluid.bounds.y << ' ' <<
             fluid.bounds.width << ' ' << fluid.bounds.height << ' ' << fluid.particleSpacing << ' ' <<
             fluid.initialFill << ' ' << fluid.flowSpeed << "\n";
+    }
+    for (const Ramp& ramp : level.ramps) {
+        output << (ramp.wedge ? "wedge " : "ramp ") << ramp.center.x << ' ' << ramp.center.y << ' '
+            << ramp.length << ' ' << ramp.thickness << ' ' << ramp.angle << ' ' << ramp.segmentCount << "\n";
     }
     for (const LevelLabel& label : level.labels) {
         output << "labelSized " << label.position.x << ' ' << label.position.y << ' ' <<
@@ -1307,12 +1653,10 @@ Rectangle LevelEditor::GetAssetRowBounds(int index) const {
 
 Rectangle LevelEditor::GetContentAssetBounds(int index) const {
     const Rectangle browser = GetContentBrowserBounds();
-    constexpr float tileWidth = 80.0f;
-    constexpr float tileGap = 6.0f;
     return {
-        browser.x + ContentFolderWidth + 10.0f + index * (tileWidth + tileGap) - contentBrowserScroll,
+        browser.x + ContentFolderWidth + 10.0f + index * (ContentTileWidth + ContentTileGap) - contentBrowserScroll,
         browser.y + 76.0f,
-        tileWidth,
+        ContentTileWidth,
         112.0f
     };
 }
@@ -1352,6 +1696,11 @@ void LevelEditor::FrameSelection() {
 }
 
 void LevelEditor::DuplicateSelection() {
+    const int middlegroundBit = TileLayerBit(TileLayer::Middleground);
+    if ((visibleTileLayerMask & middlegroundBit) == 0 || (lockedTileLayerMask & middlegroundBit) != 0) {
+        NotifyTileOperation("toolstatus Show and unlock Middleground to duplicate gameplay objects.");
+        return;
+    }
     std::vector<Selection> source = groupSelection;
     if (source.empty() && selection.kind != SelectionKind::None) source.push_back(selection);
     if (source.empty()) { statusText = "Nothing selected to duplicate."; return; }
@@ -1426,6 +1775,8 @@ void LevelEditor::MarkDirty(const std::string& message) {
 }
 
 LevelEditor::Selection LevelEditor::HitTest(Vector2 world) {
+    if ((visibleTileLayerMask & TileLayerBit(TileLayer::Middleground)) == 0 ||
+        (lockedTileLayerMask & TileLayerBit(TileLayer::Middleground)) != 0) return {};
     auto hitRects = [&](const std::vector<Rectangle>& rects, SelectionKind kind) {
         for (int index = static_cast<int>(rects.size()) - 1; index >= 0; --index) {
             if (CheckCollisionPointRec(world, rects[static_cast<size_t>(index)])) {
@@ -1438,8 +1789,24 @@ LevelEditor::Selection LevelEditor::HitTest(Vector2 world) {
     selectedSceneName.clear();
     selectedSceneBounds = {};
 
-    if (CheckCollisionPointCircle(world, level.playerStart, 18.0f)) return {SelectionKind::PlayerStart, 0};
+    if (CheckCollisionPointRec(world, PlayerStartBounds(level.playerStart, playerSprites.id != 0)))
+        return {SelectionKind::PlayerStart, 0};
     if (CheckCollisionPointRec(world, level.exitTrigger)) return {SelectionKind::Exit, 0};
+
+    for (int index = static_cast<int>(level.buttonPlatformLoops.size()) - 1; index >= 0; --index) {
+        const auto& loop = level.buttonPlatformLoops[index];
+        if (!HitEditorLoop(loop, world, showConnections ? 6.0f / camera.zoom : 0.0f)) continue;
+        // Buttons on a platform remain independently selectable.
+        for (int button = static_cast<int>(level.buttons.size()) - 1; button >= 0; --button) {
+            if (!CheckCollisionPointRec(world, level.buttons[button].rect)) continue;
+            selectedSceneBounds = level.buttons[button].rect;
+            selectedSceneName = "Button " + std::to_string(button + 1);
+            return {SelectionKind::SceneObject, button, selectedSceneName, selectedSceneBounds, "Button", button};
+        }
+        selectedSceneBounds = EditorLoopBounds(loop);
+        selectedSceneName = "Platform Loop " + std::to_string(index + 1);
+        return {SelectionKind::SceneObject, index, selectedSceneName, selectedSceneBounds, "Button Platform Loop", index};
+    }
 
     Selection hit = hitRects(level.pitPlatforms, SelectionKind::Platform);
     if (hit.kind != SelectionKind::None) return hit;
@@ -1543,7 +1910,7 @@ LevelEditor::Selection LevelEditor::HitTest(Vector2 world) {
     };
     for (int index = static_cast<int>(level.ramps.size()) - 1; index >= 0; --index) {
         const Ramp& item = level.ramps[static_cast<size_t>(index)];
-        hit = hitBeam(item.center, item.length, item.thickness, "Ramp", index);
+        hit = hitBeam(item.center, item.length, item.thickness, item.wedge ? "Wedge" : "Ramp", index);
         if (hit.kind != SelectionKind::None) return hit;
     }
     for (int index = static_cast<int>(level.seeSaws.size()) - 1; index >= 0; --index) {
@@ -1667,7 +2034,7 @@ Rectangle LevelEditor::SelectionGroupBounds() const {
         Rectangle itemBounds{};
         if (const Rectangle* rect = RectangleForSelection(item)) itemBounds = *rect;
         else if (item.kind == SelectionKind::PlayerStart)
-            itemBounds = {level.playerStart.x - 12.0f, level.playerStart.y - 12.0f, 24.0f, 24.0f};
+            itemBounds = PlayerStartBounds(level.playerStart, playerSprites.id != 0);
         else if (item.kind == SelectionKind::SceneObject) itemBounds = item.sceneBounds;
         else continue;
         if (!initialized) { bounds = itemBounds; initialized = true; continue; }
@@ -1679,6 +2046,76 @@ Rectangle LevelEditor::SelectionGroupBounds() const {
         bounds.height = bottom - bounds.y;
     }
     return bounds;
+}
+
+Rectangle LevelEditor::SelectedTransformBounds() const {
+    if (groupSelection.size() > 1) return SelectionGroupBounds();
+    if (const Rectangle* rect = SelectedRectangle()) return *rect;
+    if (selection.kind == SelectionKind::PlayerStart)
+        return PlayerStartBounds(level.playerStart, playerSprites.id != 0);
+    if (selection.kind == SelectionKind::SceneObject &&
+        const_cast<LevelEditor*>(this)->TranslateSelectedScene({0.0f, 0.0f}))
+        return selectedSceneBounds;
+    return {};
+}
+
+Vector2 LevelEditor::TransformAnchorPoint(Rectangle bounds) const {
+    const int column = transformAnchorIndex % 3;
+    const int row = transformAnchorIndex / 3;
+    return {bounds.x + bounds.width * column * 0.5f,
+        bounds.y + bounds.height * row * 0.5f};
+}
+
+int LevelEditor::NearestTransformAnchor(Vector2 world, Rectangle bounds) const {
+    int nearest = 4;
+    float nearestDistance = std::numeric_limits<float>::max();
+    for (int index = 0; index < 9; ++index) {
+        const Vector2 point{bounds.x + bounds.width * (index % 3) * 0.5f,
+            bounds.y + bounds.height * (index / 3) * 0.5f};
+        const float dx = world.x - point.x;
+        const float dy = world.y - point.y;
+        const float distance = dx * dx + dy * dy;
+        if (distance < nearestDistance) {
+            nearestDistance = distance;
+            nearest = index;
+        }
+    }
+    return nearest;
+}
+
+float LevelEditor::TransformAxisLength(Rectangle bounds, Vector2 anchor, bool horizontal) const {
+    const float outsideMargin = 34.0f / camera.zoom;
+    const float extent = horizontal ? bounds.x + bounds.width - anchor.x : anchor.y - bounds.y;
+    return std::max(48.0f / camera.zoom, extent + outsideMargin);
+}
+
+void LevelEditor::EnsureRotationSelectionBounds() {
+    if (transformMode == TransformMode::Rotate && SelectedRotation() != nullptr &&
+        (selectedSceneBounds.width <= 0 || selectedSceneBounds.height <= 0)) {
+        // Fresh placements have an object index but may not have hit-test
+        // bounds yet. Initialize them from the authored object's geometry.
+        const int index = selection.index;
+        Vector2 center{};
+        float extent = 32;
+        if (selectedSceneName.rfind("Gear ", 0) == 0) { center = level.gears[index].center; extent = level.gears[index].radius; }
+        else if (selectedSceneName.rfind("Boulder ", 0) == 0) { center = level.boulders[index].center; extent = level.boulders[index].radius; }
+        else if (selectedSceneName.rfind("Physics Wheel ", 0) == 0) { center = level.physicsWheels[index].center; extent = level.physicsWheels[index].radius; }
+        else if (selectedSceneName.rfind("Flywheel ", 0) == 0) { center = level.flywheels[index].center; extent = level.flywheels[index].radius; }
+        else if (selectedSceneName.rfind("Steering Wheel ", 0) == 0) { center = level.steeringWheels[index].center; extent = level.steeringWheels[index].radius; }
+        else if (selectedSceneName.rfind("Rotary Latch ", 0) == 0) { center = level.rotaryLatches[index].center; extent = level.rotaryLatches[index].radius; }
+        else if (selectedSceneName.rfind("Screw ", 0) == 0) { center = level.screws[index].center; extent = level.screws[index].length * 0.5f + level.screws[index].radius; }
+        else if (selectedSceneName.rfind("Fan ", 0) == 0) { center = level.fans[index].center; extent = level.fans[index].width * 0.5f; }
+        else if (selectedSceneName.rfind("Pinwheel ", 0) == 0) { center = level.pinwheels[index].center; extent = level.pinwheels[index].radius; }
+        else if (selectedSceneName.rfind("See Saw ", 0) == 0) { center = level.seeSaws[index].pivot; extent = level.seeSaws[index].length * 0.5f + level.seeSaws[index].thickness; }
+        else if (selectedSceneName.rfind("Trap Door ", 0) == 0) { center = level.trapDoors[index].hinge; extent = level.trapDoors[index].length + level.trapDoors[index].thickness; }
+        else if (selectedSceneName.rfind("Ramp ", 0) == 0 || selectedSceneName.rfind("Wedge ", 0) == 0) { center = level.ramps[index].center; extent = level.ramps[index].length * 0.5f + level.ramps[index].thickness; }
+        selectedSceneBounds = {center.x - extent, center.y - extent, extent * 2, extent * 2};
+        selection.sceneName = selectedSceneName;
+        selection.sceneBounds = selectedSceneBounds;
+        selection.outlinerName = selectedSceneName.substr(0, selectedSceneName.find_last_of(' '));
+        selection.outlinerIndex = selection.index;
+        if (groupSelection.size() == 1) groupSelection.front() = selection;
+    }
 }
 
 float* LevelEditor::SelectedRotation() {
@@ -1695,7 +2132,7 @@ float* LevelEditor::SelectedRotation() {
     if (selectedSceneName.rfind("Fan ", 0) == 0 && index < level.fans.size()) return &level.fans[index].rotation;
     if (selectedSceneName.rfind("Pinwheel ", 0) == 0 && index < level.pinwheels.size()) return &level.pinwheels[index].rotation;
     if (selectedSceneName.rfind("See Saw ", 0) == 0 && index < level.seeSaws.size()) return &level.seeSaws[index].angle;
-    if (selectedSceneName.rfind("Ramp ", 0) == 0 && index < level.ramps.size()) return &level.ramps[index].angle;
+    if ((selectedSceneName.rfind("Ramp ", 0) == 0 || selectedSceneName.rfind("Wedge ", 0) == 0) && index < level.ramps.size()) return &level.ramps[index].angle;
     if (selectedSceneName.rfind("Trap Door ", 0) == 0 && index < level.trapDoors.size()) return &level.trapDoors[index].angle;
     return nullptr;
 }
@@ -1705,24 +2142,7 @@ const float* LevelEditor::SelectedRotation() const {
 }
 
 Vector2 LevelEditor::SelectedRotationCenter() const {
-    if (selection.kind != SelectionKind::SceneObject || selection.index < 0)
-        return {selectedSceneBounds.x + selectedSceneBounds.width * 0.5f,
-            selectedSceneBounds.y + selectedSceneBounds.height * 0.5f};
-    const size_t index = static_cast<size_t>(selection.index);
-    if (selectedSceneName.rfind("Boulder ", 0) == 0 && index < level.boulders.size()) return level.boulders[index].center;
-    if (selectedSceneName.rfind("Physics Wheel ", 0) == 0 && index < level.physicsWheels.size()) return level.physicsWheels[index].center;
-    if (selectedSceneName.rfind("Rotary Latch ", 0) == 0 && index < level.rotaryLatches.size()) return level.rotaryLatches[index].center;
-    if (selectedSceneName.rfind("Gear ", 0) == 0 && index < level.gears.size()) return level.gears[index].center;
-    if (selectedSceneName.rfind("Flywheel ", 0) == 0 && index < level.flywheels.size()) return level.flywheels[index].center;
-    if (selectedSceneName.rfind("Steering Wheel ", 0) == 0 && index < level.steeringWheels.size()) return level.steeringWheels[index].center;
-    if (selectedSceneName.rfind("Screw ", 0) == 0 && index < level.screws.size()) return level.screws[index].center;
-    if (selectedSceneName.rfind("Fan ", 0) == 0 && index < level.fans.size()) return level.fans[index].center;
-    if (selectedSceneName.rfind("Pinwheel ", 0) == 0 && index < level.pinwheels.size()) return level.pinwheels[index].center;
-    if (selectedSceneName.rfind("See Saw ", 0) == 0 && index < level.seeSaws.size()) return level.seeSaws[index].pivot;
-    if (selectedSceneName.rfind("Ramp ", 0) == 0 && index < level.ramps.size()) return level.ramps[index].center;
-    if (selectedSceneName.rfind("Trap Door ", 0) == 0 && index < level.trapDoors.size()) return level.trapDoors[index].hinge;
-    return {selectedSceneBounds.x + selectedSceneBounds.width * 0.5f,
-        selectedSceneBounds.y + selectedSceneBounds.height * 0.5f};
+    return TransformAnchorPoint(selectedSceneBounds);
 }
 
 bool LevelEditor::TranslateSelectedScene(Vector2 delta) {
@@ -1731,7 +2151,11 @@ bool LevelEditor::TranslateSelectedScene(Vector2 delta) {
     const auto movePoint = [&](Vector2& point) { point.x += delta.x; point.y += delta.y; };
     const auto moveRect = [&](Rectangle& rect) { rect.x += delta.x; rect.y += delta.y; };
     bool moved = true;
-    if (selectedSceneName.rfind("Enemy ", 0) == 0 && index < level.enemies.size()) moveRect(level.enemies[index].rect);
+    if (selectedSceneName.rfind("Platform Loop ", 0) == 0 && index < level.buttonPlatformLoops.size()) {
+        selectedSceneBounds = EditorLoopBounds(level.buttonPlatformLoops[index]);
+        MoveEditorLoop(level, static_cast<int>(index), delta);
+    }
+    else if (selectedSceneName.rfind("Enemy ", 0) == 0 && index < level.enemies.size()) moveRect(level.enemies[index].rect);
     else if (selectedSceneName.rfind("Guide Object ", 0) == 0 && index < level.guideObjects.size()) {
         GuideObject& object = level.guideObjects[index];
         movePoint(object.transform.position); movePoint(object.origin);
@@ -1768,7 +2192,7 @@ bool LevelEditor::TranslateSelectedScene(Vector2 delta) {
     else if (selectedSceneName.rfind("Pulley ", 0) == 0 && index < level.pulleys.size()) movePoint(level.pulleys[index]);
     else if (selectedSceneName.rfind("Screw ", 0) == 0 && index < level.screws.size()) movePoint(level.screws[index].center);
     else if (selectedSceneName.rfind("Fan ", 0) == 0 && index < level.fans.size()) movePoint(level.fans[index].center);
-    else if (selectedSceneName.rfind("Ramp ", 0) == 0 && index < level.ramps.size()) movePoint(level.ramps[index].center);
+    else if ((selectedSceneName.rfind("Ramp ", 0) == 0 || selectedSceneName.rfind("Wedge ", 0) == 0) && index < level.ramps.size()) movePoint(level.ramps[index].center);
     else if (selectedSceneName.rfind("See Saw ", 0) == 0 && index < level.seeSaws.size()) movePoint(level.seeSaws[index].pivot);
     else if (selectedSceneName.rfind("Trap Door ", 0) == 0 && index < level.trapDoors.size()) movePoint(level.trapDoors[index].hinge);
     else if (selectedSceneName.rfind("Chain ", 0) == 0 && index < level.chains.size()) { movePoint(level.chains[index].start); movePoint(level.chains[index].end); }
@@ -1804,15 +2228,20 @@ bool LevelEditor::ScaleSelectedScene(Vector2 delta) {
     const size_t index = static_cast<size_t>(selection.index);
     const float radialDelta = (delta.x + delta.y) * 0.25f;
     const auto scaleRect = [&](Rectangle& rect) {
-        const bool centerScale = IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT);
         rect.width = std::max(1.0f, rect.width + delta.x);
         rect.height = std::max(1.0f, rect.height + delta.y);
-        if (centerScale) {
+        if (IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT)) {
             rect.x -= delta.x * 0.5f;
             rect.y -= delta.y * 0.5f;
         }
     };
     const auto scaleRadius = [&](float& radius) { radius = std::max(1.0f, radius + radialDelta); };
+    if (selectedSceneName.rfind("Platform Loop ", 0) == 0 && index < level.buttonPlatformLoops.size()) {
+        ResizeEditorLoop(level, static_cast<int>(index), delta, IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT));
+        selectedSceneBounds = EditorLoopBounds(level.buttonPlatformLoops[index]);
+        selection.sceneBounds = selectedSceneBounds;
+        return true;
+    }
     bool scaled = true;
     if (selectedSceneName.rfind("Enemy ", 0) == 0 && index < level.enemies.size()) scaleRect(level.enemies[index].rect);
     else if (selectedSceneName.rfind("Guide Object ", 0) == 0 && index < level.guideObjects.size()) {
@@ -1840,7 +2269,7 @@ bool LevelEditor::ScaleSelectedScene(Vector2 delta) {
     else if (selectedSceneName.rfind("Portal Exit ", 0) == 0 && index < level.portalPairs.size()) scaleRect(level.portalPairs[index].exit);
     else if (selectedSceneName.rfind("Screw ", 0) == 0 && index < level.screws.size()) { level.screws[index].length = std::max(1.0f, level.screws[index].length + delta.x); scaleRadius(level.screws[index].radius); }
     else if (selectedSceneName.rfind("Fan ", 0) == 0 && index < level.fans.size()) { level.fans[index].length = std::max(1.0f, level.fans[index].length + delta.x); level.fans[index].width = std::max(1.0f, level.fans[index].width + delta.y); }
-    else if (selectedSceneName.rfind("Ramp ", 0) == 0 && index < level.ramps.size()) { level.ramps[index].length = std::max(1.0f, level.ramps[index].length + delta.x); level.ramps[index].thickness = std::max(1.0f, level.ramps[index].thickness + delta.y); }
+    else if ((selectedSceneName.rfind("Ramp ", 0) == 0 || selectedSceneName.rfind("Wedge ", 0) == 0) && index < level.ramps.size()) { level.ramps[index].length = std::max(1.0f, level.ramps[index].length + delta.x); level.ramps[index].thickness = std::max(1.0f, level.ramps[index].thickness + delta.y); }
     else if (selectedSceneName.rfind("See Saw ", 0) == 0 && index < level.seeSaws.size()) { level.seeSaws[index].length = std::max(1.0f, level.seeSaws[index].length + delta.x); level.seeSaws[index].thickness = std::max(1.0f, level.seeSaws[index].thickness + delta.y); }
     else if (selectedSceneName.rfind("Trap Door ", 0) == 0 && index < level.trapDoors.size()) { level.trapDoors[index].length = std::max(1.0f, level.trapDoors[index].length + delta.x); level.trapDoors[index].thickness = std::max(1.0f, level.trapDoors[index].thickness + delta.y); }
     else if (selectedSceneName.rfind("Chain ", 0) == 0 && index < level.chains.size())
@@ -1905,6 +2334,7 @@ bool LevelEditor::ScaleSelectedScene(Vector2 delta) {
 bool LevelEditor::DeleteSelectedSceneObject() {
     if (selection.kind != SelectionKind::SceneObject || selection.index < 0) return false;
     const size_t index = static_cast<size_t>(selection.index);
+    if (selectedSceneName.rfind("Platform Loop ", 0) == 0) return DeleteEditorLoop(level, static_cast<int>(index));
     const auto eraseAt = [index](auto& collection) {
         if (index >= collection.size()) return false;
         collection.erase(collection.begin() + static_cast<std::ptrdiff_t>(index));
@@ -1914,8 +2344,34 @@ bool LevelEditor::DeleteSelectedSceneObject() {
     if (selectedSceneName.rfind("Guide Object ", 0) == 0) return eraseAt(level.guideObjects);
     if (selectedSceneName.rfind("Breakable Tile ", 0) == 0) return eraseAt(level.breakableTiles);
     if (selectedSceneName.rfind("Directional Spikes ", 0) == 0) return eraseAt(level.directionalSpikeHazards);
-    if (selectedSceneName.rfind("Button ", 0) == 0) return eraseAt(level.buttons);
-    if (selectedSceneName.rfind("Fluid Field ", 0) == 0) return eraseAt(level.fluids);
+    if (selectedSceneName.rfind("Button ", 0) == 0) {
+        if (!eraseAt(level.buttons)) return false;
+        const auto repair = [&](auto& links) {
+            for (auto& link : links) {
+                if (link.buttonIndex == static_cast<int>(index)) link.buttonIndex = -1;
+                else if (link.buttonIndex > static_cast<int>(index)) --link.buttonIndex;
+            }
+        };
+        repair(level.buttonTrapDoorLinks); repair(level.buttonLadderLinks); repair(level.buttonFanLinks);
+        repair(level.buttonPlatformLinks); repair(level.buttonSpikeLinks);
+        repair(level.buttonPlatformLoops);
+        auto& riders = level.platformLoopButtonLinks;
+        riders.erase(std::remove_if(riders.begin(), riders.end(), [&](const auto& rider) {
+            return rider.buttonIndex == static_cast<int>(index);
+        }), riders.end());
+        for (auto& rider : riders) if (rider.buttonIndex > static_cast<int>(index)) --rider.buttonIndex;
+        if (level.buttonExitLink.buttonIndex == static_cast<int>(index)) level.buttonExitLink = {};
+        else if (level.buttonExitLink.buttonIndex > static_cast<int>(index)) --level.buttonExitLink.buttonIndex;
+        return true;
+    }
+    if (selectedSceneName.rfind("Fluid Field ", 0) == 0) {
+        if (!eraseAt(level.fluids)) return false;
+        for (int* reference : {&level.valveFluidFill.fluidIndex, &level.toxinLeak.fluidIndex}) {
+            if (*reference == static_cast<int>(index)) *reference = -1;
+            else if (*reference > static_cast<int>(index)) --*reference;
+        }
+        return true;
+    }
     if (selectedSceneName.rfind("Stone Block ", 0) == 0) return eraseAt(level.stoneBlocks);
     if (selectedSceneName.rfind("Hanging Weight ", 0) == 0) return eraseAt(level.weights);
     if (selectedSceneName.rfind("Rotary Latch ", 0) == 0) return eraseAt(level.rotaryLatches);
@@ -1928,15 +2384,27 @@ bool LevelEditor::DeleteSelectedSceneObject() {
     if (selectedSceneName.rfind("Portal ", 0) == 0) return eraseAt(level.portalPairs);
     if (selectedSceneName.rfind("Pulley ", 0) == 0) return eraseAt(level.pulleys);
     if (selectedSceneName.rfind("Screw ", 0) == 0) return eraseAt(level.screws);
-    if (selectedSceneName.rfind("Fan ", 0) == 0) return eraseAt(level.fans);
-    if (selectedSceneName.rfind("Ramp ", 0) == 0) return eraseAt(level.ramps);
+    if (selectedSceneName.rfind("Fan ", 0) == 0) {
+        if (!eraseAt(level.fans)) return false;
+        auto& links = level.buttonFanLinks;
+        links.erase(std::remove_if(links.begin(), links.end(), [&](const auto& link) { return link.fanIndex == static_cast<int>(index); }), links.end());
+        for (auto& link : links) if (link.fanIndex > static_cast<int>(index)) --link.fanIndex;
+        return true;
+    }
+    if ((selectedSceneName.rfind("Ramp ", 0) == 0 || selectedSceneName.rfind("Wedge ", 0) == 0)) return eraseAt(level.ramps);
     if (selectedSceneName.rfind("See Saw ", 0) == 0) return eraseAt(level.seeSaws);
-    if (selectedSceneName.rfind("Trap Door ", 0) == 0) return eraseAt(level.trapDoors);
+    if (selectedSceneName.rfind("Trap Door ", 0) == 0) {
+        if (!eraseAt(level.trapDoors)) return false;
+        auto& links = level.buttonTrapDoorLinks;
+        links.erase(std::remove_if(links.begin(), links.end(), [&](const auto& link) { return link.trapDoorIndex == static_cast<int>(index); }), links.end());
+        for (auto& link : links) if (link.trapDoorIndex > static_cast<int>(index)) --link.trapDoorIndex;
+        return true;
+    }
     if (selectedSceneName.rfind("Chain ", 0) == 0) return eraseAt(level.chains);
     if (selectedSceneName.rfind("Physics Rope ", 0) == 0) return eraseAt(level.physicsRopes);
     if (selectedSceneName.rfind("Arrow Trap ", 0) == 0) return eraseAt(level.arrowTraps);
     if (selectedSceneName.rfind("Label ", 0) == 0) return eraseAt(level.labels);
-    if (selectedSceneName == "Valve") { level.valve = {}; return true; }
+    if (selectedSceneName == "Valve") { level.valve = {}; level.valveFluidFill = {}; return true; }
     if (selectedSceneName == "Water Pit") { level.waterPit = {}; return true; }
     if (selectedSceneName == "Spike Hazard") { level.spikeHazard = {}; return true; }
     if (selectedSceneName == "Clock Face") {
@@ -1958,7 +2426,17 @@ bool LevelEditor::DuplicateSelectedSceneObject() {
     };
     bool duplicated = false;
     bool alreadyOffset = false;
-    if (selectedSceneName.rfind("Enemy ", 0) == 0) duplicated = duplicateAt(level.enemies);
+    if (selectedSceneName.rfind("Platform Loop ", 0) == 0) {
+        const int copy = DuplicateEditorLoop(level, static_cast<int>(index), {gridSnap, gridSnap});
+        if (copy >= 0) {
+            selection.index = copy;
+            selection.outlinerName = "Button Platform Loop";
+            selectedSceneBounds = EditorLoopBounds(level.buttonPlatformLoops[copy]);
+            selection.sceneBounds = selectedSceneBounds;
+            duplicated = alreadyOffset = true;
+        }
+    }
+    else if (selectedSceneName.rfind("Enemy ", 0) == 0) duplicated = duplicateAt(level.enemies);
     else if (selectedSceneName.rfind("Guide Object ", 0) == 0) duplicated = duplicateAt(level.guideObjects);
     else if (selectedSceneName.rfind("Breakable Tile ", 0) == 0) duplicated = duplicateAt(level.breakableTiles);
     else if (selectedSceneName.rfind("Directional Spikes ", 0) == 0) duplicated = duplicateAt(level.directionalSpikeHazards);
@@ -1990,7 +2468,7 @@ bool LevelEditor::DuplicateSelectedSceneObject() {
     }
     else if (selectedSceneName.rfind("Screw ", 0) == 0) duplicated = duplicateAt(level.screws);
     else if (selectedSceneName.rfind("Fan ", 0) == 0) duplicated = duplicateAt(level.fans);
-    else if (selectedSceneName.rfind("Ramp ", 0) == 0) duplicated = duplicateAt(level.ramps);
+    else if ((selectedSceneName.rfind("Ramp ", 0) == 0 || selectedSceneName.rfind("Wedge ", 0) == 0)) duplicated = duplicateAt(level.ramps);
     else if (selectedSceneName.rfind("See Saw ", 0) == 0) duplicated = duplicateAt(level.seeSaws);
     else if (selectedSceneName.rfind("Trap Door ", 0) == 0) duplicated = duplicateAt(level.trapDoors);
     else if (selectedSceneName.rfind("Chain ", 0) == 0) duplicated = duplicateAt(level.chains);
@@ -2016,34 +2494,68 @@ bool LevelEditor::DuplicateSelectedSceneObject() {
     return true;
 }
 
+bool LevelEditor::IsSelectedFluid() const {
+    if (selection.kind != SelectionKind::SceneObject || selection.index < 0 ||
+        selection.index >= static_cast<int>(level.fluids.size())) return false;
+    if (selectedSceneName.rfind("Fluid Field ", 0) == 0) return true;
+    const char* fluidLabel = level.fluids[static_cast<size_t>(selection.index)].type == FluidType::Water ? "Water" :
+        level.fluids[static_cast<size_t>(selection.index)].type == FluidType::Sand ? "Sand" :
+        level.fluids[static_cast<size_t>(selection.index)].type == FluidType::Gel ? "Gel" : "Gas";
+    return selectedSceneName == std::string(fluidLabel) + " " + std::to_string(selection.index + 1);
+}
+
 LevelEditor::TransformHandle LevelEditor::TransformHandleAt(Vector2 world) const {
+    const Rectangle gizmoBounds = SelectedTransformBounds();
+    if (gizmoBounds.width > 0.0f && gizmoBounds.height > 0.0f &&
+        CheckCollisionPointCircle(world, TransformAnchorPoint(gizmoBounds), 6.5f / camera.zoom))
+        return TransformHandle::AnchorPivot;
+
     if (transformMode == TransformMode::Rotate && SelectedRotation() != nullptr) {
         const Vector2 center = SelectedRotationCenter();
-        const float radius = std::max(selectedSceneBounds.width, selectedSceneBounds.height) * 0.62f;
+        const float radius = std::max(selectedSceneBounds.width, selectedSceneBounds.height) * 0.72f + 24.0f / camera.zoom;
         const float dx = world.x - center.x;
         const float dy = world.y - center.y;
         const float distance = sqrtf(dx * dx + dy * dy);
         if (fabsf(distance - radius) <= 10.0f / camera.zoom) return TransformHandle::RotateRing;
         return TransformHandle::None;
     }
+    if (transformMode == TransformMode::Select && IsSelectedFluid() && groupSelection.size() <= 1) {
+        const Rectangle bounds = level.fluids[static_cast<size_t>(selection.index)].bounds;
+        const float hitRadius = 10.0f / camera.zoom;
+        const Rectangle handles[] = {
+            {bounds.x - hitRadius, bounds.y - hitRadius, hitRadius * 2.0f, hitRadius * 2.0f},
+            {bounds.x + bounds.width - hitRadius, bounds.y - hitRadius, hitRadius * 2.0f, hitRadius * 2.0f},
+            {bounds.x - hitRadius, bounds.y + bounds.height - hitRadius, hitRadius * 2.0f, hitRadius * 2.0f},
+            {bounds.x + bounds.width - hitRadius, bounds.y + bounds.height - hitRadius, hitRadius * 2.0f, hitRadius * 2.0f}
+        };
+        const TransformHandle corners[] = {
+            TransformHandle::FluidResizeTopLeft, TransformHandle::FluidResizeTopRight,
+            TransformHandle::FluidResizeBottomLeft, TransformHandle::FluidResizeBottomRight
+        };
+        for (size_t index = 0; index < std::size(handles); ++index)
+            if (CheckCollisionPointRec(world, handles[index])) return corners[index];
+
+        const bool nearLeft = fabsf(world.x - bounds.x) <= hitRadius;
+        const bool nearRight = fabsf(world.x - (bounds.x + bounds.width)) <= hitRadius;
+        const bool nearTop = fabsf(world.y - bounds.y) <= hitRadius;
+        const bool nearBottom = fabsf(world.y - (bounds.y + bounds.height)) <= hitRadius;
+        if (nearLeft && world.y > bounds.y + hitRadius && world.y < bounds.y + bounds.height - hitRadius)
+            return TransformHandle::FluidResizeLeft;
+        if (nearRight && world.y > bounds.y + hitRadius && world.y < bounds.y + bounds.height - hitRadius)
+            return TransformHandle::FluidResizeRight;
+        if (nearTop) return TransformHandle::FluidResizeTop;
+        if (nearBottom) return TransformHandle::FluidResizeBottom;
+    }
     const Rectangle* rect = SelectedRectangle();
     Vector2 center{};
     const Rectangle groupBounds = groupSelection.size() > 1 ? SelectionGroupBounds() : Rectangle{};
-    if (groupSelection.size() > 1) center = {groupBounds.x + groupBounds.width * 0.5f,
-        groupBounds.y + groupBounds.height * 0.5f};
-    else if (rect != nullptr) center = {rect->x + rect->width * 0.5f, rect->y + rect->height * 0.5f};
-    else if (selection.kind == SelectionKind::PlayerStart) center = level.playerStart;
-    else if (selection.kind == SelectionKind::SceneObject &&
-        const_cast<LevelEditor*>(this)->TranslateSelectedScene({0.0f, 0.0f}))
-        center = {selectedSceneBounds.x + selectedSceneBounds.width * 0.5f,
-            selectedSceneBounds.y + selectedSceneBounds.height * 0.5f};
-    else return TransformHandle::None;
+    if (gizmoBounds.width <= 0.0f || gizmoBounds.height <= 0.0f) return TransformHandle::None;
+    center = TransformAnchorPoint(gizmoBounds);
 
     const float hitRadius = 10.0f / camera.zoom;
     if (transformMode == TransformMode::Move) {
-        const float axisLength = 30.0f / camera.zoom;
-        const Vector2 xHandle{center.x + axisLength, center.y};
-        const Vector2 yHandle{center.x, center.y - axisLength};
+        const Vector2 xHandle{center.x + TransformAxisLength(gizmoBounds, center, true), center.y};
+        const Vector2 yHandle{center.x, center.y - TransformAxisLength(gizmoBounds, center, false)};
         if (CheckCollisionPointCircle(world, xHandle, hitRadius)) return TransformHandle::MoveX;
         if (CheckCollisionPointCircle(world, yHandle, hitRadius)) return TransformHandle::MoveY;
         if (CheckCollisionPointCircle(world, center, hitRadius)) return TransformHandle::MoveCenter;
@@ -2054,21 +2566,23 @@ LevelEditor::TransformHandle LevelEditor::TransformHandleAt(Vector2 world) const
         if (selection.kind == SelectionKind::Exit && groupSelection.size() <= 1) return TransformHandle::None;
         const Rectangle bounds = groupSelection.size() > 1 ? groupBounds :
             (rect != nullptr ? *rect : selectedSceneBounds);
+        const Vector2 xHandle{bounds.x + bounds.width, bounds.y + bounds.height * 0.5f};
+        const Vector2 yHandle{bounds.x + bounds.width * 0.5f, bounds.y};
         const Vector2 corner{bounds.x + bounds.width, bounds.y + bounds.height};
+        if (CheckCollisionPointCircle(world, xHandle, hitRadius)) return TransformHandle::ScaleX;
+        if (CheckCollisionPointCircle(world, yHandle, hitRadius)) return TransformHandle::ScaleY;
         if (CheckCollisionPointCircle(world, corner, hitRadius)) return TransformHandle::ScaleBottomRight;
     }
     return TransformHandle::None;
 }
 
 int LevelEditor::OutlinerItemCount() const {
-    return 2 + static_cast<int>(level.baseSolids.size() + level.pitPlatforms.size() + level.ladders.size() +
+    return 5 + static_cast<int>(level.baseSolids.size() + level.pitPlatforms.size() + level.ladders.size() +
         level.cameraZones.size() + level.darknessAreas.size());
 }
 
 LevelEditor::Selection LevelEditor::OutlinerSelectionAt(int row) const {
-    if (row == 0) return {SelectionKind::PlayerStart, 0};
-    if (row == 1) return {SelectionKind::Exit, 0};
-    row -= 2;
+    if (row-- == 0) return {};
     const auto consume = [&](size_t count, SelectionKind kind, int& value) -> Selection {
         if (value < static_cast<int>(count)) return {kind, value};
         value -= static_cast<int>(count);
@@ -2082,10 +2596,21 @@ LevelEditor::Selection LevelEditor::OutlinerSelectionAt(int row) const {
     if (result.kind != SelectionKind::None) return result;
     result = consume(level.cameraZones.size(), SelectionKind::CameraZone, row);
     if (result.kind != SelectionKind::None) return result;
-    return consume(level.darknessAreas.size(), SelectionKind::Darkness, row);
+    result = consume(level.darknessAreas.size(), SelectionKind::Darkness, row);
+    if (result.kind != SelectionKind::None) return result;
+    if (row-- == 0) return {};
+    if (row-- == 0) return {};
+    if (row == 0) return {SelectionKind::PlayerStart, 0};
+    if (row == 1) return {SelectionKind::Exit, 0};
+    return {};
 }
 
 std::string LevelEditor::OutlinerLabelAt(int row) const {
+    const int objectCount = static_cast<int>(level.baseSolids.size() + level.pitPlatforms.size() + level.ladders.size() +
+        level.cameraZones.size() + level.darknessAreas.size());
+    if (row == 0) return "Objects";
+    if (row == objectCount + 1) return "Tiles";
+    if (row == objectCount + 2) return "Level Settings";
     const Selection item = OutlinerSelectionAt(row);
     const int displayIndex = item.index + 1;
     switch (item.kind) {
@@ -2138,7 +2663,9 @@ void LevelEditor::UpdateEditorPanels() {
         const int visibleRow = static_cast<int>((mouse.y - outliner.y - 44.0f) / 22.0f);
         const int row = outlinerScroll + visibleRow;
         if (visibleRow >= 0 && visibleRow < visibleRows && row < OutlinerItemCount()) {
-            selection = OutlinerSelectionAt(row);
+            const Selection chosen = OutlinerSelectionAt(row);
+            if (chosen.kind == SelectionKind::None) return;
+            selection = chosen;
             activeTool = EditTool::Select;
             transformMode = TransformMode::Select;
             statusText = "Selected " + OutlinerLabelAt(row) + ".";
@@ -2146,11 +2673,21 @@ void LevelEditor::UpdateEditorPanels() {
     }
 
     const Rectangle content = GetPanelBounds(PanelId::ContentBrowser);
+    if (wheel != 0.0f && CheckCollisionPointRec(mouse, content)) {
+        const int assetCount = static_cast<int>(ContentAssetIndices(contentCategory).size());
+        const float viewportWidth = std::max(0.0f, content.width - ContentFolderWidth - 20.0f);
+        const float contentWidth = assetCount > 0
+            ? assetCount * (ContentTileWidth + ContentTileGap) - ContentTileGap
+            : 0.0f;
+        const float maxScroll = std::max(0.0f, contentWidth - viewportWidth);
+        contentBrowserScroll = std::clamp(contentBrowserScroll - wheel * 180.0f, 0.0f, maxScroll);
+    }
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(mouse, content)) {
-        for (int category = 0; category < 4; ++category) {
-            const Rectangle row{content.x + 8.0f, content.y + 70.0f + category * 26.0f,
-                ContentFolderWidth - 16.0f, 24.0f};
-            if (CheckCollisionPointRec(mouse, row)) contentCategory = category;
+        for (int category = 0; category < static_cast<int>(std::size(ContentCategories)); ++category) {
+            if (CheckCollisionPointRec(mouse, ContentCategoryBounds(content, category))) {
+                contentCategory = category;
+                contentBrowserScroll = 0.0f;
+            }
         }
     }
 
@@ -2474,18 +3011,24 @@ void LevelEditor::Update() {
     const float wheel = GetMouseWheelMove();
     const Rectangle libraryBounds = GetPanelBounds(PanelId::PlaceAssets);
     const int visibleCatalogRows = std::max(1, static_cast<int>((libraryBounds.height - 78.0f) / 30.0f));
-    if (wheel != 0.0f && CheckCollisionPointRec(mouse, libraryBounds)) {
+    if (!viewportOnly && wheel != 0.0f && CheckCollisionPointRec(mouse, libraryBounds)) {
         assetLibraryScroll = std::clamp(assetLibraryScroll - static_cast<int>(wheel), 0,
             std::max(0, static_cast<int>(AssetCatalog().size()) - visibleCatalogRows));
     }
-    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+    if (!viewportOnly && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
         const std::vector<int> contentAssets = ContentAssetIndices(contentCategory);
         for (int visibleIndex = 0; visibleIndex < static_cast<int>(contentAssets.size()); ++visibleIndex) {
             const int assetIndex = contentAssets[static_cast<size_t>(visibleIndex)];
             if (CheckCollisionPointRec(mouse, GetContentAssetBounds(visibleIndex))) {
-                activeTool = Assets[assetIndex].tool;
-                draggingCreate = false;
-                statusText = std::string("Asset: ") + Assets[assetIndex].name;
+                const CatalogEntry& entry = AssetCatalog()[static_cast<size_t>(assetIndex)];
+                if (entry.placeable) {
+                    activeTool = entry.tool;
+                    draggingCreate = false;
+                    statusText = "Asset: " + entry.name;
+                }
+                else {
+                    statusText = entry.name + " is configured through its related object or editor tool.";
+                }
                 break;
             }
         }
@@ -2564,7 +3107,7 @@ void LevelEditor::ProcessViewportHostCommand() {
             paintTileRow = (value >> 16) & 0xffff;
             break;
         case 3:
-            paintTileSheet = std::clamp(value, 0, 2);
+            paintTileSheet = std::clamp(value, 0, 255);
             break;
         case 4:
             paintBrushSize = std::clamp(value, 1, 9);
@@ -2574,14 +3117,16 @@ void LevelEditor::ProcessViewportHostCommand() {
             const short y = static_cast<short>((value >> 16) & 0xffff);
             tilePaintTool = TilePaintTool::None;
             activeTool = EditTool::Select;
-            transformMode = TransformMode::Select;
             selection = HitTest({static_cast<float>(x), static_cast<float>(y)});
             groupSelection.clear();
             if (selection.kind != SelectionKind::None) groupSelection.push_back(selection);
             break;
         }
         case 6: {
-            if (!tileSelectionActive) break;
+            if (!tileSelectionActive) {
+                NotifyTileOperation("tileneedselection");
+                break;
+            }
             const int activeLayerBit = TileLayerBit(paintTileLayer);
             if (value != 2 && (lockedTileLayerMask & activeLayerBit) != 0) {
                 NotifyTileOperation("toolstatus Active tile layer is locked");
@@ -2657,27 +3202,9 @@ void LevelEditor::ProcessViewportHostCommand() {
                 }
                 tileSelectionCells.clear();
                 for (VisualTile& tile : transformed) {
-                    const int x = static_cast<int>(tile.position.x) / 32;
-                    const int y = static_cast<int>(tile.position.y) / 32;
-                    int targetX = x;
-                    int targetY = y;
-                    if (value == 4) {
-                        targetX = tileSelectionLeft + (y - tileSelectionTop);
-                        targetY = tileSelectionTop + (tileSelectionRight - x);
-                        tile.quarterTurns = (tile.quarterTurns + 3) % 4;
-                    }
-                    else if (value == 5) {
-                        targetX = tileSelectionLeft + (tileSelectionBottom - y);
-                        targetY = tileSelectionTop + (x - tileSelectionLeft);
-                        tile.quarterTurns = (tile.quarterTurns + 1) % 4;
-                    }
-                    else if (value == 6) { targetX = tileSelectionLeft + tileSelectionRight - x; tile.flipX = !tile.flipX; }
-                    else if (value == 7) { targetY = tileSelectionTop + tileSelectionBottom - y; tile.flipY = !tile.flipY; }
-                    else if (value == 8 || value == 10) ++targetX;
-                    else if (value == 9) --targetX;
-                    else if (value == 11) --targetY;
-                    else if (value == 12) ++targetY;
-                    tile.position = {static_cast<float>(targetX * 32), static_cast<float>(targetY * 32)};
+                    TransformSelectedTile(tile, value, tileSelectionLeft, tileSelectionTop, tileSelectionRight, tileSelectionBottom);
+                    const int targetX = static_cast<int>(tile.position.x) / 32;
+                    const int targetY = static_cast<int>(tile.position.y) / 32;
                     auto destination = std::find_if(level.visualTiles.begin(), level.visualTiles.end(), [&](const VisualTile& item) {
                         return item.layer == tile.layer && item.position.x == tile.position.x && item.position.y == tile.position.y;
                     });
@@ -2693,21 +3220,34 @@ void LevelEditor::ProcessViewportHostCommand() {
             break;
         }
         case 7:
-            visibleTileLayerMask = value & 0xFFF;
+            visibleTileLayerMask = value & 0x1FFF;
+            if ((visibleTileLayerMask & TileLayerBit(TileLayer::Middleground)) == 0) {
+                selection = {}; groupSelection.clear();
+                selectedLinkType.clear(); selectedLinkIndex = -1;
+                if (pickingControlTarget) { pickingControlTarget = false; NotifyTileOperation("linkcancel"); }
+                NotifySelectionChanged();
+            }
             break;
         case 8:
-            lockedTileLayerMask = value & 0xFFF;
+            lockedTileLayerMask = value & 0x1FFF;
+            break;
+        case 45:
+            collisionTileLayerMask = value & 0x1FFF;
             break;
         case 28:
             paintTileSelectionWidth = std::clamp(value & 0xffff, 1, 64);
             paintTileSelectionHeight = std::clamp((value >> 16) & 0xffff, 1, 64);
             break;
         case 29:
+            if (paintTileLayer != TileLayerFromId(value)) {
+                tileSelectionActive = false;
+                tileSelectionCells.clear();
+            }
             paintTileLayer = TileLayerFromId(value);
             break;
         case 30: {
             const TileLayer removedLayer = TileLayerFromId(value);
-            if (static_cast<int>(removedLayer) < static_cast<int>(TileLayer::User1)) break;
+            if (static_cast<int>(removedLayer) < static_cast<int>(TileLayer::User1) || removedLayer == TileLayer::Middleground) break;
             PushTileUndo();
             for (auto iterator = level.visualTiles.begin(); iterator != level.visualTiles.end();) {
                 if (iterator->layer == removedLayer) iterator = level.visualTiles.erase(iterator);
@@ -2775,8 +3315,7 @@ void LevelEditor::ProcessViewportHostCommand() {
                 break;
             }
             PushTileUndo();
-            const Texture2D activeSheet = paintTileSheet == 2 ? industrialFarBackground :
-                (paintTileSheet == 1 ? industrialBackground : industrialTiles);
+            const Texture2D activeSheet = spriteSheets.Get(paintTileSheet, industrialTiles, industrialBackground, industrialFarBackground);
             for (VisualTile& tile : level.visualTiles) {
                 const int x = static_cast<int>(tile.position.x) / 32;
                 const int y = static_cast<int>(tile.position.y) / 32;
@@ -2878,6 +3417,90 @@ void LevelEditor::ProcessViewportHostCommand() {
             else if (value == 72) activeTool = EditTool::Ratchet;
             else if (value == 73) activeTool = EditTool::Clutch;
             else if (value == 74) activeTool = EditTool::Brake;
+            else if (value == 75) activeTool = EditTool::Cam;
+            else if (value == 76) activeTool = EditTool::ConveyorBelt;
+            else if (value == 77) activeTool = EditTool::Turntable;
+            else if (value == 78) activeTool = EditTool::Battery;
+            else if (value == 79) activeTool = EditTool::ElectricMotor;
+            else if (value == 80) activeTool = EditTool::Generator;
+            else if (value == 81) activeTool = EditTool::LimitSwitch;
+            else if (value == 82) activeTool = EditTool::Relay;
+            else if (value == 83) activeTool = EditTool::Fuse;
+            else if (value == 84) activeTool = EditTool::Magnet;
+            else if (value == 85) activeTool = EditTool::Piston;
+            else if (value == 86) activeTool = EditTool::HydraulicCylinder;
+            else if (value == 87) activeTool = EditTool::RocketThruster;
+            else if (value == 88) activeTool = EditTool::CrushingBlock;
+            else if (value == 89) activeTool = EditTool::SwingingHammer;
+            else if (value == 90) activeTool = EditTool::SawBlade;
+            else if (value == 91) activeTool = EditTool::SpinnerTrap;
+            else if (value == 92) activeTool = EditTool::SteamVent;
+            else if (value == 93) activeTool = EditTool::ElectricalArc;
+            else if (value == 94) activeTool = EditTool::Oil;
+            else if (value == 95) activeTool = EditTool::Mud;
+            else if (value == 96) activeTool = EditTool::SpeedSensor;
+            else if (value == 97) activeTool = EditTool::BeamSensor;
+            else if (value == 98) activeTool = EditTool::Key;
+            else if (value == 99) activeTool = EditTool::GasMask;
+            else if (value == 100) activeTool = EditTool::BreakableCrate;
+            else if (value == 101) activeTool = EditTool::ExplosiveBarrel;
+            else if (value == 102) activeTool = EditTool::WaterPit;
+            else if (value == 103) activeTool = EditTool::ToxinLeak;
+            else if (value == 104) activeTool = EditTool::ClockFace;
+            else if (value == 105) activeTool = EditTool::MountedGear;
+            else if (value == 106) activeTool = EditTool::SpikeHazard;
+            else if (value == 107) activeTool = EditTool::AntiGravityPad;
+            else if (value == 108) activeTool = EditTool::TripodDerrick;
+            else if (value == 109) activeTool = EditTool::ChainHoist;
+            else if (value == 110) activeTool = EditTool::BlockAndTackle;
+            else if (value == 111) activeTool = EditTool::ComeAlong;
+            else if (value == 112) activeTool = EditTool::ManualBenchGrinder;
+            else if (value == 113) activeTool = EditTool::LoadCart;
+            else if (value == 114) activeTool = EditTool::RevolvingStoneGate;
+            else if (value == 115) activeTool = EditTool::RockHammer;
+            else if (value == 116) activeTool = EditTool::FieldCoil;
+            else if (value == 117) activeTool = EditTool::SpokePress;
+            else if (value == 118) activeTool = EditTool::PolarisTelescope;
+            else if (value == 119) activeTool = EditTool::Sundial;
+            else if (value == 120) activeTool = EditTool::PerpetualMotionHolder;
+            else if (value == 121) activeTool = EditTool::Bellows;
+            else if (value == 122) activeTool = EditTool::Trampoline;
+            else if (value == 123) activeTool = EditTool::BoxingGlove;
+            else if (value == 124) activeTool = EditTool::Vacuum;
+            else if (value == 125) activeTool = EditTool::MagnifyingGlass;
+            else if (value == 126) activeTool = EditTool::LightSource;
+            else if (value == 127) activeTool = EditTool::IgnitableFuse;
+            else if (value == 128) activeTool = EditTool::ProgrammableBall;
+            else if (value == 129) activeTool = EditTool::TransRotoConverter;
+            else if (value == 130) activeTool = EditTool::RotoTransConverter;
+            else if (value == 131) activeTool = EditTool::AcceleratorTube;
+            else if (value == 132) activeTool = EditTool::PinballBumper;
+            else if (value == 133) activeTool = EditTool::PinballFlipper;
+            else if (value == 134) activeTool = EditTool::LaserEmitter;
+            else if (value == 135) activeTool = EditTool::LaserMixer;
+            else if (value == 136) activeTool = EditTool::LaserDetector;
+            else if (value == 137) activeTool = EditTool::HotAirBalloon;
+            else if (value == 138) activeTool = EditTool::Blimp;
+            else if (value == 139) activeTool = EditTool::LeakyBucket;
+            else if (value == 140) activeTool = EditTool::DestructibleWood;
+            else if (value == 141) activeTool = EditTool::DestructibleBrick;
+            else if (value == 142) activeTool = EditTool::DestructibleGlass;
+            else if (value == 143) activeTool = EditTool::GlassPane;
+            else if (value == 144) activeTool = EditTool::GlassBlock;
+            else if (value == 145) activeTool = EditTool::IceBlock;
+            else if (value == 146) activeTool = EditTool::IceSheet;
+            else if (value == 147) activeTool = EditTool::Heater;
+            else if (value == 148) activeTool = EditTool::Campfire;
+            else if (value == 149) activeTool = EditTool::Torch;
+            else if (value == 150) activeTool = EditTool::WaterBucket;
+            else if (value == 151) activeTool = EditTool::SignalDust;
+            else if (value == 152) activeTool = EditTool::TernaryTrace;
+            else if (value == 153) activeTool = EditTool::TernarySwitch;
+            else if (value == 154) activeTool = EditTool::Tnt;
+            else if (value == 155) activeTool = EditTool::Wedge;
+            else if (value == 156) activeTool = EditTool::ScubaGear;
+            else if (value == 157) activeTool = EditTool::Teleforce;
+            else if (value == 158) activeTool = EditTool::TeslaCoil;
             else break;
             {
                 tilePaintTool = TilePaintTool::None;
@@ -2890,10 +3513,13 @@ void LevelEditor::ProcessViewportHostCommand() {
             tilePaintTool = TilePaintTool::None;
             activeTool = EditTool::Select;
             transformMode = static_cast<TransformMode>(value);
+            if (transformMode == TransformMode::Rotate) EnsureRotationSelectionBounds();
             draggingCreate = false;
             draggingTransform = false;
             statusText = std::string("Transform: ") +
                 (value == 0 ? "Select" : value == 1 ? "Move" : value == 2 ? "Rotate" : "Scale");
+            if (value == 2 && selection.kind != SelectionKind::None && SelectedRotation() == nullptr)
+                NotifyTileOperation("toolstatus This object has no editable rotation. Select a gear, wheel, fan, ramp, or another angled machine.");
             break;
         case 32:
             camera.zoom = std::clamp(value / 100.0f, 0.05f, 8.0f);
@@ -2905,6 +3531,72 @@ void LevelEditor::ProcessViewportHostCommand() {
         case 34: showConnections = value != 0; break;
         case 35: focusConnections = value != 0; break;
         case 36: SelectConnectedObjects(); break;
+        case 37:
+            PendingAssetDropScreenPosition = {
+                static_cast<float>(static_cast<short>(value & 0xffff)),
+                static_cast<float>(static_cast<short>((value >> 16) & 0xffff))
+            };
+            PendingAssetDrop = true;
+            groupSelection.clear();
+            draggingCreate = false;
+            draggingTransform = false;
+            break;
+        case 38:
+            transformAnchorIndex = std::clamp(value, 0, 8);
+            break;
+        case 39:
+            pickingControlTarget = value != 0;
+            controlSourceIsValve = value < 0;
+            if (value < 0) controlSourcePosition = level.valve.center;
+            else if (value > 0 && value <= static_cast<int>(level.buttons.size())) {
+                const auto rect = level.buttons[value - 1].rect;
+                controlSourcePosition = {rect.x + rect.width * 0.5f, rect.y + rect.height * 0.5f};
+            }
+            else pickingControlTarget = false;
+            if (pickingControlTarget) {
+                activeTool = EditTool::Select;
+                tilePaintTool = TilePaintTool::None;
+                draggingCreate = draggingTransform = draggingMarquee = false;
+                showConnections = true;
+            }
+            break;
+        case 40:
+            dragPreviewAssetIndex = value;
+            if (dragPreviewAssetIndex < 0 || contentPreviewAtlas.id == 0) dragPreviewAssetIndex = -1;
+            break;
+        case 41:
+            dragPreviewScreenPosition = {
+                static_cast<float>(static_cast<unsigned short>(value & 0xffff)),
+                static_cast<float>(static_cast<unsigned short>((value >> 16) & 0xffff))
+            };
+            break;
+        case 42:
+            paintQuarterTurns = value & 3;
+            paintFlipX = (value & 4) != 0;
+            paintFlipY = (value & 8) != 0;
+            break;
+        case 43:
+            if (value >= 0 && value < static_cast<int>(level.buttonPlatformLoops.size())) {
+                const auto bounds = EditorLoopBounds(level.buttonPlatformLoops[value]);
+                SetPrimarySelection({SelectionKind::SceneObject, value, "Platform Loop " + std::to_string(value + 1),
+                    bounds, "Button Platform Loop", value});
+                groupSelection = {selection};
+                activeTool = EditTool::Select;
+                tilePaintTool = TilePaintTool::None;
+                transformMode = TransformMode::Select;
+            }
+            break;
+        case 44: {
+            const int type = (value & 15) - 1;
+            selectedLinkType = type >= 0 && type < static_cast<int>(std::size(EditableConnectionTypes)) ? EditableConnectionTypes[type] : "";
+            selectedLinkIndex = selectedLinkType.empty() ? -1 : value >> 4;
+            if (!selectedLinkType.empty()) {
+                selection = {}; groupSelection.clear();
+                activeTool = EditTool::Select; tilePaintTool = TilePaintTool::None;
+                transformMode = TransformMode::Select;
+            }
+            break;
+        }
         default:
             break;
         }
@@ -3018,13 +3710,14 @@ void LevelEditor::PushTileUndo() {
         return;
     }
     tileUndoHistory.push_back({level.visualTiles, level.baseSolids, level.pitPlatforms, level.ladders,
-        level.cameraZones, level.darknessAreas, level.exitTrigger, level.playerStart, FluidDefinitions(level.fluids),
+        level.cameraZones, level.darknessAreas, level.exitTrigger, level.playerStart, level.playerCharacter, FluidDefinitions(level.fluids),
         level.pulleys, level.weights, level.rotaryLatches,
         level.stoneBlocks, level.boulders, level.physicsWheels, level.gears, level.flywheels,
         level.steeringWheels, level.screws, level.fans, level.pinwheels, level.ramps, level.seeSaws,
         level.trapDoors, ChainDefinitions(level.chains), RopeDefinitions(level.physicsRopes),
         level.buttons, level.portalPairs, level.directionalSpikeHazards, ArrowTrapDefinitions(level.arrowTraps),
-        level.breakableTiles, level.enemies, level.labels, level.valve, level.guideObjects});
+        level.breakableTiles, level.enemies, level.labels, level.valve, level.guideObjects, level.waterPit, level.toxinLeak,
+        level.clockFaceCenter, level.clockFaceRadius, level.spikeHazard, level.buttonTrapDoorLinks, level.buttonLadderLinks, level.buttonExitLink, level.buttonFanLinks, level.buttonPlatformLinks, level.buttonSpikeLinks, level.valveFluidFill, level.buttonPlatformLoops, level.platformLoopButtonLinks});
     if (tileUndoHistory.size() > 64) tileUndoHistory.erase(tileUndoHistory.begin());
     tileRedoHistory.clear();
 }
@@ -3038,6 +3731,7 @@ void LevelEditor::RestoreTileEdit(const TileEditSnapshot& snapshot) {
     level.darknessAreas = snapshot.darknessAreas;
     level.exitTrigger = snapshot.exitTrigger;
     level.playerStart = snapshot.playerStart;
+    level.playerCharacter = snapshot.playerCharacter;
     level.fluids = snapshot.fluids;
     for (FluidField& fluid : level.fluids) InitializeFluidField(fluid, BuildSolids(level), FluidSimulationMode::Tile);
     level.pulleys = snapshot.pulleys;
@@ -3068,6 +3762,23 @@ void LevelEditor::RestoreTileEdit(const TileEditSnapshot& snapshot) {
     level.labels = snapshot.labels;
     level.valve = snapshot.valve;
     level.guideObjects = snapshot.guideObjects;
+    level.waterPit = snapshot.waterPit;
+    level.toxinLeak = snapshot.toxinLeak;
+    level.clockFaceCenter = snapshot.clockFaceCenter;
+    level.clockFaceRadius = snapshot.clockFaceRadius;
+    level.spikeHazard = snapshot.spikeHazard;
+    level.buttonTrapDoorLinks = snapshot.buttonTrapDoorLinks;
+    level.buttonLadderLinks = snapshot.buttonLadderLinks;
+    level.buttonExitLink = snapshot.buttonExitLink;
+    level.buttonFanLinks = snapshot.buttonFanLinks;
+    level.buttonPlatformLinks = snapshot.buttonPlatformLinks;
+    level.buttonSpikeLinks = snapshot.buttonSpikeLinks;
+    level.valveFluidFill = snapshot.valveFluidFill;
+    level.buttonPlatformLoops = snapshot.buttonPlatformLoops;
+    level.platformLoopButtonLinks = snapshot.platformLoopButtonLinks;
+    for (auto& loop : level.buttonPlatformLoops) UpdateButtonPlatformLoopPositions(loop);
+    UpdatePlatformLoopButtonPositions(level);
+
     selection = {};
     groupSelection.clear();
     tileSelectionActive = false;
@@ -3084,13 +3795,14 @@ void LevelEditor::UndoTileEdit() {
         return;
     }
     tileRedoHistory.push_back({level.visualTiles, level.baseSolids, level.pitPlatforms, level.ladders,
-        level.cameraZones, level.darknessAreas, level.exitTrigger, level.playerStart, FluidDefinitions(level.fluids),
+        level.cameraZones, level.darknessAreas, level.exitTrigger, level.playerStart, level.playerCharacter, FluidDefinitions(level.fluids),
         level.pulleys, level.weights, level.rotaryLatches,
         level.stoneBlocks, level.boulders, level.physicsWheels, level.gears, level.flywheels,
         level.steeringWheels, level.screws, level.fans, level.pinwheels, level.ramps, level.seeSaws,
         level.trapDoors, ChainDefinitions(level.chains), RopeDefinitions(level.physicsRopes),
         level.buttons, level.portalPairs, level.directionalSpikeHazards, ArrowTrapDefinitions(level.arrowTraps),
-        level.breakableTiles, level.enemies, level.labels, level.valve, level.guideObjects});
+        level.breakableTiles, level.enemies, level.labels, level.valve, level.guideObjects, level.waterPit, level.toxinLeak,
+        level.clockFaceCenter, level.clockFaceRadius, level.spikeHazard, level.buttonTrapDoorLinks, level.buttonLadderLinks, level.buttonExitLink, level.buttonFanLinks, level.buttonPlatformLinks, level.buttonSpikeLinks, level.valveFluidFill, level.buttonPlatformLoops, level.platformLoopButtonLinks});
     const TileEditSnapshot snapshot = std::move(tileUndoHistory.back());
     tileUndoHistory.pop_back();
     RestoreTileEdit(snapshot);
@@ -3104,13 +3816,14 @@ void LevelEditor::RedoTileEdit() {
         return;
     }
     tileUndoHistory.push_back({level.visualTiles, level.baseSolids, level.pitPlatforms, level.ladders,
-        level.cameraZones, level.darknessAreas, level.exitTrigger, level.playerStart, FluidDefinitions(level.fluids),
+        level.cameraZones, level.darknessAreas, level.exitTrigger, level.playerStart, level.playerCharacter, FluidDefinitions(level.fluids),
         level.pulleys, level.weights, level.rotaryLatches,
         level.stoneBlocks, level.boulders, level.physicsWheels, level.gears, level.flywheels,
         level.steeringWheels, level.screws, level.fans, level.pinwheels, level.ramps, level.seeSaws,
         level.trapDoors, ChainDefinitions(level.chains), RopeDefinitions(level.physicsRopes),
         level.buttons, level.portalPairs, level.directionalSpikeHazards, ArrowTrapDefinitions(level.arrowTraps),
-        level.breakableTiles, level.enemies, level.labels, level.valve, level.guideObjects});
+        level.breakableTiles, level.enemies, level.labels, level.valve, level.guideObjects, level.waterPit, level.toxinLeak,
+        level.clockFaceCenter, level.clockFaceRadius, level.spikeHazard, level.buttonTrapDoorLinks, level.buttonLadderLinks, level.buttonExitLink, level.buttonFanLinks, level.buttonPlatformLinks, level.buttonSpikeLinks, level.valveFluidFill, level.buttonPlatformLoops, level.platformLoopButtonLinks});
     const TileEditSnapshot snapshot = std::move(tileRedoHistory.back());
     tileRedoHistory.pop_back();
     RestoreTileEdit(snapshot);
@@ -3136,7 +3849,8 @@ void LevelEditor::NotifyEditableObjectState() const {
     };
     NotifyTileOperation("objectsyncbegin");
     NotifyTileOperation(std::string("objectstate playerStart ") +
-        std::to_string(level.playerStart.x) + ' ' + std::to_string(level.playerStart.y) + " 0 0");
+        std::to_string(level.playerStart.x) + ' ' + std::to_string(level.playerStart.y) + " 0 0 " +
+        std::to_string(level.playerCharacter));
     if (IsUsableRectangle(level.exitTrigger)) notifyRect("exit", level.exitTrigger);
     for (Rectangle rect : level.baseSolids) notifyRect("solid", rect);
     for (Rectangle rect : level.pitPlatforms) notifyRect("platform", rect);
@@ -3151,6 +3865,13 @@ void LevelEditor::NotifyEditableObjectState() const {
             std::to_string(tile.quarterTurns) + ' ' + (tile.flipX ? "1" : "0") + ' ' +
             (tile.flipY ? "1" : "0") + ' ' + std::to_string(tile.animationFrames) + ' ' +
             std::to_string(tile.animationFrameSeconds));
+    }
+    if (level.toxinLeak.fluidIndex >= 0) {
+        const auto& leak = level.toxinLeak;
+        NotifyTileOperation("actorstate toxinLeak " + std::to_string(leak.fluidIndex) + ' ' +
+            std::to_string(leak.source.x) + ' ' + std::to_string(leak.source.y) + ' ' +
+            std::to_string(leak.massPerSecond) + ' ' + std::to_string(leak.maximumMass) + ' ' +
+            std::to_string(leak.exposureRate));
     }
     if (IsUsableRectangle(level.waterPit.bounds)) {
         NotifyTileOperation(std::string("actorstate waterPit ") +
@@ -3257,7 +3978,7 @@ void LevelEditor::NotifyEditableObjectState() const {
             std::to_string(pinwheel.rotation));
     }
     for (const Ramp& ramp : level.ramps) {
-        NotifyTileOperation(std::string("actorstate ramp ") + std::to_string(ramp.center.x) + ' ' +
+        NotifyTileOperation(std::string(ramp.wedge ? "actorstate wedge " : "actorstate ramp ") + std::to_string(ramp.center.x) + ' ' +
             std::to_string(ramp.center.y) + ' ' + std::to_string(ramp.length) + ' ' +
             std::to_string(ramp.thickness) + ' ' + std::to_string(ramp.angle) + ' ' +
             std::to_string(ramp.segmentCount));
@@ -3322,7 +4043,11 @@ void LevelEditor::NotifyEditableObjectState() const {
             std::to_string(level.valve.center.y) + ' ' + std::to_string(level.valve.radius));
     }
     for (const GuideObject& object : level.guideObjects) {
-        if (object.type == GuideObjectType::Checkpoint) {
+        const std::string advancedRecord = AdvancedObjectRecord(object);
+        if (!advancedRecord.empty()) {
+            NotifyTileOperation("actorstate " + advancedRecord);
+        }
+        else if (object.type == GuideObjectType::Checkpoint) {
             NotifyTileOperation(std::string("actorstate checkpoint ") +
                 std::to_string(object.transform.position.x) + ' ' + std::to_string(object.transform.position.y) + ' ' +
                 std::to_string(object.collider.size.x) + ' ' + std::to_string(object.collider.size.y));
@@ -3441,6 +4166,36 @@ void LevelEditor::NotifyEditableObjectState() const {
             std::to_string(enemy.rect.height) + ' ' + std::to_string(enemy.patrolMinX) + ' ' +
             std::to_string(enemy.patrolMaxX) + ' ' + std::to_string(enemy.speed));
     }
+    const auto emitLink = [&](const char* command, const auto&... values) {
+        std::ostringstream record;
+        record.imbue(std::locale::classic());
+        record << "actorstate " << command;
+        ((record << ' ' << values), ...);
+        NotifyTileOperation(record.str());
+    };
+    for (const auto& link : level.buttonTrapDoorLinks)
+        emitLink("buttonTrapDoor", link.buttonIndex, link.trapDoorIndex, link.openAngle, link.speed);
+    for (const auto& link : level.buttonFanLinks)
+        emitLink("buttonFan", link.buttonIndex, link.fanIndex, link.poweredAmount);
+    if (level.buttonExitLink.buttonIndex >= 0) emitLink("buttonExit", level.buttonExitLink.buttonIndex);
+    for (const auto& link : level.buttonLadderLinks)
+        emitLink("buttonLadder", link.buttonIndex, link.ladder.x, link.ladder.y, link.ladder.width, link.ladder.height);
+    for (const auto& link : level.buttonPlatformLinks)
+        emitLink("buttonPlatform", link.buttonIndex, link.platform.x, link.platform.y, link.platform.width, link.platform.height);
+    for (const auto& link : level.buttonSpikeLinks)
+        emitLink("buttonSpikeHazard", link.buttonIndex, SpikeDirectionName(link.hazard.direction),
+            link.hazard.rect.x, link.hazard.rect.y, link.hazard.rect.width, link.hazard.rect.height);
+    if (level.valveFluidFill.fluidIndex >= 0)
+        emitLink("valveFluidFill", level.valveFluidFill.fluidIndex, level.valveFluidFill.targetFill, level.valveFluidFill.riseRate);
+    for (const auto& loop : level.buttonPlatformLoops)
+        emitLink("buttonPlatformLoop", loop.buttonIndex, loop.center.x, loop.center.y,
+            loop.radius.x, loop.radius.y, loop.platformSize.x, loop.platformSize.y, loop.speed, loop.platformCount);
+    for (const auto& rider : level.platformLoopButtonLinks) {
+        if (rider.buttonIndex < 0 || rider.buttonIndex >= static_cast<int>(level.buttons.size())) continue;
+        const auto& button = level.buttons[rider.buttonIndex];
+        emitLink("platformLoopButton", rider.loopIndex, rider.platformIndex,
+            button.rect.width, button.rect.height, rider.buttonIndex);
+    }
     NotifyTileOperation("objectsyncend");
 #endif
 }
@@ -3536,6 +4291,9 @@ void LevelEditor::UpdateTilePainting(Rectangle canvas) {
             VisualTile tile{paintTileLayer, sourceColumn, sourceRow,
                 {static_cast<float>(targetX * 32), static_cast<float>(targetY * 32)}};
             tile.sheetIndex = paintTileSheet;
+            tile.quarterTurns = paintQuarterTurns;
+            tile.flipX = paintFlipX;
+            tile.flipY = paintFlipY;
             tile.animationFrames = paintAnimationFrames;
             tile.animationFrameSeconds = paintAnimationFrameSeconds;
             auto existing = tileAt(tile.layer, targetX, targetY);
@@ -3828,8 +4586,7 @@ void LevelEditor::UpdateTilePainting(Rectangle canvas) {
     lastPaintGridY = gridY;
 
     if (tilePaintTool == TilePaintTool::AutoTile) {
-        const Texture2D activeSheet = paintTileSheet == 2 ? industrialFarBackground :
-            (paintTileSheet == 1 ? industrialBackground : industrialTiles);
+        const Texture2D activeSheet = spriteSheets.Get(paintTileSheet, industrialTiles, industrialBackground, industrialFarBackground);
         const int baseColumn = std::clamp(paintTileColumn, 0, std::max(0, activeSheet.width / 32 - 4));
         const int baseRow = std::clamp(paintTileRow, 0, std::max(0, activeSheet.height / 32 - 4));
         std::vector<std::pair<int, int>> changed;
@@ -3837,6 +4594,9 @@ void LevelEditor::UpdateTilePainting(Rectangle canvas) {
             VisualTile seed{paintTileLayer, baseColumn, baseRow,
                 {static_cast<float>(seedX * 32), static_cast<float>(seedY * 32)}};
             seed.sheetIndex = paintTileSheet;
+            seed.quarterTurns = paintQuarterTurns;
+            seed.flipX = paintFlipX;
+            seed.flipY = paintFlipY;
             seed.animationFrames = paintAnimationFrames;
             seed.animationFrameSeconds = paintAnimationFrameSeconds;
             auto existing = tileAt(seed.layer, seedX, seedY);
@@ -3905,10 +4665,12 @@ void LevelEditor::UpdateTilePainting(Rectangle canvas) {
             VisualTile tile{};
             tile.layer = paintTileLayer;
             tile.sheetIndex = paintTileSheet;
+            tile.quarterTurns = paintQuarterTurns;
+            tile.flipX = paintFlipX;
+            tile.flipY = paintFlipY;
             tile.animationFrames = paintAnimationFrames;
             tile.animationFrameSeconds = paintAnimationFrameSeconds;
-            const Texture2D activeSheet = paintTileSheet == 2 ? industrialFarBackground :
-                (paintTileSheet == 1 ? industrialBackground : industrialTiles);
+            const Texture2D activeSheet = spriteSheets.Get(paintTileSheet, industrialTiles, industrialBackground, industrialFarBackground);
             const int variantX = tilePaintTool == TilePaintTool::RandomBrush ? GetRandomValue(0, tileWidth - 1) : x;
             const int variantY = tilePaintTool == TilePaintTool::RandomBrush ? GetRandomValue(0, tileHeight - 1) : y;
             tile.column = std::clamp(paintTileColumn + variantX,
@@ -3941,6 +4703,11 @@ void LevelEditor::UpdateTilePainting(Rectangle canvas) {
 }
 
 void LevelEditor::DeleteSelection() {
+    const int middlegroundBit = TileLayerBit(TileLayer::Middleground);
+    if ((visibleTileLayerMask & middlegroundBit) == 0 || (lockedTileLayerMask & middlegroundBit) != 0) {
+        NotifyTileOperation("toolstatus Show and unlock Middleground to delete gameplay objects.");
+        return;
+    }
     if (groupSelection.size() > 1) {
         PushTileUndo();
         std::vector<Selection> sceneItems;
@@ -4035,15 +4802,94 @@ void LevelEditor::DeleteSelection() {
 }
 
 void LevelEditor::UpdateEditing(Rectangle canvas) {
+    const int middlegroundBit = TileLayerBit(TileLayer::Middleground);
+    if ((visibleTileLayerMask & middlegroundBit) == 0 || (lockedTileLayerMask & middlegroundBit) != 0) {
+        draggingCreate = draggingTransform = draggingMarquee = false;
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+            NotifyTileOperation("toolstatus Show and unlock Middleground to edit gameplay objects.");
+        return;
+    }
     const Vector2 mouse = GetMousePosition();
-    const Vector2 world = SnapWorldPoint(GetScreenToWorld2D(mouse, camera));
+    const bool assetDrop = std::exchange(PendingAssetDrop, false);
+    const Vector2 inputPoint = assetDrop ? PendingAssetDropScreenPosition : mouse;
+    const Vector2 world = SnapWorldPoint(GetScreenToWorld2D(inputPoint, camera));
 
+    if (pickingControlTarget) {
+        if (IsKeyPressed(KEY_ESCAPE) || IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
+            pickingControlTarget = false;
+            NotifyTileOperation("linkcancel");
+        }
+        else if (CheckCollisionPointRec(mouse, canvas) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            const auto target = PickEditorControlTarget(level, GetScreenToWorld2D(mouse, camera), controlSourceIsValve);
+            if (target.index >= 0) {
+                pickingControlTarget = false;
+                NotifyTileOperation("linktarget " + target.type + ' ' + std::to_string(target.index));
+            }
+            else NotifyTileOperation("toolstatus Click a compatible target, or press Escape to cancel linking.");
+        }
+        return;
+    }
+
+    if (!selectedLinkType.empty() && (IsKeyPressed(KEY_DELETE) || IsKeyPressed(KEY_BACKSPACE))) {
+        selectedLinkType.clear(); selectedLinkIndex = -1;
+        NotifyTileOperation("linkdelete");
+        return;
+    }
+    if (showConnections && activeTool == EditTool::Select && transformMode == TransformMode::Select &&
+        CheckCollisionPointRec(mouse, canvas) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
+        !IsKeyDown(KEY_LEFT_ALT) && !IsKeyDown(KEY_RIGHT_ALT) &&
+        !IsKeyDown(KEY_LEFT_CONTROL) && !IsKeyDown(KEY_RIGHT_CONTROL) &&
+        !IsKeyDown(KEY_LEFT_SHIFT) && !IsKeyDown(KEY_RIGHT_SHIFT)) {
+        auto graph = BuildEditorConnections(level);
+        const auto members = ConnectedEditorNodes(graph, SelectedConnectionNode(graph));
+        if (focusConnections && !members.empty()) {
+            graph.links.erase(std::remove_if(graph.links.begin(), graph.links.end(), [&](const auto& link) {
+                return std::find(members.begin(), members.end(), link.from) == members.end() ||
+                    std::find(members.begin(), members.end(), link.to) == members.end();
+            }), graph.links.end());
+        }
+        const int picked = PickEditorConnection(graph, GetScreenToWorld2D(mouse, camera), 6.0f / camera.zoom);
+        if (picked >= 0) {
+            selectedLinkType = graph.links[picked].recordType;
+            selectedLinkIndex = graph.links[picked].recordIndex;
+            selection = {}; groupSelection.clear();
+            draggingCreate = draggingTransform = draggingMarquee = false;
+            NotifyTileOperation("linkselect " + selectedLinkType + ' ' + std::to_string(selectedLinkIndex));
+            return;
+        }
+        selectedLinkType.clear(); selectedLinkIndex = -1;
+    }
     if (IsKeyPressed(KEY_ESCAPE)) {
+        if (!selectedLinkType.empty()) {
+            selectedLinkType.clear(); selectedLinkIndex = -1;
+            NotifySelectionChanged();
+        }
         draggingCreate = false;
         draggingMarquee = false;
+        if (draggingAnchorPoint) {
+            transformAnchorIndex = transformOriginalAnchorIndex;
+            draggingAnchorPoint = false;
+            activeTransformHandle = TransformHandle::None;
+        }
         selection = {};
         groupSelection.clear();
         statusText = "Selection cleared.";
+    }
+
+    if (draggingAnchorPoint) {
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            const Rectangle bounds = SelectedTransformBounds();
+            if (bounds.width > 0.0f && bounds.height > 0.0f)
+                transformAnchorIndex = NearestTransformAnchor(GetScreenToWorld2D(mouse, camera), bounds);
+        }
+        if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+            draggingAnchorPoint = false;
+            activeTransformHandle = TransformHandle::None;
+            SetMouseCursor(MOUSE_CURSOR_DEFAULT);
+            if (transformAnchorIndex != transformOriginalAnchorIndex)
+                NotifyTileOperation("anchorpoint " + std::to_string(transformAnchorIndex));
+        }
+        return;
     }
 
     if (IsKeyPressed(KEY_DELETE) || IsKeyPressed(KEY_BACKSPACE)) {
@@ -4094,7 +4940,7 @@ void LevelEditor::UpdateEditing(Rectangle canvas) {
         }
     }
 
-    if (activeTool == EditTool::Select && !draggingTransform) SetMouseCursor(MOUSE_CURSOR_DEFAULT);
+    if (activeTool == EditTool::Select && !draggingTransform && !draggingAnchorPoint) SetMouseCursor(MOUSE_CURSOR_DEFAULT);
     if (!CheckCollisionPointRec(mouse, canvas) || (!viewportOnly && IsMouseOverPanel(mouse)) ||
         draggedPanel != PanelId::Count ||
         resizeTarget != ResizeTarget::None) {
@@ -4105,11 +4951,22 @@ void LevelEditor::UpdateEditing(Rectangle canvas) {
         const Vector2 unsnappedWorld = GetScreenToWorld2D(mouse, camera);
         const TransformHandle hoveredHandle = TransformHandleAt(unsnappedWorld);
         if (!draggingTransform) {
-            if (hoveredHandle == TransformHandle::MoveCenter) SetMouseCursor(MOUSE_CURSOR_RESIZE_ALL);
+            if (hoveredHandle == TransformHandle::AnchorPivot) SetMouseCursor(MOUSE_CURSOR_POINTING_HAND);
+            else if (hoveredHandle == TransformHandle::MoveCenter) SetMouseCursor(MOUSE_CURSOR_RESIZE_ALL);
             else if (hoveredHandle == TransformHandle::MoveX) SetMouseCursor(MOUSE_CURSOR_RESIZE_EW);
             else if (hoveredHandle == TransformHandle::MoveY) SetMouseCursor(MOUSE_CURSOR_RESIZE_NS);
             else if (hoveredHandle == TransformHandle::ScaleBottomRight) SetMouseCursor(MOUSE_CURSOR_RESIZE_NWSE);
+            else if (hoveredHandle == TransformHandle::ScaleX) SetMouseCursor(MOUSE_CURSOR_RESIZE_EW);
+            else if (hoveredHandle == TransformHandle::ScaleY) SetMouseCursor(MOUSE_CURSOR_RESIZE_NS);
             else if (hoveredHandle == TransformHandle::RotateRing) SetMouseCursor(MOUSE_CURSOR_CROSSHAIR);
+            else if (hoveredHandle == TransformHandle::FluidResizeLeft ||
+                hoveredHandle == TransformHandle::FluidResizeRight) SetMouseCursor(MOUSE_CURSOR_RESIZE_EW);
+            else if (hoveredHandle == TransformHandle::FluidResizeTop ||
+                hoveredHandle == TransformHandle::FluidResizeBottom) SetMouseCursor(MOUSE_CURSOR_RESIZE_NS);
+            else if (hoveredHandle == TransformHandle::FluidResizeTopLeft ||
+                hoveredHandle == TransformHandle::FluidResizeBottomRight) SetMouseCursor(MOUSE_CURSOR_RESIZE_NWSE);
+            else if (hoveredHandle == TransformHandle::FluidResizeTopRight ||
+                hoveredHandle == TransformHandle::FluidResizeBottomLeft) SetMouseCursor(MOUSE_CURSOR_RESIZE_NESW);
             else SetMouseCursor(MOUSE_CURSOR_DEFAULT);
         }
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
@@ -4145,21 +5002,37 @@ void LevelEditor::UpdateEditing(Rectangle canvas) {
                 transformLastWorld = world;
                 transformOriginalPoint = level.playerStart;
                 if (const Rectangle* rect = SelectedRectangle()) transformOriginalRect = *rect;
-                if ((transformMode == TransformMode::Move &&
+                if (IsSelectedFluid())
+                    transformOriginalRect = level.fluids[static_cast<size_t>(selection.index)].bounds;
+                else if (selection.kind == SelectionKind::SceneObject)
+                    transformOriginalRect = selectedSceneBounds;
+                if (activeTransformHandle == TransformHandle::AnchorPivot) {
+                    transformOriginalAnchorIndex = transformAnchorIndex;
+                    draggingAnchorPoint = true;
+                    SetMouseCursor(MOUSE_CURSOR_POINTING_HAND);
+                }
+                const bool resizingFluid = IsSelectedFluid() && groupSelection.size() <= 1 &&
+                    transformMode == TransformMode::Select &&
+                    activeTransformHandle >= TransformHandle::FluidResizeLeft &&
+                    activeTransformHandle <= TransformHandle::FluidResizeBottomRight;
+                if (!draggingAnchorPoint && (resizingFluid || (transformMode == TransformMode::Move &&
                     (selection.kind == SelectionKind::PlayerStart || SelectedRectangle() != nullptr ||
                         (selection.kind == SelectionKind::SceneObject && TranslateSelectedScene({0.0f, 0.0f})))) ||
                     (transformMode == TransformMode::Scale &&
+                        (activeTransformHandle == TransformHandle::ScaleX ||
+                            activeTransformHandle == TransformHandle::ScaleY ||
+                            activeTransformHandle == TransformHandle::ScaleBottomRight) &&
                         ((SelectedRectangle() != nullptr && selection.kind != SelectionKind::Exit) || groupSelection.size() > 1 ||
                             (selection.kind == SelectionKind::SceneObject && ScaleSelectedScene({0.0f, 0.0f})))) ||
                     (transformMode == TransformMode::Rotate && SelectedRotation() != nullptr &&
-                        activeTransformHandle == TransformHandle::RotateRing)) {
+                        activeTransformHandle == TransformHandle::RotateRing))) {
                     PushTileUndo();
                     draggingTransform = true;
                     if (const float* rotation = SelectedRotation()) {
                         transformOriginalRotation = *rotation;
-                        const Vector2 center = SelectedRotationCenter();
-                        transformDragStartAngle = atan2f(unsnappedWorld.y - center.y,
-                            unsnappedWorld.x - center.x) * RAD2DEG;
+                        transformPivot = TransformAnchorPoint(selectedSceneBounds);
+                        transformDragStartAngle = atan2f(unsnappedWorld.y - transformPivot.y,
+                            unsnappedWorld.x - transformPivot.x) * RAD2DEG;
                     }
                     transformOriginalGroupRects.clear();
                     transformOriginalGroupPoints.clear();
@@ -4197,7 +5070,8 @@ void LevelEditor::UpdateEditing(Rectangle canvas) {
             collect(level.ladders, SelectionKind::Ladder);
             collect(level.cameraZones, SelectionKind::CameraZone);
             collect(level.darknessAreas, SelectionKind::Darkness);
-            if (CheckCollisionPointRec(level.playerStart, marquee)) groupSelection.push_back({SelectionKind::PlayerStart, 0});
+            if (CheckCollisionRecs(PlayerStartBounds(level.playerStart, playerSprites.id != 0), marquee))
+                groupSelection.push_back({SelectionKind::PlayerStart, 0});
             if (CheckCollisionRecs(marquee, level.exitTrigger)) groupSelection.push_back({SelectionKind::Exit, 0});
             const auto collectScene = [&](Rectangle bounds, std::string name, int nativeIndex,
                 std::string outlinerName = {}, int outlinerIndex = -1) {
@@ -4273,7 +5147,7 @@ void LevelEditor::UpdateEditing(Rectangle canvas) {
             }
             for (int index = 0; index < static_cast<int>(level.ramps.size()); ++index) {
                 const auto& v = level.ramps[index]; const float extent = v.length * 0.5f + v.thickness;
-                collectScene({v.center.x - extent, v.center.y - extent, extent * 2, extent * 2}, indexed("Ramp", index), index);
+                collectScene({v.center.x - extent, v.center.y - extent, extent * 2, extent * 2}, indexed(v.wedge ? "Wedge" : "Ramp", index), index);
             }
             for (int index = 0; index < static_cast<int>(level.seeSaws.size()); ++index) {
                 const auto& v = level.seeSaws[index]; const float extent = v.length * 0.5f + v.thickness;
@@ -4311,6 +5185,20 @@ void LevelEditor::UpdateEditing(Rectangle canvas) {
             }
             collectScene({level.valve.center.x - level.valve.radius, level.valve.center.y - level.valve.radius,
                 level.valve.radius * 2.0f, level.valve.radius * 2.0f}, "Valve", 0);
+            for (int index = 0; index < static_cast<int>(level.buttonPlatformLoops.size()); ++index)
+                collectScene(EditorLoopBounds(level.buttonPlatformLoops[index]), indexed("Platform Loop", index), index,
+                    "Button Platform Loop", index);
+            std::unordered_set<int> selectedLoopIndices;
+            for (const auto& item : groupSelection)
+                if (item.sceneName.rfind("Platform Loop ", 0) == 0) selectedLoopIndices.insert(item.index);
+            groupSelection.erase(std::remove_if(groupSelection.begin(), groupSelection.end(), [&](const Selection& item) {
+                if (item.kind != SelectionKind::SceneObject || item.sceneName.rfind("Button ", 0) != 0) return false;
+                for (const auto& rider : level.platformLoopButtonLinks) {
+                    if (rider.buttonIndex != item.index) continue;
+                    if (selectedLoopIndices.count(rider.loopIndex)) return true;
+                }
+                return false;
+            }), groupSelection.end());
             collectScene(level.waterPit.bounds, "Water Pit", 0);
             collectScene(level.spikeHazard, "Spike Hazard", 0);
             collectScene({level.clockFaceCenter.x - level.clockFaceRadius, level.clockFaceCenter.y - level.clockFaceRadius,
@@ -4321,7 +5209,59 @@ void LevelEditor::UpdateEditing(Rectangle canvas) {
         }
         if (draggingTransform && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
             const Vector2 delta{world.x - transformDragStart.x, world.y - transformDragStart.y};
-            if (transformMode == TransformMode::Move) {
+            if (IsSelectedFluid() && groupSelection.size() <= 1 &&
+                activeTransformHandle >= TransformHandle::FluidResizeLeft &&
+                activeTransformHandle <= TransformHandle::FluidResizeBottomRight) {
+                const Rectangle original = transformOriginalRect;
+                Rectangle resized = original;
+                const float minimum = gridSnap;
+                switch (activeTransformHandle) {
+                case TransformHandle::FluidResizeLeft:
+                case TransformHandle::FluidResizeTopLeft:
+                case TransformHandle::FluidResizeBottomLeft: {
+                    const float right = original.x + original.width;
+                    resized.x = std::min(world.x, right - minimum);
+                    resized.width = right - resized.x;
+                    break;
+                }
+                default: break;
+                }
+                switch (activeTransformHandle) {
+                case TransformHandle::FluidResizeRight:
+                case TransformHandle::FluidResizeTopRight:
+                case TransformHandle::FluidResizeBottomRight:
+                    resized.width = std::max(minimum, world.x - original.x);
+                    break;
+                default: break;
+                }
+                switch (activeTransformHandle) {
+                case TransformHandle::FluidResizeTop:
+                case TransformHandle::FluidResizeTopLeft:
+                case TransformHandle::FluidResizeTopRight: {
+                    const float bottom = original.y + original.height;
+                    resized.y = std::min(world.y, bottom - minimum);
+                    resized.height = bottom - resized.y;
+                    break;
+                }
+                default: break;
+                }
+                switch (activeTransformHandle) {
+                case TransformHandle::FluidResizeBottom:
+                case TransformHandle::FluidResizeBottomLeft:
+                case TransformHandle::FluidResizeBottomRight:
+                    resized.height = std::max(minimum, world.y - original.y);
+                    break;
+                default: break;
+                }
+                level.fluids[static_cast<size_t>(selection.index)].bounds = resized;
+                selectedSceneBounds = resized;
+                selection.sceneBounds = resized;
+                if (groupSelection.size() == 1) groupSelection.front().sceneBounds = resized;
+                statusText = "Fluid bounds: " + std::to_string(static_cast<int>(resized.width)) + " x " +
+                    std::to_string(static_cast<int>(resized.height));
+                if (viewportOnly) NotifyEditableObjectState();
+            }
+            else if (transformMode == TransformMode::Move) {
                 Vector2 constrainedDelta = delta;
                 if (activeTransformHandle == TransformHandle::MoveX) constrainedDelta.y = 0.0f;
                 else if (activeTransformHandle == TransformHandle::MoveY) constrainedDelta.x = 0.0f;
@@ -4363,24 +5303,29 @@ void LevelEditor::UpdateEditing(Rectangle canvas) {
                 }
             }
             else if (transformMode == TransformMode::Scale) {
+                Vector2 scaleDelta = delta;
+                if (activeTransformHandle == TransformHandle::ScaleX) scaleDelta.y = 0.0f;
+                else if (activeTransformHandle == TransformHandle::ScaleY) scaleDelta.x = 0.0f;
                 if (groupSelection.size() > 1 && transformOriginalGroupBounds.width > 0.0f &&
                     transformOriginalGroupBounds.height > 0.0f) {
-                    const float newWidth = std::max(gridSnap, transformOriginalGroupBounds.width + delta.x);
-                    const float newHeight = std::max(gridSnap, transformOriginalGroupBounds.height + delta.y);
+                    const float newWidth = std::max(gridSnap, transformOriginalGroupBounds.width + scaleDelta.x);
+                    const float newHeight = std::max(gridSnap, transformOriginalGroupBounds.height + scaleDelta.y);
                     float scaleX = newWidth / transformOriginalGroupBounds.width;
                     float scaleY = newHeight / transformOriginalGroupBounds.height;
                     if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT)) {
-                        const float factorX = delta.x / transformOriginalGroupBounds.width;
-                        const float factorY = delta.y / transformOriginalGroupBounds.height;
+                        const float factorX = scaleDelta.x / transformOriginalGroupBounds.width;
+                        const float factorY = scaleDelta.y / transformOriginalGroupBounds.height;
                         const float uniformScale = fabsf(factorX) >= fabsf(factorY) ? factorX : factorY;
                         scaleX = scaleY = std::max(gridSnap / transformOriginalGroupBounds.width,
                             1.0f + uniformScale);
                     }
                     const bool centerScale = IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT);
-                    const float anchorX = transformOriginalGroupBounds.x +
-                        (centerScale ? transformOriginalGroupBounds.width * 0.5f : 0.0f);
-                    const float anchorY = transformOriginalGroupBounds.y +
-                        (centerScale ? transformOriginalGroupBounds.height * 0.5f : 0.0f);
+                    const Vector2 groupAnchor = centerScale ?
+                        Vector2{transformOriginalGroupBounds.x + transformOriginalGroupBounds.width * 0.5f,
+                            transformOriginalGroupBounds.y + transformOriginalGroupBounds.height * 0.5f} :
+                        TransformAnchorPoint(transformOriginalGroupBounds);
+                    const float anchorX = groupAnchor.x;
+                    const float anchorY = groupAnchor.y;
                     for (size_t index = 0; index < groupSelection.size(); ++index) {
                         Selection& item = groupSelection[index];
                         if (item.kind == SelectionKind::PlayerStart) {
@@ -4417,39 +5362,61 @@ void LevelEditor::UpdateEditing(Rectangle canvas) {
                 }
                 else if (Rectangle* rect = SelectedRectangle()) {
                     float scaleX = std::max(gridSnap / transformOriginalRect.width,
-                        (transformOriginalRect.width + delta.x) / transformOriginalRect.width);
+                        (transformOriginalRect.width + scaleDelta.x) / transformOriginalRect.width);
                     float scaleY = std::max(gridSnap / transformOriginalRect.height,
-                        (transformOriginalRect.height + delta.y) / transformOriginalRect.height);
-                    if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT)) {
-                        const float factorX = delta.x / transformOriginalRect.width;
-                        const float factorY = delta.y / transformOriginalRect.height;
+                        (transformOriginalRect.height + scaleDelta.y) / transformOriginalRect.height);
+                    if ((IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT)) &&
+                        activeTransformHandle == TransformHandle::ScaleBottomRight) {
+                        const float factorX = scaleDelta.x / transformOriginalRect.width;
+                        const float factorY = scaleDelta.y / transformOriginalRect.height;
                         const float uniformScale = fabsf(factorX) >= fabsf(factorY) ? factorX : factorY;
                         scaleX = scaleY = std::max(gridSnap / transformOriginalRect.width,
                             1.0f + uniformScale);
                     }
                     rect->width = transformOriginalRect.width * scaleX;
                     rect->height = transformOriginalRect.height * scaleY;
-                    if (IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT)) {
-                        rect->x = transformOriginalRect.x - (rect->width - transformOriginalRect.width) * 0.5f;
-                        rect->y = transformOriginalRect.y - (rect->height - transformOriginalRect.height) * 0.5f;
-                    }
+                    const Vector2 scaleAnchor = (IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT)) ?
+                        Vector2{transformOriginalRect.x + transformOriginalRect.width * 0.5f,
+                            transformOriginalRect.y + transformOriginalRect.height * 0.5f} :
+                        TransformAnchorPoint(transformOriginalRect);
+                    const float anchorFractionX = transformOriginalRect.width > 0.0f ?
+                        (scaleAnchor.x - transformOriginalRect.x) / transformOriginalRect.width : 0.5f;
+                    const float anchorFractionY = transformOriginalRect.height > 0.0f ?
+                        (scaleAnchor.y - transformOriginalRect.y) / transformOriginalRect.height : 0.5f;
+                    rect->x = scaleAnchor.x - rect->width * anchorFractionX;
+                    rect->y = scaleAnchor.y - rect->height * anchorFractionY;
                 }
                 else if (selection.kind == SelectionKind::SceneObject) {
-                    const Vector2 incremental{world.x - transformLastWorld.x, world.y - transformLastWorld.y};
+                    Vector2 incremental{world.x - transformLastWorld.x, world.y - transformLastWorld.y};
+                    if (activeTransformHandle == TransformHandle::ScaleX) incremental.y = 0.0f;
+                    else if (activeTransformHandle == TransformHandle::ScaleY) incremental.x = 0.0f;
                     ScaleSelectedScene(incremental);
+                    const bool centerScale = IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT);
+                    const Vector2 scaleAnchor = centerScale ?
+                        Vector2{transformOriginalRect.x + transformOriginalRect.width * 0.5f,
+                            transformOriginalRect.y + transformOriginalRect.height * 0.5f} :
+                        TransformAnchorPoint(transformOriginalRect);
+                    const float scaleX = selectedSceneBounds.width / std::max(1.0f, transformOriginalRect.width);
+                    const float scaleY = selectedSceneBounds.height / std::max(1.0f, transformOriginalRect.height);
+                    const Vector2 targetOrigin{
+                        scaleAnchor.x + (transformOriginalRect.x - scaleAnchor.x) * scaleX,
+                        scaleAnchor.y + (transformOriginalRect.y - scaleAnchor.y) * scaleY
+                    };
+                    TranslateSelectedScene({targetOrigin.x - selectedSceneBounds.x,
+                        targetOrigin.y - selectedSceneBounds.y});
                     transformLastWorld = world;
                 }
             }
             else if (transformMode == TransformMode::Rotate) {
                 if (float* rotation = SelectedRotation()) {
-                    const Vector2 center = SelectedRotationCenter();
+                    const Vector2 center = transformPivot;
                     const float currentAngle = atan2f(unsnappedWorld.y - center.y,
                         unsnappedWorld.x - center.x) * RAD2DEG;
                     float result = transformOriginalRotation + currentAngle - transformDragStartAngle;
-                    const bool limitedAngle = selectedSceneName.rfind("Ramp ", 0) == 0 ||
+                    const bool limitedAngle = (selectedSceneName.rfind("Ramp ", 0) == 0 || selectedSceneName.rfind("Wedge ", 0) == 0) ||
                         selectedSceneName.rfind("Trap Door ", 0) == 0 ||
                         selectedSceneName.rfind("See Saw ", 0) == 0;
-                    if (selectedSceneName.rfind("Ramp ", 0) == 0 || selectedSceneName.rfind("Trap Door ", 0) == 0)
+                    if ((selectedSceneName.rfind("Ramp ", 0) == 0 || selectedSceneName.rfind("Wedge ", 0) == 0) || selectedSceneName.rfind("Trap Door ", 0) == 0)
                         result = std::clamp(result, -80.0f, 80.0f);
                     else if (selectedSceneName.rfind("See Saw ", 0) == 0 && selection.index >= 0 &&
                         selection.index < static_cast<int>(level.seeSaws.size())) {
@@ -4462,7 +5429,7 @@ void LevelEditor::UpdateEditing(Rectangle canvas) {
                     }
                     if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT)) {
                         result = roundf(result / 15.0f) * 15.0f;
-                        if (limitedAngle && (selectedSceneName.rfind("Ramp ", 0) == 0 ||
+                        if (limitedAngle && ((selectedSceneName.rfind("Ramp ", 0) == 0 || selectedSceneName.rfind("Wedge ", 0) == 0) ||
                             selectedSceneName.rfind("Trap Door ", 0) == 0)) result = std::clamp(result, -80.0f, 80.0f);
                         else if (limitedAngle && selection.index >= 0 &&
                             selection.index < static_cast<int>(level.seeSaws.size())) {
@@ -4471,6 +5438,25 @@ void LevelEditor::UpdateEditing(Rectangle canvas) {
                         }
                     }
                     *rotation = result;
+                    if (selection.kind == SelectionKind::SceneObject && transformOriginalRect.width > 0.0f &&
+                        transformOriginalRect.height > 0.0f) {
+                        const float radians = (result - transformOriginalRotation) * DEG2RAD;
+                        const Vector2 originalCenter{
+                            transformOriginalRect.x + transformOriginalRect.width * 0.5f,
+                            transformOriginalRect.y + transformOriginalRect.height * 0.5f
+                        };
+                        const Vector2 offset{originalCenter.x - transformPivot.x, originalCenter.y - transformPivot.y};
+                        const Vector2 targetCenter{
+                            transformPivot.x + offset.x * cosf(radians) - offset.y * sinf(radians),
+                            transformPivot.y + offset.x * sinf(radians) + offset.y * cosf(radians)
+                        };
+                        const Vector2 currentCenter{
+                            selectedSceneBounds.x + selectedSceneBounds.width * 0.5f,
+                            selectedSceneBounds.y + selectedSceneBounds.height * 0.5f
+                        };
+                        TranslateSelectedScene({targetCenter.x - currentCenter.x,
+                            targetCenter.y - currentCenter.y});
+                    }
                     if (selectedSceneName.rfind("Fan ", 0) == 0 && selection.index >= 0 &&
                         selection.index < static_cast<int>(level.fans.size())) {
                         const float radians = result * DEG2RAD;
@@ -4486,30 +5472,50 @@ void LevelEditor::UpdateEditing(Rectangle canvas) {
                 groupSelection.front() = selection;
             activeTransformHandle = TransformHandle::None;
             SetMouseCursor(MOUSE_CURSOR_DEFAULT);
-            MarkDirty(transformMode == TransformMode::Move ? "Moved selection." :
-                (transformMode == TransformMode::Rotate ? "Rotated selection." : "Scaled selection."));
+            const bool resizedFluid = IsSelectedFluid();
+            if (resizedFluid) {
+                FluidField& fluid = level.fluids[static_cast<size_t>(selection.index)];
+                InitializeFluidField(fluid, BuildSolids(level), FluidSimulationMode::Tile);
+            }
+            MarkDirty(resizedFluid ? "Resized fluid bounds." :
+                (transformMode == TransformMode::Move ? "Moved selection." :
+                    (transformMode == TransformMode::Rotate ? "Rotated selection." : "Scaled selection.")));
         }
         return;
     }
 
-    if (activeTool == EditTool::PlayerStart && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+    if (activeTool == EditTool::PlayerStart && (assetDrop || IsMouseButtonPressed(MOUSE_BUTTON_LEFT))) {
         PushTileUndo();
         level.playerStart = world;
         selection = {SelectionKind::PlayerStart, 0};
         MarkDirty("Placed player start.");
+        if (assetDrop) {
+            activeTool = EditTool::Select;
+            transformMode = TransformMode::Select;
+            NotifySelectionChanged();
+        }
         return;
     }
 
-    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+    const bool fluidBoundsTool = activeTool == EditTool::Water || activeTool == EditTool::Sand ||
+        activeTool == EditTool::Gel || activeTool == EditTool::Gas ||
+        activeTool == EditTool::WaterPit || activeTool == EditTool::ToxinLeak;
+    if (assetDrop) {
+        draggingCreate = false;
+        dragStart = world;
+        dragCurrent = world;
+    }
+    else if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
         draggingCreate = true;
         dragStart = world;
         dragCurrent = world;
     }
     if (draggingCreate && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
-        dragCurrent = world;
+        dragCurrent = fluidBoundsTool ? world : dragStart;
     }
-    if (draggingCreate && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+    if (assetDrop || (draggingCreate && IsMouseButtonReleased(MOUSE_BUTTON_LEFT))) {
         draggingCreate = false;
+        if (!fluidBoundsTool) dragStart = world;
         const Rectangle rect = MakeRect(dragStart, world);
         if (activeTool != EditTool::Select && activeTool != EditTool::PlayerStart) PushTileUndo();
         switch (activeTool) {
@@ -4560,6 +5566,8 @@ void LevelEditor::UpdateEditing(Rectangle canvas) {
             level.fluids.push_back(std::move(fluid));
             selection = {SelectionKind::SceneObject, static_cast<int>(level.fluids.size()) - 1};
             selectedSceneName = std::string(ToolName(activeTool)) + " " + std::to_string(level.fluids.size());
+            selectedSceneBounds = rect;
+            selection.sceneBounds = rect;
             MarkDirty(std::string("Added ") + ToolName(activeTool) + ".");
             break;
         }
@@ -4635,8 +5643,10 @@ void LevelEditor::UpdateEditing(Rectangle canvas) {
             MarkDirty("Added Physics Wheel.");
             break;
         }
-        case EditTool::Gear: {
+        case EditTool::Gear:
+        case EditTool::MountedGear: {
             Gear gear{};
+            if (activeTool == EditTool::MountedGear) gear.mounting = GearMounting::Mounted;
             gear.center = {rect.x + rect.width * 0.5f, rect.y + rect.height * 0.5f};
             gear.radius = std::max(gridSnap * 0.5f, std::min(rect.width, rect.height) * 0.5f);
             gear.mass = 1.8f;
@@ -4706,8 +5716,10 @@ void LevelEditor::UpdateEditing(Rectangle canvas) {
             MarkDirty("Added Pinwheel.");
             break;
         }
+        case EditTool::Wedge:
         case EditTool::Ramp: {
             Ramp ramp{};
+            ramp.wedge = activeTool == EditTool::Wedge;
             ramp.center = {rect.x + rect.width * 0.5f, rect.y + rect.height * 0.5f};
             ramp.length = std::max(gridSnap, rect.width);
             ramp.thickness = std::max(8.0f, rect.height);
@@ -4715,8 +5727,8 @@ void LevelEditor::UpdateEditing(Rectangle canvas) {
             ramp.segmentCount = 4;
             level.ramps.push_back(ramp);
             selection = {SelectionKind::SceneObject, static_cast<int>(level.ramps.size()) - 1};
-            selectedSceneName = "Ramp " + std::to_string(level.ramps.size());
-            MarkDirty("Added Ramp.");
+            selectedSceneName = std::string(ramp.wedge ? "Wedge " : "Ramp ") + std::to_string(level.ramps.size());
+            MarkDirty(ramp.wedge ? "Added Wedge." : "Added Ramp.");
             break;
         }
         case EditTool::SeeSaw: {
@@ -5079,9 +6091,174 @@ void LevelEditor::UpdateEditing(Rectangle canvas) {
             MarkDirty(std::string("Added ") + ToolName(activeTool) + ".");
             break;
         }
+        case EditTool::WaterPit:
+            level.waterPit = {rect, rect.y + rect.height * 0.5f, rect.y, 95.0f, false};
+            selection = {SelectionKind::SceneObject, 0, "Water Pit", rect, "Water Pit", 0};
+            selectedSceneName = "Water Pit";
+            selectedSceneBounds = rect;
+            MarkDirty("Placed water pit.");
+            break;
+        case EditTool::ClockFace:
+            level.clockFaceCenter = world;
+            level.clockFaceRadius = 64.0f;
+            selectedSceneName = "Clock Face";
+            selectedSceneBounds = {world.x - 64, world.y - 64, 128, 128};
+            selection = {SelectionKind::SceneObject, 0, selectedSceneName, selectedSceneBounds, "Clock Face", 0};
+            MarkDirty("Placed clock face.");
+            break;
+        case EditTool::SpikeHazard:
+            level.spikeHazard = rect;
+            selectedSceneName = "Spike Hazard";
+            selectedSceneBounds = rect;
+            selection = {SelectionKind::SceneObject, 0, selectedSceneName, rect, "Spike Hazard", 0};
+            MarkDirty("Placed spike hazard.");
+            break;
+        case EditTool::ToxinLeak: {
+            // A leak requires a gas field; author both records together.
+            FluidField fluid{};
+            fluid.type = FluidType::Gas;
+            fluid.bounds = rect;
+            fluid.initialFill = 0.0f;
+            fluid.particleSpacing = 18.0f;
+            InitializeFluidField(fluid, BuildSolids(level), FluidSimulationMode::Tile);
+            level.fluids.push_back(std::move(fluid));
+            const int index = static_cast<int>(level.fluids.size()) - 1;
+            level.toxinLeak = {index, {rect.x + rect.width * 0.5f, rect.y + rect.height * 0.5f}, 2, 100, 0.1f};
+            selectedSceneName = "Fluid Field " + std::to_string(index + 1);
+            selectedSceneBounds = rect;
+            selection = {SelectionKind::SceneObject, index, selectedSceneName, rect, "Fluid Field", index};
+            MarkDirty("Placed toxin leak and gas bounds.");
+            break;
+        }
+        case EditTool::Cam:
+        case EditTool::ConveyorBelt:
+        case EditTool::Turntable:
+        case EditTool::Battery:
+        case EditTool::ElectricMotor:
+        case EditTool::Generator:
+        case EditTool::LimitSwitch:
+        case EditTool::Relay:
+        case EditTool::Fuse:
+        case EditTool::Magnet:
+        case EditTool::Piston:
+        case EditTool::HydraulicCylinder:
+        case EditTool::RocketThruster:
+        case EditTool::CrushingBlock:
+        case EditTool::SwingingHammer:
+        case EditTool::SawBlade:
+        case EditTool::SpinnerTrap:
+        case EditTool::SteamVent:
+        case EditTool::ElectricalArc:
+        case EditTool::Oil:
+        case EditTool::Mud:
+        case EditTool::SpeedSensor:
+        case EditTool::BeamSensor:
+        case EditTool::Key:
+        case EditTool::ScubaGear:
+        case EditTool::GasMask:
+        case EditTool::BreakableCrate:
+        case EditTool::ExplosiveBarrel:
+        case EditTool::AntiGravityPad:
+        case EditTool::TripodDerrick:
+        case EditTool::ChainHoist:
+        case EditTool::BlockAndTackle:
+        case EditTool::ComeAlong:
+        case EditTool::ManualBenchGrinder:
+        case EditTool::LoadCart:
+        case EditTool::RevolvingStoneGate:
+        case EditTool::RockHammer:
+        case EditTool::FieldCoil:
+        case EditTool::SpokePress:
+        case EditTool::PolarisTelescope:
+        case EditTool::Sundial:
+        case EditTool::PerpetualMotionHolder:
+        case EditTool::Bellows:
+        case EditTool::Trampoline:
+        case EditTool::BoxingGlove:
+        case EditTool::Vacuum:
+        case EditTool::MagnifyingGlass:
+        case EditTool::LightSource:
+        case EditTool::IgnitableFuse:
+        case EditTool::ProgrammableBall:
+        case EditTool::TransRotoConverter:
+        case EditTool::RotoTransConverter:
+        case EditTool::AcceleratorTube:
+        case EditTool::PinballBumper:
+        case EditTool::PinballFlipper:
+        case EditTool::LaserEmitter:
+        case EditTool::LaserMixer:
+        case EditTool::LaserDetector:
+        case EditTool::HotAirBalloon:
+        case EditTool::Blimp:
+        case EditTool::LeakyBucket:
+        case EditTool::DestructibleWood:
+        case EditTool::DestructibleBrick:
+        case EditTool::DestructibleGlass:
+        case EditTool::GlassPane:
+        case EditTool::GlassBlock:
+        case EditTool::IceBlock:
+        case EditTool::IceSheet:
+        case EditTool::Heater:
+        case EditTool::Campfire:
+        case EditTool::Torch:
+        case EditTool::WaterBucket:
+        case EditTool::SignalDust:
+        case EditTool::TernaryTrace:
+        case EditTool::TernarySwitch:
+        case EditTool::Tnt:
+        case EditTool::Teleforce:
+        case EditTool::TeslaCoil:
+        {
+            const auto* entry = FindAdvancedPlacement(activeTool);
+            GuideObject object{};
+            std::ostringstream arguments;
+            arguments << world.x << ' ' << world.y << ' ' << (std::string(entry->defaults).substr(4));
+            std::istringstream stream(arguments.str());
+            if (!ParseGuideObject(entry->command, stream, object)) break;
+            if (object.type == GuideObjectType::ElectricalArc) {
+                object.constraint.anchorB = {world.x + 80.0f, world.y};
+            }
+            else if (object.type == GuideObjectType::SignalDust) {
+                object.constraint.anchorA = world;
+                object.constraint.anchorB = {world.x + 64.0f, world.y};
+                object.transform.position = world;
+                object.origin = world;
+                object.direction = {1.0f, 0.0f};
+                object.length = 64.0f;
+            }
+            else if (object.type == GuideObjectType::TernaryTrace) {
+                object.constraint.anchorA = world;
+                object.constraint.anchorB = {world.x + 64.0f, world.y};
+                object.transform.position = world;
+                object.origin = world;
+                object.direction = {1.0f, 0.0f};
+                object.length = 64.0f;
+            }
+            else if (object.type == GuideObjectType::ComeAlong) {
+                object.constraint.anchorB.x += world.x;
+                object.constraint.anchorB.y += world.y;
+            }
+            level.guideObjects.push_back(object);
+            const int index = static_cast<int>(level.guideObjects.size()) - 1;
+            int typedIndex = 0;
+            for (int prior = 0; prior < index; ++prior)
+                if (level.guideObjects[prior].type == object.type) ++typedIndex;
+            selectedSceneName = "Guide Object " + std::to_string(index + 1);
+            selectedSceneBounds = GetGuideObjectBounds(object);
+            selection = {SelectionKind::SceneObject, index, selectedSceneName, selectedSceneBounds,
+                GetGuideObjectName(object.type), typedIndex};
+            MarkDirty(std::string("Added ") + entry->name + ".");
+            NotifySelectionChanged();
+            break;
+        }
         case EditTool::Select:
         case EditTool::PlayerStart:
             break;
+        }
+        if (assetDrop) {
+            activeTool = EditTool::Select;
+            transformMode = TransformMode::Select;
+            NotifySelectionChanged();
         }
     }
 }
@@ -5147,6 +6324,22 @@ void LevelEditor::DrawCanvas(Rectangle canvas) const {
     DrawLevelPreview();
     DrawEditOverlay();
     EndMode2D();
+    if (dragPreviewAssetIndex >= 0 && contentPreviewAtlas.id != 0 &&
+        CheckCollisionPointRec(dragPreviewScreenPosition, canvas)) {
+        constexpr int ThumbnailWidth = 112;
+        constexpr int ThumbnailHeight = 84;
+        const int columns = contentPreviewAtlas.width / ThumbnailWidth;
+        const int rows = contentPreviewAtlas.height / ThumbnailHeight;
+        if (columns > 0 && dragPreviewAssetIndex < columns * rows) {
+            const Rectangle source{static_cast<float>((dragPreviewAssetIndex % columns) * ThumbnailWidth),
+                static_cast<float>((dragPreviewAssetIndex / columns) * ThumbnailHeight),
+                static_cast<float>(ThumbnailWidth), static_cast<float>(ThumbnailHeight)};
+            DrawTextureRec(contentPreviewAtlas, source,
+                {dragPreviewScreenPosition.x - ThumbnailWidth * 0.5f,
+                    dragPreviewScreenPosition.y - ThumbnailHeight * 0.5f},
+                Color{255, 255, 255, 190});
+        }
+    }
     EndScissorMode();
     DrawRectangleLinesEx(canvas, 1.0f, PanelBorder);
 
@@ -5159,20 +6352,42 @@ void LevelEditor::DrawCanvas(Rectangle canvas) const {
 }
 
 int LevelEditor::SelectedConnectionNode(const EditorConnections& graph) const {
+    if (selection.kind == SelectionKind::Exit) {
+        for (int i = 0; i < static_cast<int>(graph.nodes.size()); ++i)
+            if (graph.nodes[i].kind == ConnectionNodeKind::Exit) return i;
+    }
     if (selection.kind != SelectionKind::SceneObject) return -1;
     for (int node = 0; node < static_cast<int>(graph.nodes.size()); ++node) {
         const auto& item = graph.nodes[node];
         if (item.index != selection.index) continue;
+        if (item.kind == ConnectionNodeKind::AuthoredTarget) continue;
         const char* prefix = item.kind == ConnectionNodeKind::GuideObject ? "Guide Object " :
-            item.kind == ConnectionNodeKind::Pulley ? "Pulley " : "Hanging Weight ";
+            item.kind == ConnectionNodeKind::Pulley ? "Pulley " :
+            item.kind == ConnectionNodeKind::Weight ? "Hanging Weight " :
+            item.kind == ConnectionNodeKind::Button ? "Button " :
+            item.kind == ConnectionNodeKind::TrapDoor ? "Trap Door " :
+            item.kind == ConnectionNodeKind::Fan ? "Fan " :
+            item.kind == ConnectionNodeKind::Fluid ? "Fluid Field " :
+            item.kind == ConnectionNodeKind::PlatformLoop ? "Platform Loop " : "Valve";
         if (selectedSceneName.rfind(prefix, 0) == 0) return node;
     }
     return -1;
 }
 
 LevelEditor::Selection LevelEditor::ConnectionSelection(const ConnectionNode& node) const {
+    if (node.kind == ConnectionNodeKind::AuthoredTarget) return {};
+    if (node.kind == ConnectionNodeKind::Exit) return {SelectionKind::Exit, 0};
+    if (node.kind == ConnectionNodeKind::PlatformLoop)
+        return {SelectionKind::SceneObject, node.index, "Platform Loop " + std::to_string(node.index + 1),
+            node.bounds, "Button Platform Loop", node.index};
+    if (node.kind == ConnectionNodeKind::Valve)
+        return {SelectionKind::SceneObject, 0, "Valve", node.bounds, "Valve", 0};
     const std::string prefix = node.kind == ConnectionNodeKind::GuideObject ? "Guide Object" :
-        node.kind == ConnectionNodeKind::Pulley ? "Pulley" : "Hanging Weight";
+        node.kind == ConnectionNodeKind::Pulley ? "Pulley" :
+        node.kind == ConnectionNodeKind::Weight ? "Hanging Weight" :
+        node.kind == ConnectionNodeKind::Button ? "Button" :
+        node.kind == ConnectionNodeKind::TrapDoor ? "Trap Door" :
+        node.kind == ConnectionNodeKind::Fan ? "Fan" : "Fluid Field";
     std::string outliner = prefix;
     int ordinal = node.index;
     if (node.kind == ConnectionNodeKind::GuideObject) {
@@ -5192,7 +6407,10 @@ void LevelEditor::SelectConnectedObjects() {
     const auto connected = ConnectedEditorNodes(graph, node);
     if (connected.empty()) { NotifyTileOperation("toolstatus Select a power, pulley, or attachment object first"); return; }
     groupSelection.clear();
-    for (int member : connected) groupSelection.push_back(ConnectionSelection(graph.nodes[member]));
+    for (int member : connected) {
+        const auto item = ConnectionSelection(graph.nodes[member]);
+        if (item.kind != SelectionKind::None) groupSelection.push_back(item);
+    }
     SetPrimarySelection(groupSelection.front());
     showConnections = true;
     NotifySelectionChanged();
@@ -5216,7 +6434,7 @@ bool LevelEditor::PickConnectionEndpoint(Vector2 world) {
     };
     for (const auto& link : graph.links) { consider(link.start, link.from); consider(link.end, link.to); }
     for (int node = 0; node < static_cast<int>(graph.nodes.size()); ++node) consider(graph.nodes[node].position, node);
-    if (picked < 0) return false;
+    if (picked < 0 || graph.nodes[picked].kind == ConnectionNodeKind::AuthoredTarget) return false;
     groupSelection.clear();
     SetPrimarySelection(ConnectionSelection(graph.nodes[picked]));
     activeTool = EditTool::Select;
@@ -5250,7 +6468,9 @@ void LevelEditor::DrawConnectionOverlay() const {
     };
     for (const auto& link : graph.links) {
         if (!visible(link.from) && !visible(link.to)) continue;
-        const Color color = link.kind == ConnectionLinkKind::Power
+        if (link.recordType == selectedLinkType && link.recordIndex == selectedLinkIndex && !selectedLinkType.empty())
+            DrawLineEx(link.start, link.end, 6.0f * unit, RAYWHITE);
+        const Color color = link.kind == ConnectionLinkKind::Control ? Color{190, 138, 255, 255} : link.kind == ConnectionLinkKind::Power
             ? (graph.nodes[link.to].warning.empty() ? powerColor : warningColor)
             : link.kind == ConnectionLinkKind::Attachment ? attachmentColor : pathColor;
         dashed(link.start, link.end, Fade(color, 0.85f));
@@ -5264,7 +6484,8 @@ void LevelEditor::DrawConnectionOverlay() const {
     }
     for (const auto& path : graph.paths) {
         if (!visible(path.node)) continue;
-        const bool attachment = IsGuideAttachmentConstraint(level.guideObjects[path.node].type);
+        const bool attachment = graph.nodes[path.node].kind == ConnectionNodeKind::GuideObject &&
+            IsGuideAttachmentConstraint(level.guideObjects[graph.nodes[path.node].index].type);
         const Color color = attachment ? attachmentColor : pathColor;
         for (size_t index = 1; index < path.points.size(); ++index) dashed(path.points[index - 1], path.points[index], color);
         if (!path.points.empty()) {
@@ -5279,6 +6500,10 @@ void LevelEditor::DrawConnectionOverlay() const {
     for (int node = 0; node < static_cast<int>(graph.nodes.size()); ++node) {
         if (!visible(node)) continue;
         const auto& item = graph.nodes[node];
+        if (item.kind == ConnectionNodeKind::AuthoredTarget) {
+            DrawRectangleRec(item.bounds, Color{170, 120, 235, 24});
+            DrawSelectionOutline(item.bounds, camera.zoom);
+        }
         if (node == selected && item.kind == ConnectionNodeKind::GuideObject) {
             const auto& object = level.guideObjects[item.index];
             if (IsGuideAttachmentConstraint(object.type)) {
@@ -5310,13 +6535,75 @@ void LevelEditor::DrawConnectionOverlay() const {
     const auto canvas = GetCanvasBounds();
     const Vector2 legend = GetScreenToWorld2D({canvas.x + 12, canvas.y + 12}, camera);
     DrawRectangleRec({legend.x - 4 * unit, legend.y - 3 * unit, 440 * unit, 42 * unit}, Color{15, 18, 23, 225});
-    DrawUiText(uiFont, "Connections: gold = channel, green = attachment, blue = path", legend.x, legend.y, 12 * unit, PrimaryText);
+    DrawUiText(uiFont, "Gold = channel, green = attachment, blue = path, purple = control", legend.x, legend.y, 12 * unit, PrimaryText);
     DrawUiText(uiFont, "Red = unresolved. Alt+click an endpoint to select it.", legend.x, legend.y + 19 * unit, 12 * unit, SecondaryText);
 }
 
 void LevelEditor::DrawEditOverlay() const {
-    if (showConnections) DrawConnectionOverlay();
+    const bool middlegroundVisible = (visibleTileLayerMask & TileLayerBit(TileLayer::Middleground)) != 0;
+    if (showConnections && middlegroundVisible) DrawConnectionOverlay();
+    if (pickingControlTarget && middlegroundVisible) {
+        const auto canvas = GetCanvasBounds();
+        const auto mouse = GetMousePosition();
+        if (CheckCollisionPointRec(mouse, canvas)) {
+            const Vector2 point = GetScreenToWorld2D(mouse, camera);
+            const auto target = PickEditorControlTarget(level, point, controlSourceIsValve);
+            const Vector2 end = target.index >= 0 ? Vector2{target.bounds.x + target.bounds.width * 0.5f,
+                target.bounds.y + target.bounds.height * 0.5f} : point;
+            const Color color = target.index >= 0 ? Color{105, 235, 163, 255} : Color{190, 138, 255, 255};
+            DrawLineEx(controlSourcePosition, end, 2.0f / camera.zoom, color);
+            DrawCircleV(controlSourcePosition, 4.0f / camera.zoom, color);
+            if (target.index >= 0) DrawSelectionOutline(target.bounds, camera.zoom);
+            DrawUiText(uiFont, target.index >= 0 ? "Click to connect — Esc cancels" : "Choose a target — Esc cancels",
+                point.x + 12 / camera.zoom, point.y + 12 / camera.zoom, 13 / camera.zoom, color);
+        }
+    }
     const float lineWidth = std::max(2.0f / camera.zoom, 1.0f);
+    const auto drawMoveArrow = [&](Vector2 start, Vector2 tip, Color color, bool hovered) {
+        const Vector2 direction{tip.x - start.x, tip.y - start.y};
+        const float length = sqrtf(direction.x * direction.x + direction.y * direction.y);
+        if (length <= 0.0f) return;
+        const Vector2 unit{direction.x / length, direction.y / length};
+        const Vector2 perpendicular{-unit.y, unit.x};
+        const float headLength = 12.0f / camera.zoom;
+        const float headWidth = 10.0f / camera.zoom;
+        const Vector2 base{tip.x - unit.x * headLength, tip.y - unit.y * headLength};
+        DrawLineEx(start, base, (hovered ? 2.5f : 2.0f) / camera.zoom, color);
+        DrawTriangle(tip,
+            {base.x - perpendicular.x * headWidth * 0.5f, base.y - perpendicular.y * headWidth * 0.5f},
+            {base.x + perpendicular.x * headWidth * 0.5f, base.y + perpendicular.y * headWidth * 0.5f}, color);
+        if (hovered) DrawCircleLinesV(tip, 9.0f / camera.zoom, RAYWHITE);
+    };
+    const auto drawScaleHandles = [&](Rectangle bounds, TransformHandle hovered) {
+        const float baseSize = 8.0f / camera.zoom;
+        const Vector2 center = TransformAnchorPoint(bounds);
+        const Vector2 points[] = {
+            {bounds.x + bounds.width, bounds.y + bounds.height * 0.5f},
+            {bounds.x + bounds.width * 0.5f, bounds.y},
+            {bounds.x + bounds.width, bounds.y + bounds.height}
+        };
+        const TransformHandle types[] = {
+            TransformHandle::ScaleX, TransformHandle::ScaleY, TransformHandle::ScaleBottomRight
+        };
+        DrawLineEx(center, points[0], (hovered == TransformHandle::ScaleX ? 2.5f : 2.0f) / camera.zoom, RED);
+        DrawLineEx(center, points[1], (hovered == TransformHandle::ScaleY ? 2.5f : 2.0f) / camera.zoom, GREEN);
+        for (size_t index = 0; index < std::size(points); ++index) {
+            const float size = baseSize * (hovered == types[index] ? 1.35f : 1.0f);
+            const Rectangle square{points[index].x - size * 0.5f, points[index].y - size * 0.5f, size, size};
+            DrawRectangleRec(square, index == 0 ? RED : index == 1 ? GREEN : Accent);
+            DrawRectangleLinesEx(square, 1.0f / camera.zoom, Color{18, 23, 31, 255});
+        }
+    };
+    const auto drawAnchorMarker = [&](Vector2 point) {
+        const float unit = 1.0f / camera.zoom;
+        const bool hovered = draggingAnchorPoint || TransformHandleAt(GetScreenToWorld2D(GetMousePosition(), camera)) ==
+            TransformHandle::AnchorPivot;
+        const Color color = hovered ? Color{255, 231, 128, 255} : Warning;
+        DrawLineEx({point.x - 8.0f * unit, point.y}, {point.x + 8.0f * unit, point.y}, 1.5f * unit, color);
+        DrawLineEx({point.x, point.y - 8.0f * unit}, {point.x, point.y + 8.0f * unit}, 1.5f * unit, color);
+        DrawCircleV(point, hovered ? 3.0f * unit : 2.5f * unit, color);
+        DrawCircleLinesV(point, 6.0f * unit, Color{18, 23, 31, 255});
+    };
     if (viewportOnly && tilePaintTool != TilePaintTool::None) {
         const Vector2 mouse = GetMousePosition();
         const Rectangle canvas = GetCanvasBounds();
@@ -5338,8 +6625,7 @@ void LevelEditor::DrawEditOverlay() const {
                 ? Color{255, 92, 92, 255} : (tilePaintTool == TilePaintTool::TileSelect ? Color{83, 214, 180, 255} :
                     (tilePaintTool == TilePaintTool::Eyedropper ? Color{184, 132, 255, 255} :
                         (tilePaintTool == TilePaintTool::Measure ? Color{76, 205, 255, 255} : Color{255, 196, 74, 255})));
-            const Texture2D sheet = paintTileSheet == 2 ? industrialFarBackground :
-                (paintTileSheet == 1 ? industrialBackground : industrialTiles);
+            const Texture2D sheet = spriteSheets.Get(paintTileSheet, industrialTiles, industrialBackground, industrialFarBackground);
 
             for (int y = 0; y < footprintHeight; ++y) {
                 for (int x = 0; x < footprintWidth; ++x) {
@@ -5356,7 +6642,7 @@ void LevelEditor::DrawEditOverlay() const {
                         DrawTilesetTile(sheet,
                             paintTileSheet == 2 ? 0 : paintTileColumn + (stampSelection ? x % paintTileSelectionWidth : 0),
                             paintTileSheet == 2 ? 0 : paintTileRow + (stampSelection ? y % paintTileSelectionHeight : 0),
-                            position, Fade(WHITE, 0.62f), 0, false, false,
+                            position, Fade(WHITE, 0.62f), paintQuarterTurns, paintFlipX, paintFlipY,
                             paintAnimationFrames, paintAnimationFrameSeconds, previewTileAnimations);
                     }
                     const Rectangle cell{position.x, position.y, 32.0f, 32.0f};
@@ -5467,25 +6753,24 @@ void LevelEditor::DrawEditOverlay() const {
             DrawRectangleLinesEx(selectedTiles, lineWidth * 2.5f, Color{83, 214, 180, 255});
         }
     }
+    if (!middlegroundVisible) return;
     if (groupSelection.size() > 1) {
         for (const Selection& item : groupSelection) {
             if (const Rectangle* itemRect = RectangleForSelection(item))
-                DrawRectangleLinesEx(*itemRect, lineWidth, Color{83, 214, 180, 220});
+                DrawSelectionOutline(*itemRect, camera.zoom);
             else if (item.kind == SelectionKind::PlayerStart)
-                DrawCircleLinesV(level.playerStart, 25.0f, Color{83, 214, 180, 220});
+                DrawSelectionOutline(PlayerStartBounds(level.playerStart, playerSprites.id != 0), camera.zoom);
             else if (item.kind == SelectionKind::SceneObject)
-                DrawRectangleLinesEx(item.sceneBounds, lineWidth, Color{83, 214, 180, 220});
+                DrawSelectionOutline(item.sceneBounds, camera.zoom);
         }
         const Rectangle groupBounds = SelectionGroupBounds();
         if (groupBounds.width > 0.0f && groupBounds.height > 0.0f) {
             DrawRectangleRec(groupBounds, Color{83, 214, 180, 18});
-            DrawRectangleLinesEx(groupBounds, lineWidth * 2.0f, Color{83, 214, 180, 255});
+            DrawSelectionOutline(groupBounds, camera.zoom);
+            drawAnchorMarker(TransformAnchorPoint(groupBounds));
             if (transformMode == TransformMode::Scale) {
                 const TransformHandle hovered = TransformHandleAt(GetScreenToWorld2D(GetMousePosition(), camera));
-                const float baseSize = 10.0f / camera.zoom;
-                const float size = baseSize * (hovered == TransformHandle::ScaleBottomRight ? 1.35f : 1.0f);
-                DrawRectangleRec({groupBounds.x + groupBounds.width - size * 0.5f,
-                    groupBounds.y + groupBounds.height - size * 0.5f, size, size}, Accent);
+                drawScaleHandles(groupBounds, hovered);
             }
         }
     }
@@ -5497,81 +6782,103 @@ void LevelEditor::DrawEditOverlay() const {
     const Rectangle* selected = SelectedRectangle();
     if (selection.kind == SelectionKind::SceneObject && selectedSceneBounds.width > 0.0f &&
         selectedSceneBounds.height > 0.0f) {
-        DrawRectangleRec(selectedSceneBounds, Color{255, 236, 126, 28});
-        DrawRectangleLinesEx(selectedSceneBounds, lineWidth * 2.0f, Color{255, 236, 126, 255});
+        DrawSelectionOutline(selectedSceneBounds, camera.zoom);
+        drawAnchorMarker(transformMode == TransformMode::Rotate && draggingTransform ? transformPivot :
+            TransformAnchorPoint(selectedSceneBounds));
         if (transformMode == TransformMode::Move &&
             const_cast<LevelEditor*>(this)->TranslateSelectedScene({0.0f, 0.0f})) {
-            const Vector2 center{selectedSceneBounds.x + selectedSceneBounds.width * 0.5f,
-                selectedSceneBounds.y + selectedSceneBounds.height * 0.5f};
-            const float gizmoSize = 30.0f / camera.zoom;
+            const Vector2 center = TransformAnchorPoint(selectedSceneBounds);
             const float handleRadius = 5.5f / camera.zoom;
-            const Vector2 xHandle{center.x + gizmoSize, center.y};
-            const Vector2 yHandle{center.x, center.y - gizmoSize};
+            const Vector2 xHandle{center.x + TransformAxisLength(selectedSceneBounds, center, true), center.y};
+            const Vector2 yHandle{center.x, center.y - TransformAxisLength(selectedSceneBounds, center, false)};
             const TransformHandle hovered = TransformHandleAt(GetScreenToWorld2D(GetMousePosition(), camera));
-            DrawLineEx(center, xHandle, lineWidth * 2.0f, RED);
-            DrawLineEx(center, yHandle, lineWidth * 2.0f, GREEN);
-            DrawCircleV(xHandle, handleRadius * (hovered == TransformHandle::MoveX ? 1.35f : 1.0f), RED);
-            DrawCircleV(yHandle, handleRadius * (hovered == TransformHandle::MoveY ? 1.35f : 1.0f), GREEN);
+            drawMoveArrow(center, xHandle, RED, hovered == TransformHandle::MoveX);
+            drawMoveArrow(center, yHandle, GREEN, hovered == TransformHandle::MoveY);
             DrawCircleV(center, handleRadius * (hovered == TransformHandle::MoveCenter ? 1.35f : 1.0f), RAYWHITE);
         }
         if (transformMode == TransformMode::Scale &&
             const_cast<LevelEditor*>(this)->ScaleSelectedScene({0.0f, 0.0f})) {
             const TransformHandle hovered = TransformHandleAt(GetScreenToWorld2D(GetMousePosition(), camera));
-            const float baseSize = 10.0f / camera.zoom;
-            const float size = baseSize * (hovered == TransformHandle::ScaleBottomRight ? 1.35f : 1.0f);
-            DrawRectangleRec({selectedSceneBounds.x + selectedSceneBounds.width - size * 0.5f,
-                selectedSceneBounds.y + selectedSceneBounds.height - size * 0.5f, size, size}, Accent);
+            drawScaleHandles(selectedSceneBounds, hovered);
+        }
+        if (IsSelectedFluid() && transformMode == TransformMode::Select && groupSelection.size() <= 1) {
+            const TransformHandle hovered = TransformHandleAt(GetScreenToWorld2D(GetMousePosition(), camera));
+            const float size = 10.0f / camera.zoom;
+            const Vector2 handles[] = {
+                {selectedSceneBounds.x, selectedSceneBounds.y + selectedSceneBounds.height * 0.5f},
+                {selectedSceneBounds.x + selectedSceneBounds.width, selectedSceneBounds.y + selectedSceneBounds.height * 0.5f},
+                {selectedSceneBounds.x + selectedSceneBounds.width * 0.5f, selectedSceneBounds.y},
+                {selectedSceneBounds.x + selectedSceneBounds.width * 0.5f, selectedSceneBounds.y + selectedSceneBounds.height},
+                {selectedSceneBounds.x, selectedSceneBounds.y},
+                {selectedSceneBounds.x + selectedSceneBounds.width, selectedSceneBounds.y},
+                {selectedSceneBounds.x, selectedSceneBounds.y + selectedSceneBounds.height},
+                {selectedSceneBounds.x + selectedSceneBounds.width, selectedSceneBounds.y + selectedSceneBounds.height}
+            };
+            const TransformHandle handleTypes[] = {
+                TransformHandle::FluidResizeLeft, TransformHandle::FluidResizeRight,
+                TransformHandle::FluidResizeTop, TransformHandle::FluidResizeBottom,
+                TransformHandle::FluidResizeTopLeft, TransformHandle::FluidResizeTopRight,
+                TransformHandle::FluidResizeBottomLeft, TransformHandle::FluidResizeBottomRight
+            };
+            for (size_t index = 0; index < std::size(handles); ++index) {
+                const float handleSize = hovered == handleTypes[index] ? size * 1.35f : size;
+                const Rectangle handleRect{handles[index].x - handleSize * 0.5f,
+                    handles[index].y - handleSize * 0.5f, handleSize, handleSize};
+                DrawRectangleRec(handleRect, hovered == handleTypes[index] ? RAYWHITE : Accent);
+                DrawRectangleLinesEx(handleRect, lineWidth, Color{18, 23, 31, 255});
+            }
         }
         if (transformMode == TransformMode::Rotate && SelectedRotation() != nullptr) {
-            const Vector2 center = SelectedRotationCenter();
-            const float radius = std::max(selectedSceneBounds.width, selectedSceneBounds.height) * 0.62f;
+            const Vector2 center = draggingTransform ? transformPivot : SelectedRotationCenter();
+            const float radius = std::max(selectedSceneBounds.width, selectedSceneBounds.height) * 0.72f + 24.0f / camera.zoom;
             const bool hovered = TransformHandleAt(GetScreenToWorld2D(GetMousePosition(), camera)) ==
                 TransformHandle::RotateRing;
-            DrawCircleLinesV(center, radius, hovered ? Color{255, 215, 96, 255} : Warning);
+            const Color ringColor = hovered ? Color{255, 215, 96, 255} : Warning;
+            DrawRing(center, radius - 1.0f / camera.zoom, radius + 1.0f / camera.zoom, 0, 360, 96, ringColor);
             const float angle = *SelectedRotation() * DEG2RAD;
-            DrawLineEx(center, {center.x + cosf(angle) * radius, center.y + sinf(angle) * radius},
-                lineWidth * 2.0f, hovered ? RAYWHITE : Warning);
+            const Vector2 rotationTip{center.x + cosf(angle) * radius, center.y + sinf(angle) * radius};
+            DrawLineEx(center, rotationTip, (hovered ? 2.5f : 2.0f) / camera.zoom, hovered ? RAYWHITE : Warning);
+            const float gripRadius = (hovered ? 5.0f : 4.0f) / camera.zoom;
+            for (int index = 0; index < 4; ++index) {
+                const float gripAngle = index * PI * 0.5f;
+                const Vector2 grip{center.x + cosf(gripAngle) * radius, center.y + sinf(gripAngle) * radius};
+                DrawCircleV(grip, gripRadius, hovered ? Color{255, 215, 96, 255} : Warning);
+                DrawCircleLinesV(grip, gripRadius, Color{18, 23, 31, 255});
+            }
+            DrawCircleV(rotationTip, gripRadius, ringColor);
+            DrawCircleLinesV(rotationTip, gripRadius, Color{18, 23, 31, 255});
         }
     }
     if (selected != nullptr && selected->width > 0.0f && selected->height > 0.0f) {
-        DrawRectangleLinesEx(*selected, lineWidth * 2.0f, Color{255, 236, 126, 255});
-        const Vector2 center{selected->x + selected->width * 0.5f, selected->y + selected->height * 0.5f};
-        const float gizmoSize = 30.0f / camera.zoom;
+        DrawSelectionOutline(*selected, camera.zoom);
+        const Vector2 center = TransformAnchorPoint(*selected);
+        drawAnchorMarker(center);
         const float handleRadius = 5.5f / camera.zoom;
         const TransformHandle hovered = TransformHandleAt(GetScreenToWorld2D(GetMousePosition(), camera));
         if (transformMode == TransformMode::Move) {
-            const Vector2 xHandle{center.x + gizmoSize, center.y};
-            const Vector2 yHandle{center.x, center.y - gizmoSize};
-            DrawLineEx(center, xHandle, lineWidth * 2.0f, RED);
-            DrawLineEx(center, yHandle, lineWidth * 2.0f, GREEN);
-            DrawCircleV(xHandle, handleRadius * (hovered == TransformHandle::MoveX ? 1.35f : 1.0f), RED);
-            DrawCircleV(yHandle, handleRadius * (hovered == TransformHandle::MoveY ? 1.35f : 1.0f), GREEN);
+            const Vector2 xHandle{center.x + TransformAxisLength(*selected, center, true), center.y};
+            const Vector2 yHandle{center.x, center.y - TransformAxisLength(*selected, center, false)};
+            drawMoveArrow(center, xHandle, RED, hovered == TransformHandle::MoveX);
+            drawMoveArrow(center, yHandle, GREEN, hovered == TransformHandle::MoveY);
             DrawCircleV(center, handleRadius * (hovered == TransformHandle::MoveCenter ? 1.35f : 1.0f), RAYWHITE);
         }
         else if (transformMode == TransformMode::Scale && selection.kind != SelectionKind::Exit) {
-            const float handle = 10.0f / camera.zoom;
-            const float hoveredScale = hovered == TransformHandle::ScaleBottomRight ? 1.35f : 1.0f;
-            const float size = handle * hoveredScale;
-            DrawRectangleRec({selected->x + selected->width - size * 0.5f,
-                selected->y + selected->height - size * 0.5f, size, size}, Accent);
-        }
-        else if (transformMode == TransformMode::Rotate) {
-            DrawCircleLinesV(center, std::max(selected->width, selected->height) * 0.55f, Warning);
+            drawScaleHandles(*selected, hovered);
         }
     }
     if (selection.kind == SelectionKind::PlayerStart) {
-        DrawCircleLinesV(level.playerStart, 25.0f, Color{255, 236, 126, 255});
+        const Rectangle bounds = PlayerStartBounds(level.playerStart, playerSprites.id != 0);
+        DrawSelectionOutline(bounds, camera.zoom);
+        drawAnchorMarker(TransformAnchorPoint(bounds));
         if (transformMode == TransformMode::Move) {
-            const float gizmoSize = 30.0f / camera.zoom;
             const float handleRadius = 5.5f / camera.zoom;
-            const Vector2 xHandle{level.playerStart.x + gizmoSize, level.playerStart.y};
-            const Vector2 yHandle{level.playerStart.x, level.playerStart.y - gizmoSize};
+            const Vector2 anchor = TransformAnchorPoint(bounds);
+            const Vector2 xHandle{anchor.x + TransformAxisLength(bounds, anchor, true), anchor.y};
+            const Vector2 yHandle{anchor.x, anchor.y - TransformAxisLength(bounds, anchor, false)};
             const TransformHandle hovered = TransformHandleAt(GetScreenToWorld2D(GetMousePosition(), camera));
-            DrawLineEx(level.playerStart, xHandle, lineWidth * 2.0f, RED);
-            DrawLineEx(level.playerStart, yHandle, lineWidth * 2.0f, GREEN);
-            DrawCircleV(xHandle, handleRadius * (hovered == TransformHandle::MoveX ? 1.35f : 1.0f), RED);
-            DrawCircleV(yHandle, handleRadius * (hovered == TransformHandle::MoveY ? 1.35f : 1.0f), GREEN);
-            DrawCircleV(level.playerStart,
+            drawMoveArrow(anchor, xHandle, RED, hovered == TransformHandle::MoveX);
+            drawMoveArrow(anchor, yHandle, GREEN, hovered == TransformHandle::MoveY);
+            DrawCircleV(anchor,
                 handleRadius * (hovered == TransformHandle::MoveCenter ? 1.35f : 1.0f), RAYWHITE);
         }
     }
@@ -5597,20 +6904,20 @@ void LevelEditor::DrawLevelPreview() const {
         DrawTilesetBackgroundFill(industrialBackground, level.worldBounds, Fade(WHITE, 0.68f), 0.08f);
     DrawRectangleRec(level.worldBounds, Fade(Color{13, 20, 28, 255}, 0.16f));
 
-    for (int layerId = 0; layerId < 12; ++layerId) {
-        const auto layer = static_cast<TileLayer>(layerId);
+    for (const auto layer : GetTileLayerDrawOrder(level)) {
+        const int layerId = static_cast<int>(layer);
         if (layer == TileLayer::Collision || (visibleTileLayerMask & TileLayerBit(layer)) == 0) continue;
         for (const VisualTile& tile : level.visualTiles) {
             if (tile.layer != layer) continue;
             const int sheetIndex = tile.sheetIndex >= 0 ? tile.sheetIndex :
                 (tile.layer == TileLayer::FarBackground ? 2 : tile.layer == TileLayer::Background ? 1 : 0);
-            const Texture2D sheet = sheetIndex == 2 ? industrialFarBackground :
-                sheetIndex == 1 ? industrialBackground : industrialTiles;
+            const Texture2D sheet = spriteSheets.Get(sheetIndex, industrialTiles, industrialBackground, industrialFarBackground);
             DrawTilesetTile(sheet, sheetIndex == 2 ? 0 : tile.column, sheetIndex == 2 ? 0 : tile.row,
                 tile.position, WHITE, tile.quarterTurns, tile.flipX, tile.flipY,
                 tile.animationFrames, tile.animationFrameSeconds, previewTileAnimations);
         }
     }
+    if ((visibleTileLayerMask & TileLayerBit(TileLayer::Middleground)) != 0) {
     const bool hasRenderableTiles = std::any_of(level.visualTiles.begin(), level.visualTiles.end(),
         [](const VisualTile& tile) { return tile.layer != TileLayer::Collision; });
     for (const FluidField& fluid : level.fluids) {
@@ -5638,6 +6945,12 @@ void LevelEditor::DrawLevelPreview() const {
             DrawLineEx({ladder.x + 8.0f, y}, {ladder.x + ladder.width - 8.0f, y}, 3.0f, BLACK);
         }
     }
+    for (const auto& loop : level.buttonPlatformLoops) {
+        for (const auto& platform : loop.platforms) {
+            DrawRectangleRec(platform, Color{79, 143, 178, 255});
+            DrawRectangleLinesEx(platform, 1.5f / camera.zoom, Color{155, 211, 238, 255});
+        }
+    }
     for (const Rectangle zone : level.cameraZones) {
         DrawRectangleLinesEx(zone, lineWidth * 1.5f, Color{86, 190, 230, 210});
     }
@@ -5653,7 +6966,8 @@ void LevelEditor::DrawLevelPreview() const {
     Player previewPlayer{};
     previewPlayer.rect.x = level.playerStart.x;
     previewPlayer.rect.y = level.playerStart.y;
-    DrawPlayer(previewPlayer, playerSprites, 0);
+    if (level.playerCharacter < 3) DrawPlayer(previewPlayer, playerSprites, level.playerCharacter);
+    else DrawPlayer(previewPlayer, playerFourSprites, 0, 37.0f, 47.0f, 1, 64.0f, 4.0f, 17.0f, WHITE);
 
     for (const Vector2 pulley : level.pulleys) {
         DrawPulley(pulley, 42.0f, 0.0f, BLACK);
@@ -5756,13 +7070,28 @@ void LevelEditor::DrawLevelPreview() const {
     for (const FluidField& fluid : level.fluids) DrawFluidField(fluid);
     for (const Rectangle darkness : level.darknessAreas) DrawRectangleRec(darkness, Fade(BLACK, 0.38f));
 
+    }
+
     if ((visibleTileLayerMask & TileLayerBit(TileLayer::Collision)) != 0) {
     for (const VisualTile& tile : level.visualTiles) {
         if (tile.layer != TileLayer::Collision) continue;
             const Rectangle cell{tile.position.x, tile.position.y, 32.0f, 32.0f};
             DrawRectangleRec(cell, Color{235, 55, 62, 105});
-            DrawRectangleLinesEx(cell, lineWidth, Color{255, 82, 88, 235});
         }
+    }
+
+    // Draw after artwork and objects so passage faces stay readable.
+    for (const VisualTile& tile : level.visualTiles) {
+        const int bit = TileLayerBit(tile.layer);
+        if ((collisionTileLayerMask & bit) == 0 || (visibleTileLayerMask & bit) == 0) continue;
+        const int mask = GetTileBlockedFaces(level, tile);
+        const float x = tile.position.x, y = tile.position.y;
+        const Color color = tile.layer == TileLayer::Collision ? Color{255, 82, 88, 255} : Color{255, 183, 67, 255};
+        const float width = lineWidth * 2;
+        if (mask & 1) DrawLineEx({x, y}, {x + 32, y}, width, color);
+        if (mask & 2) DrawLineEx({x + 32, y}, {x + 32, y + 32}, width, color);
+        if (mask & 4) DrawLineEx({x, y + 32}, {x + 32, y + 32}, width, color);
+        if (mask & 8) DrawLineEx({x, y}, {x, y + 32}, width, color);
     }
 
     DrawRectangleLinesEx(level.worldBounds, lineWidth * 2.0f, Color{218, 225, 235, 235});
@@ -5850,22 +7179,26 @@ void LevelEditor::DrawContentBrowser(Rectangle browser) const {
     DrawLine(static_cast<int>(folders.x + folders.width), static_cast<int>(folders.y),
         static_cast<int>(folders.x + folders.width), static_cast<int>(browser.y + browser.height), PanelBorder);
     DrawUiText(uiFont, "Content", folders.x + 14.0f, folders.y + 14.0f, 16.0f, PrimaryText);
-    const char* categories[] = {"All Assets", "Geometry", "Regions", "Markers"};
-    for (int category = 0; category < 4; ++category) {
-        const Rectangle row{folders.x + 8.0f, browser.y + 70.0f + category * 26.0f,
-            folders.width - 16.0f, 24.0f};
+    for (int category = 0; category < static_cast<int>(std::size(ContentCategories)); ++category) {
+        const Rectangle row = ContentCategoryBounds(browser, category);
         if (contentCategory == category) DrawRectangleRec(row, Color{48, 91, 139, 255});
-        DrawUiText(uiFont, categories[category], row.x + 10.0f, row.y + 5.0f, 14.0f,
+        DrawUiText(uiFont, ContentCategories[category], row.x + 5.0f, row.y + 3.0f, 11.0f,
             contentCategory == category ? RAYWHITE : SecondaryText);
     }
 
     const std::vector<int> visibleAssets = ContentAssetIndices(contentCategory);
+    BeginScissorMode(static_cast<int>(browser.x + ContentFolderWidth + 1.0f),
+        static_cast<int>(browser.y + 38.0f),
+        static_cast<int>(browser.width - ContentFolderWidth - 2.0f),
+        static_cast<int>(browser.height - 39.0f));
     for (int visibleIndex = 0; visibleIndex < static_cast<int>(visibleAssets.size()); ++visibleIndex) {
-        const AssetEntry& asset = Assets[visibleAssets[static_cast<size_t>(visibleIndex)]];
+        const CatalogEntry& asset = AssetCatalog()[static_cast<size_t>(visibleAssets[static_cast<size_t>(visibleIndex)])];
         const Rectangle tile = GetContentAssetBounds(visibleIndex);
-        const bool selected = activeTool == asset.tool;
+        if (tile.x + tile.width < browser.x + ContentFolderWidth || tile.x > browser.x + browser.width) continue;
+        const bool selected = asset.placeable && activeTool == asset.tool;
         const bool hovered = CheckCollisionPointRec(GetMousePosition(), tile);
-        DrawRectangleRounded(tile, 0.05f, 4, selected ? Color{43, 72, 104, 255} :
+        DrawRectangleRounded(tile, 0.05f, 4, selected ? Color{43, 72, 104, 255} : !asset.placeable ?
+            Color{30, 33, 39, 255} :
             (hovered ? Color{46, 52, 62, 255} : Color{35, 39, 47, 255}));
         DrawRectangleRoundedLinesEx(tile, 0.05f, 4, 1.0f, selected ? Accent : PanelBorder);
         const Rectangle preview{tile.x + 8.0f, tile.y + 8.0f, tile.width - 16.0f, 66.0f};
@@ -5885,7 +7218,7 @@ void LevelEditor::DrawContentBrowser(Rectangle browser) const {
             }
             break;
         case EditTool::CameraZone:
-            DrawRectangleLinesEx(sample, 2.0f, Assets[3].color);
+            DrawRectangleLinesEx(sample, 2.0f, Accent);
             break;
         case EditTool::Darkness:
             DrawRectangleRec(sample, Fade(BLACK, 0.72f));
@@ -5997,8 +7330,10 @@ void LevelEditor::DrawContentBrowser(Rectangle browser) const {
             DrawPinwheel(pinwheel);
             break;
         }
+        case EditTool::Wedge:
         case EditTool::Ramp: {
             Ramp ramp{};
+            ramp.wedge = activeTool == EditTool::Wedge;
             ramp.center = {sample.x + sample.width * 0.5f, sample.y + sample.height * 0.5f};
             ramp.length = sample.width * 0.9f;
             ramp.thickness = std::max(5.0f, sample.height * 0.18f);
@@ -6092,6 +7427,34 @@ void LevelEditor::DrawContentBrowser(Rectangle browser) const {
             DrawValveBody(valve, false);
             break;
         }
+        case EditTool::WaterPit:
+            DrawRectangleRec(sample, Color{44, 145, 207, 220});
+            DrawLineEx({sample.x, sample.y + 4.0f},
+                {sample.x + sample.width, sample.y + 4.0f}, 2.0f, SKYBLUE);
+            break;
+        case EditTool::ToxinLeak:
+            DrawRectangleRec(sample, Color{73, 132, 83, 180});
+            DrawCircleV({sample.x + sample.width * 0.35f, sample.y + sample.height * 0.45f}, 5.0f, LIME);
+            DrawCircleV({sample.x + sample.width * 0.62f, sample.y + sample.height * 0.62f}, 4.0f, GREEN);
+            break;
+        case EditTool::ClockFace:
+            DrawCircleLinesV({sample.x + sample.width * 0.5f, sample.y + sample.height * 0.5f},
+                std::min(sample.width, sample.height) * 0.38f, GOLD);
+            DrawLineEx({sample.x + sample.width * 0.5f, sample.y + sample.height * 0.5f},
+                {sample.x + sample.width * 0.5f, sample.y + sample.height * 0.25f}, 2.0f, GOLD);
+            break;
+        case EditTool::MountedGear: {
+            Gear gear{};
+            gear.center = {sample.x + sample.width * 0.5f, sample.y + sample.height * 0.5f};
+            gear.radius = std::min(sample.width, sample.height) * 0.42f;
+            gear.mounting = GearMounting::Mounted;
+            DrawGear(gear);
+            break;
+        }
+        case EditTool::SpikeHazard:
+            DrawSpikes({sample.x + 3.0f, sample.y + sample.height * 0.42f,
+                sample.width - 6.0f, sample.height * 0.5f});
+            break;
         case EditTool::Checkpoint:
         case EditTool::Collectible: {
             GuideObject object{};
@@ -6246,11 +7609,37 @@ void LevelEditor::DrawContentBrowser(Rectangle browser) const {
             break;
         }
         case EditTool::Select:
+            DrawRectangleLinesEx({sample.x + 8.0f, sample.y + 8.0f,
+                sample.width - 16.0f, sample.height - 16.0f}, 1.0f, SecondaryText);
+            break;
+        default:
+            if (const AdvancedPlacement* placement = FindAdvancedPlacement(asset.tool)) {
+                GuideObject object{};
+                std::istringstream stream(placement->defaults);
+                if (ParseGuideObject(placement->command, stream, object)) {
+                    const Rectangle bounds = GetGuideObjectBounds(object);
+                    const Vector2 offset{
+                        sample.x + sample.width * 0.5f - bounds.x - bounds.width * 0.5f,
+                        sample.y + sample.height * 0.5f - bounds.y - bounds.height * 0.5f};
+                    object.transform.position.x += offset.x;
+                    object.transform.position.y += offset.y;
+                    object.origin.x += offset.x;
+                    object.origin.y += offset.y;
+                    object.constraint.anchorA.x += offset.x;
+                    object.constraint.anchorA.y += offset.y;
+                    object.constraint.anchorB.x += offset.x;
+                    object.constraint.anchorB.y += offset.y;
+                    DrawGuideObject(object);
+                }
+            }
             break;
         }
-        DrawUiText(uiFont, ToolName(asset.tool), tile.x + 7.0f, tile.y + 84.0f, 13.0f,
-            selected ? RAYWHITE : PrimaryText);
+        const float measuredWidth = std::max(1.0f, MeasureUiText(uiFont, asset.name.c_str(), 12.0f));
+        const float labelSize = std::clamp(12.0f * (tile.width - 12.0f) / measuredWidth, 8.0f, 12.0f);
+        DrawUiText(uiFont, asset.name.c_str(), tile.x + 6.0f, tile.y + 84.0f, labelSize,
+            !asset.placeable ? SecondaryText : selected ? RAYWHITE : PrimaryText);
     }
+    EndScissorMode();
 }
 
 void LevelEditor::DrawWorldOutliner(Rectangle panel) const {
@@ -6267,17 +7656,18 @@ void LevelEditor::DrawWorldOutliner(Rectangle panel) const {
         const int row = outlinerScroll + visibleRow;
         if (row >= OutlinerItemCount()) break;
         const Selection item = OutlinerSelectionAt(row);
+        const std::string label = OutlinerLabelAt(row);
+        const bool category = label == "Objects" || label == "Tiles" || label == "Level Settings";
         const Rectangle rowBounds{panel.x + 6.0f, panel.y + 44.0f + visibleRow * 22.0f,
             panel.width - 12.0f, 21.0f};
-        const bool selected = item.kind == selection.kind && item.index == selection.index;
+        const bool selected = !category && item.kind == selection.kind && item.index == selection.index;
         if (selected || CheckCollisionPointRec(GetMousePosition(), rowBounds)) {
             DrawRectangleRec(rowBounds, selected ? Color{48, 91, 139, 255} : Color{42, 47, 57, 255});
         }
-        DrawCircleV({rowBounds.x + 11.0f, rowBounds.y + 10.0f}, 3.0f,
+        if (!category) DrawCircleV({rowBounds.x + 18.0f, rowBounds.y + 10.0f}, 3.0f,
             selected ? Warning : SecondaryText);
-        const std::string label = OutlinerLabelAt(row);
-        DrawUiText(uiFont, label.c_str(), rowBounds.x + 22.0f, rowBounds.y + 3.0f, 14.0f,
-            selected ? RAYWHITE : PrimaryText);
+        DrawUiText(uiFont, label.c_str(), rowBounds.x + (category ? 8.0f : 29.0f), rowBounds.y + 3.0f,
+            category ? 15.0f : 14.0f, selected ? RAYWHITE : category ? Accent : PrimaryText);
     }
     EndScissorMode();
 }

@@ -2404,6 +2404,15 @@ void DrawRamp(const Ramp& ramp) {
     Vector2 p3{right.x + normal.x * ramp.thickness * 0.5f, right.y + normal.y * ramp.thickness * 0.5f};
     Vector2 p4{left.x + normal.x * ramp.thickness * 0.5f, left.y + normal.y * ramp.thickness * 0.5f};
 
+    if (ramp.wedge) {
+        Vector2 heel{ramp.angle < 0.0f ? p2.x : p1.x, fmaxf(p1.y, p2.y) + ramp.thickness};
+        DrawSolidTriangle(p1, p2, heel, Color{160, 173, 184, 255});
+        DrawLineEx(p1, p2, 2.0f, BLACK);
+        DrawLineEx(p2, heel, 2.0f, BLACK);
+        DrawLineEx(heel, p1, 2.0f, BLACK);
+        return;
+    }
+
     DrawSolidTriangle(p1, p2, p3, Color{122, 93, 58, 255});
     DrawSolidTriangle(p1, p3, p4, Color{122, 93, 58, 255});
     DrawLineEx(p1, p2, 2.0f, BLACK);

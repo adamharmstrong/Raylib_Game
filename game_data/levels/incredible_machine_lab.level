@@ -1,0 +1,70 @@
+# Dedicated laboratory for classic contraption parts. Campaign levels are unchanged.
+script power_pulley_panic
+bounds 0 0 1600 900
+playerStart 55 775
+exit 1495 690 72 150
+
+solid 0 840 1600 60
+solid 0 0 28 900
+solid 1572 0 28 900
+solid 28 555 1544 24
+
+# Access floors for the overhead machines, connected to the main walkway.
+platform 28 270 155 16
+platform 190 350 220 16
+platform 455 300 535 16
+platform 1000 350 544 16
+ladder 135 250 40 305
+ladder 350 330 40 225
+ladder 760 280 46 560
+ladder 1245 330 40 225
+
+label 52 34 AIR, IMPACT, AND MOTION
+label 830 34 LIGHT, LIFT, AND MATERIALS
+
+# Air-powered and impact devices.
+bellows 65 785 62 38 1 0 145 520
+programmableBall 245 798 14 0.9 0.70 0.20 1.0
+vacuum 315 775 58 52 1 0 170 760
+ball 505 800 14 0.8
+trampoline 555 820 112 20 560
+programmableBall 610 735 16 1.0 0.82 0.18 1.0
+boxingGlove 685 786 54 38 1 0 82 520
+ball 810 800 13 0.7
+
+# Translational/rotational conversion and acceleration.
+transRotoConverter 905 790 28 1.0
+ball 850 790 13 0.8
+rotoTransConverter 975 804 72 20 1 0 88 3.2
+acceleratorTube 1110 770 170 58 1 0 700
+programmableBall 1140 800 12 0.55 0.48 0.08 0.85
+
+# Pinball reactions.
+pinballBumper 1345 790 28 520
+pinballFlipper 1400 808 95 18 1 560
+
+# Focused light ignition powers the nearby motor on channel 21.
+lightSource 90 190 1 0 145 5
+magnifyingGlass 235 190 22 0 1 118
+ignitableFuse 225 290 22 18 21
+electricMotor 285 298 22 150 21
+
+# Red and green beams combine into yellow; only the yellow detector powers channel 22.
+laserEmitter 500 220 1 0 155 red
+laserEmitter 640 100 0 1 125 green
+laserMixer 630 210 34 34 1 0 205
+laserDetector 845 208 42 38 yellow 22
+electricMotor 920 226 22 170 22
+
+# Buoyant physics bodies and a time-varying counterweight.
+hotAirBalloon 1060 265 40 1.4 1120
+blimp 1160 185 150 62 2.4 1850
+leakyBucket 1350 285 48 52 1.2 4.0 0.35
+
+# Three visibly distinct break thresholds. Loose balls can be accelerated into them.
+destructibleGlass 1020 470 26 85 22
+destructibleWood 1160 455 34 100 58
+destructibleBrick 1320 435 44 120 115
+acceleratorTube 870 480 120 44 1 0 980
+programmableBall 885 500 13 1.8 0.30 0.10 1.0
+

@@ -19,12 +19,12 @@ internal sealed class ViewportHost : Panel
 
     internal void OpenLevel(string levelPath)
     {
-        StartViewport($"--viewport-only \"{levelPath}\"");
+        StartViewport($"--viewport-only --viewport-parent 0x{Handle.ToInt64():X} \"{levelPath}\"");
     }
 
     internal void OpenBlank()
     {
-        StartViewport("--viewport-only");
+        StartViewport($"--viewport-only --viewport-parent 0x{Handle.ToInt64():X}");
     }
 
     internal void ReloadDocument(string path)
@@ -44,12 +44,13 @@ internal sealed class ViewportHost : Panel
     private void StartViewport(string arguments)
     {
         StopViewport();
-        var executable = Path.Combine(AppContext.BaseDirectory, "LevelEditorViewport.exe");
+        var executable = FindViewportExecutable();
         if (!File.Exists(executable)) return;
 
         process = Process.Start(new ProcessStartInfo(executable, arguments)
         {
-            WorkingDirectory = AppContext.BaseDirectory,
+            WorkingDirectory = Path.GetDirectoryName(executable)!,
+            CreateNoWindow = true,
             UseShellExecute = false
         });
         if (process == null) return;
@@ -57,17 +58,78 @@ internal sealed class ViewportHost : Panel
         for (var attempt = 0; attempt < 80 && !process.HasExited; ++attempt)
         {
             process.Refresh();
-            viewportWindow = process.MainWindowHandle;
+            viewportWindow = FindHostedRaylibWindow(Handle, process.Id);
             if (viewportWindow != IntPtr.Zero) break;
             Thread.Sleep(25);
         }
-        if (viewportWindow == IntPtr.Zero) return;
+        if (viewportWindow == IntPtr.Zero)
+        {
+            var unhostedWindow = FindRaylibWindow(process.Id);
+            ShowViewportError(unhostedWindow == IntPtr.Zero
+                ? "The rendering window did not start."
+                : "Windows could not attach the rendering window to the editor.");
+            StopViewport();
+            return;
+        }
 
-        NativeMethods.SetParent(viewportWindow, Handle);
-        NativeMethods.SetWindowLong(viewportWindow, NativeMethods.GwlStyle,
-            NativeMethods.WsChild | NativeMethods.WsVisible);
         ResizeViewport();
         SendCommand(33, 0);
+    }
+
+    private static IntPtr FindRaylibWindow(int processId)
+    {
+        var result = IntPtr.Zero;
+        NativeMethods.EnumWindows((window, _) =>
+        {
+            NativeMethods.GetWindowThreadProcessId(window, out var ownerProcessId);
+            if (ownerProcessId != processId) return true;
+
+            var className = new System.Text.StringBuilder(64);
+            NativeMethods.GetClassName(window, className, className.Capacity);
+            if (className.ToString() != "GLFW30") return true;
+
+            result = window;
+            return false;
+        }, IntPtr.Zero);
+        return result;
+    }
+
+    private static IntPtr FindHostedRaylibWindow(IntPtr hostWindow, int processId)
+    {
+        var result = IntPtr.Zero;
+        NativeMethods.EnumChildWindows(hostWindow, (window, _) =>
+        {
+            NativeMethods.GetWindowThreadProcessId(window, out var ownerProcessId);
+            if (ownerProcessId != processId) return true;
+
+            var className = new System.Text.StringBuilder(64);
+            NativeMethods.GetClassName(window, className, className.Capacity);
+            if (className.ToString() != "GLFW30") return true;
+
+            result = window;
+            return false;
+        }, IntPtr.Zero);
+        return result;
+    }
+
+    private void ShowViewportError(string reason)
+    {
+        MessageBox.Show(FindForm(), $"The level editor viewport could not be opened. {reason}",
+            "Viewport unavailable", MessageBoxButtons.OK, MessageBoxIcon.Error);
+    }
+
+    private static string FindViewportExecutable()
+    {
+        var localExecutable = Path.Combine(AppContext.BaseDirectory, "LevelEditorViewport.exe");
+        if (File.Exists(localExecutable)) return localExecutable;
+
+        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory != null; directory = directory.Parent)
+        {
+            var developmentExecutable = Path.Combine(directory.FullName, "build", "LevelEditor", "LevelEditorViewport.exe");
+            if (File.Exists(developmentExecutable)) return developmentExecutable;
+        }
+
+        return localExecutable;
     }
 
     internal void SendKey(Keys key)

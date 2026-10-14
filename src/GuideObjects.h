@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Player.h"
+#include "Fluid.h"
 #include "WorldLayer.h"
 #include "raylib.h"
 
@@ -136,6 +137,50 @@ enum class GuideObjectType {
     Relay,
     Fuse,
     Magnet,
+    AntiGravityPad,
+    TripodDerrick,
+    ChainHoist,
+    BlockAndTackle,
+    ComeAlong,
+    ManualBenchGrinder,
+    LoadCart,
+    RevolvingStoneGate,
+    RockHammer,
+    FieldCoil,
+    SpokePress,
+    PolarisTelescope,
+    Sundial,
+    PerpetualMotionHolder,
+    Bellows,
+    Trampoline,
+    BoxingGlove,
+    Vacuum,
+    MagnifyingGlass,
+    LightSource,
+    IgnitableFuse,
+    ProgrammableBall,
+    TransRotoConverter,
+    RotoTransConverter,
+    AcceleratorTube,
+    PinballBumper,
+    PinballFlipper,
+    LaserEmitter,
+    LaserMixer,
+    LaserDetector,
+    HotAirBalloon,
+    Blimp,
+    LeakyBucket,
+    DestructibleWood,
+    DestructibleBrick,
+    DestructibleGlass,
+    GlassPane,
+    GlassBlock,
+    IceBlock,
+    IceSheet,
+    Heater,
+    Campfire,
+    Torch,
+    WaterBucket,
     Piston,
     HydraulicCylinder,
     RocketThruster,
@@ -154,7 +199,14 @@ enum class GuideObjectType {
     Key,
     GasMask,
     BreakableCrate,
-    ExplosiveBarrel
+    ExplosiveBarrel,
+    SignalDust,
+    TernaryTrace,
+    TernarySwitch,
+    Tnt,
+    ScubaGear,
+    Teleforce,
+    TeslaCoil
 };
 
 struct GuideObject {
@@ -180,6 +232,10 @@ struct GuideObject {
     float phase{0.0f};
     float timer{0.0f};
     float interval{1.0f};
+    float capacity{0.0f};
+    float damage{0.0f};
+    int colorMask{0};
+    int signalMask{0};
     int attachedObject{-1};
     bool active{true};
     bool triggered{false};
@@ -191,18 +247,32 @@ struct GuideObject {
 bool ParseGuideObject(const std::string& command, std::istringstream& stream, GuideObject& object);
 void InitializeGuideObject(GuideObject& object);
 Rectangle GetGuideObjectBounds(const GuideObject& object);
+Rectangle GetAntiGravityFieldBounds(const GuideObject& object);
+bool IsAntiGravityPadActive(const GuideObject& object);
+bool IsTeleforceFiring(const GuideObject& object);
+bool IsTeslaCoilDischarging(const GuideObject& object);
+Vector2 GetAntiGravityPadAcceleration(
+    const GuideObject& object,
+    Rectangle targetBounds,
+    Vector2 targetVelocity
+);
 bool IsGuideAttachmentConstraint(GuideObjectType type);
 int FindGuideAttachmentTarget(const std::vector<GuideObject>& objects, int constraintIndex);
 void AppendGuideObjectSolids(std::vector<Rectangle>& solids, const std::vector<GuideObject>& objects);
+struct Level;
 void UpdateGuideObjects(
     std::vector<GuideObject>& objects,
     const std::array<Player*, 4>& players,
     const std::array<std::vector<Rectangle>, WorldLayerCount>& worldSolidsByLayer,
     float gravity,
     float dt,
-    Vector2& checkpoint
+    Vector2& checkpoint,
+    std::vector<FluidField>* fluids = nullptr,
+    FluidSimulationMode fluidMode = FluidSimulationMode::Advanced,
+    const Level* tileLevel = nullptr
 );
 bool IsGuideObjectHazardTouchingPlayer(const GuideObject& object, Rectangle playerRect);
 void DrawGuideObject(const GuideObject& object);
 const char* GetGuideObjectName(GuideObjectType type);
 const char* GetGuideObjectDescription(GuideObjectType type);
+void CycleTernarySwitch(GuideObject& object);

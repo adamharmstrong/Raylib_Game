@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <fstream>
+#include <filesystem>
+#include <iomanip>
 #include <cmath>
 #include <sstream>
 #include <string>
@@ -108,6 +110,7 @@ namespace {
             return TileLayer::Background;
         }
         if (value == "collision") return TileLayer::Collision;
+        if (value == "middleground") return TileLayer::Middleground;
         if (value.size() == 5 && value.rfind("user", 0) == 0 && value[4] >= '1' && value[4] <= '8')
             return static_cast<TileLayer>(3 + value[4] - '0');
 
@@ -256,7 +259,22 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
             continue;
         }
 
-        if (command == "script") {
+        if (command == "music") {
+            stream >> std::quoted(level.musicPath);
+        }
+        else if (command == "objectSound") {
+            ObjectAudioAttachment audio;
+            if (stream >> audio.objectType >> audio.objectIndex >> std::quoted(audio.path) && audio.objectIndex > 0)
+                level.objectSounds.push_back(audio);
+        }
+        else if (command == "objectScripts") {
+            ObjectScriptAttachment attachment;
+            if (stream >> attachment.objectType >> attachment.objectIndex && attachment.objectIndex > 0) {
+                std::getline(stream >> std::ws, attachment.pathsJson);
+                if (!attachment.pathsJson.empty()) level.objectScripts.push_back(attachment);
+            }
+        }
+        else if (command == "script") {
             std::string scriptName;
             stream >> scriptName;
             level.script = ParseLevelScript(scriptName);
@@ -280,6 +298,11 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
         }
         else if (command == "playerStart") {
             stream >> level.playerStart.x >> level.playerStart.y;
+            if (!(stream >> level.playerCharacter)) {
+                level.playerCharacter = 0;
+                stream.clear();
+            }
+            level.playerCharacter = std::clamp(level.playerCharacter, 0, 3);
         }
         else if (command == "clockFace") {
             stream >> level.clockFaceCenter.x >> level.clockFaceCenter.y >> level.clockFaceRadius;
@@ -316,6 +339,42 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
             Rectangle darknessArea{};
             stream >> darknessArea.x >> darknessArea.y >> darknessArea.width >> darknessArea.height;
             level.darknessAreas.push_back(darknessArea);
+        }
+        else if (command == "tileLayer" || command == "tileLayerName" || command == "tileLayerAbove") {
+            std::string key;
+            stream >> key;
+            const auto layer = ParseTileLayer(key);
+            const int index = static_cast<int>(layer) - static_cast<int>(TileLayer::User1);
+            if (index >= 0 && index < 8) {
+                if (command == "tileLayer") {
+                    if (std::find(level.customTileLayerOrder.begin(), level.customTileLayerOrder.end(), layer) == level.customTileLayerOrder.end())
+                        level.customTileLayerOrder.push_back(layer);
+                }
+                else if (command == "tileLayerAbove") {
+                    level.customTileLayersAboveDefaults.push_back(layer);
+                }
+                else {
+                    stream >> std::ws;
+                    std::getline(stream, level.customTileLayerNames[static_cast<size_t>(index)]);
+                }
+            }
+        }
+        else if (command == "spriteSheet") {
+            int index = -1;
+            stream >> index >> std::ws;
+            std::string imagePath;
+            std::getline(stream, imagePath);
+            if (index >= 3 && index <= 255 && !imagePath.empty()) {
+                level.spriteSheetPaths.resize(std::max(level.spriteSheetPaths.size(), static_cast<size_t>(index - 2)));
+                level.spriteSheetPaths[static_cast<size_t>(index - 3)] = imagePath;
+            }
+        }
+        else if (command == "tilePassage") {
+            TilePassage passage;
+            if (stream >> passage.sheetIndex >> passage.column >> passage.row >> passage.blockedFaces &&
+                passage.sheetIndex >= 0 && passage.sheetIndex <= 255 && passage.column >= 0 &&
+                passage.row >= 0 && passage.blockedFaces >= 0 && passage.blockedFaces <= 15)
+                level.tilePassages.push_back(passage);
         }
         else if (command == "visualTile") {
             std::string layer;
@@ -572,8 +631,9 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
             seeSaw.response = fmaxf(0.1f, seeSaw.response);
             level.seeSaws.push_back(seeSaw);
         }
-        else if (command == "ramp") {
+        else if (command == "ramp" || command == "wedge") {
             Ramp ramp{};
+            ramp.wedge = command == "wedge";
             stream >> ramp.center.x >> ramp.center.y >> ramp.length >> ramp.thickness >> ramp.angle;
             if (!(stream >> ramp.segmentCount)) {
                 stream.clear();
@@ -696,8 +756,13 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
                 button.rect.width >> button.rect.height;
             button.rect.width = fmaxf(1.0f, button.rect.width);
             button.rect.height = fmaxf(1.0f, button.rect.height);
-            link.buttonIndex = static_cast<int>(level.buttons.size());
-            level.buttons.push_back(button);
+            link.buttonSize = {button.rect.width, button.rect.height};
+            // Editors can refer to an existing button so saving does not create
+            // another copy of the rider. Legacy four-value records create one.
+            if (!(stream >> link.buttonIndex)) {
+                link.buttonIndex = static_cast<int>(level.buttons.size());
+                level.buttons.push_back(button);
+            }
             level.platformLoopButtonLinks.push_back(link);
             UpdatePlatformLoopButtonPositions(level);
         }
@@ -757,22 +822,57 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
         }
     }
 
-    if (level.exitTrigger.width > 0.0f && level.exitTrigger.height > 0.0f) {
-        level.exitTrigger.width = StandardExitDoorWidth;
-        level.exitTrigger.height = StandardExitDoorHeight;
-    }
+    UpdatePlatformLoopButtonPositions(level);
+    auto resolveAudio = [&](std::string& audioPath) {
+        if (!audioPath.empty()) audioPath = (std::filesystem::path(path).parent_path() / audioPath).lexically_normal().generic_string();
+    };
+    resolveAudio(level.musicPath);
+    for (auto& sound : level.objectSounds) resolveAudio(sound.path);
     return level;
 }
 
-std::vector<Rectangle> BuildSolids(const Level& level) {
+int GetTileBlockedFaces(const Level& level, const VisualTile& tile) {
+    const int sheet = tile.sheetIndex >= 0 ? tile.sheetIndex :
+        tile.layer == TileLayer::FarBackground ? 2 : tile.layer == TileLayer::Background ? 1 : 0;
+    int mask = tile.layer == TileLayer::Collision ? 15 : 0;
+    if (level.script == LevelScript::TilesetReference && IsCollidableVisualTile(tile)) mask = 15;
+    for (const auto& passage : level.tilePassages)
+        if (passage.sheetIndex == sheet && passage.column == tile.column && passage.row == tile.row)
+            mask = passage.blockedFaces;
+    if (tile.flipX) mask = (mask & 5) | ((mask & 2) << 2) | ((mask & 8) >> 2);
+    if (tile.flipY) mask = (mask & 10) | ((mask & 1) << 2) | ((mask & 4) >> 2);
+    const int turns = ((tile.quarterTurns % 4) + 4) % 4;
+    return ((mask << turns) | (mask >> (4 - turns))) & 15;
+}
+
+bool TileCollidesWithLayer(TileLayer tileLayer, WorldLayer bodyLayer) {
+    return tileLayer == TileLayer::Collision ||
+        (tileLayer == TileLayer::Background && bodyLayer == WorldLayer::Background) ||
+        (tileLayer == TileLayer::Middleground && bodyLayer == WorldLayer::Middleground) ||
+        (tileLayer == TileLayer::Foreground && bodyLayer == WorldLayer::Foreground);
+}
+
+void AppendDirectionalTileSolids(std::vector<Rectangle>& solids, const Level& level,
+    WorldLayer layer, Rectangle previous, Vector2 velocity, bool horizontal) {
+    for (const auto& tile : level.visualTiles) {
+        if (!TileCollidesWithLayer(tile.layer, layer)) continue;
+        const int mask = GetTileBlockedFaces(level, tile);
+        if (mask == 0 || mask == 15) continue;
+        const Rectangle rect{tile.position.x, tile.position.y, VisualTileSize, VisualTileSize};
+        const bool blocks = horizontal ?
+            ((velocity.x > 0 && (mask & 8) && previous.x + previous.width <= rect.x + 0.01f) ||
+             (velocity.x < 0 && (mask & 2) && previous.x >= rect.x + rect.width - 0.01f)) :
+            ((velocity.y > 0 && (mask & 1) && previous.y + previous.height <= rect.y + 0.01f) ||
+             (velocity.y < 0 && (mask & 4) && previous.y >= rect.y + rect.height - 0.01f));
+        if (blocks) solids.push_back(rect);
+    }
+}
+
+std::vector<Rectangle> BuildSolids(const Level& level, WorldLayer layer) {
     std::vector<Rectangle> solids;
 
     if (level.script == LevelScript::TilesetReference && !level.visualTiles.empty()) {
-        for (const VisualTile& tile : level.visualTiles) {
-            if (IsCollidableVisualTile(tile)) {
-                solids.push_back({tile.position.x, tile.position.y, VisualTileSize, VisualTileSize});
-            }
-        }
+        // The reference map uses its artwork as geometry instead of base solids.
     }
     else {
         solids = level.baseSolids;
@@ -792,7 +892,7 @@ std::vector<Rectangle> BuildSolids(const Level& level) {
     }
 
     for (const VisualTile& tile : level.visualTiles) {
-        if (tile.layer == TileLayer::Collision)
+        if (TileCollidesWithLayer(tile.layer, layer) && GetTileBlockedFaces(level, tile) == 15)
             solids.push_back({tile.position.x, tile.position.y, VisualTileSize, VisualTileSize});
     }
 
@@ -905,10 +1005,35 @@ void UpdatePlatformLoopButtonPositions(Level& level) {
             continue;
         }
         Button& button = level.buttons[link.buttonIndex];
+        if (link.buttonSize.x > 0 && link.buttonSize.y > 0) {
+            button.rect.width = link.buttonSize.x;
+            button.rect.height = link.buttonSize.y;
+        }
         const Rectangle platform = loop.platforms[link.platformIndex];
         button.rect.x = platform.x + (platform.width - button.rect.width) * 0.5f;
         // Sink the trigger slightly into the platform so a standing player's
         // feet overlap it after collision resolution.
         button.rect.y = platform.y - button.rect.height + 4.0f;
     }
+}
+
+std::vector<TileLayer> GetTileLayerDrawOrder(const Level& level) {
+    std::vector<TileLayer> order;
+    const auto above = [&](TileLayer layer) {
+        return std::find(level.customTileLayersAboveDefaults.begin(), level.customTileLayersAboveDefaults.end(), layer)
+            != level.customTileLayersAboveDefaults.end();
+    };
+    const auto appendCustom = [&](bool front) {
+        for (auto iterator = level.customTileLayerOrder.rbegin(); iterator != level.customTileLayerOrder.rend(); ++iterator)
+            if (above(*iterator) == front && std::find(order.begin(), order.end(), *iterator) == order.end()) order.push_back(*iterator);
+        for (int id = 4; id < 12; ++id) {
+            const auto layer = static_cast<TileLayer>(id);
+            if (above(layer) == front && std::find(order.begin(), order.end(), layer) == order.end()) order.push_back(layer);
+        }
+    };
+    appendCustom(false);
+    for (auto layer : {TileLayer::FarBackground, TileLayer::Background, TileLayer::Middleground, TileLayer::Foreground, TileLayer::Collision})
+        order.push_back(layer);
+    appendCustom(true);
+    return order;
 }

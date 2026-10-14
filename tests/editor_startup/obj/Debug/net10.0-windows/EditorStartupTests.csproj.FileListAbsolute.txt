@@ -1,0 +1,23 @@
+C:\Users\nanob\source\repos\Raylib_Game\tests\editor_startup\bin\Debug\net10.0-windows\LevelEditor.deps.json
+C:\Users\nanob\source\repos\Raylib_Game\tests\editor_startup\bin\Debug\net10.0-windows\LevelEditor.runtimeconfig.json
+C:\Users\nanob\source\repos\Raylib_Game\tests\editor_startup\bin\Debug\net10.0-windows\LevelEditor.exe
+C:\Users\nanob\source\repos\Raylib_Game\tests\editor_startup\bin\Debug\net10.0-windows\assets\third_party\AtomicRealm\[FREE] Industrial Tileset\raw\FREE\5. Industrial Tileset - Starter Pack 32p\1_Industrial_Tileset_1.png
+C:\Users\nanob\source\repos\Raylib_Game\tests\editor_startup\bin\Debug\net10.0-windows\EditorStartupTests.exe
+C:\Users\nanob\source\repos\Raylib_Game\tests\editor_startup\bin\Debug\net10.0-windows\EditorStartupTests.deps.json
+C:\Users\nanob\source\repos\Raylib_Game\tests\editor_startup\bin\Debug\net10.0-windows\EditorStartupTests.runtimeconfig.json
+C:\Users\nanob\source\repos\Raylib_Game\tests\editor_startup\bin\Debug\net10.0-windows\EditorStartupTests.dll
+C:\Users\nanob\source\repos\Raylib_Game\tests\editor_startup\bin\Debug\net10.0-windows\EditorStartupTests.pdb
+C:\Users\nanob\source\repos\Raylib_Game\tests\editor_startup\bin\Debug\net10.0-windows\LevelEditor.dll
+C:\Users\nanob\source\repos\Raylib_Game\tests\editor_startup\bin\Debug\net10.0-windows\LevelEditor.pdb
+C:\Users\nanob\source\repos\Raylib_Game\tests\editor_startup\obj\Debug\net10.0-windows\EditorStartupTests.csproj.AssemblyReference.cache
+C:\Users\nanob\source\repos\Raylib_Game\tests\editor_startup\obj\Debug\net10.0-windows\EditorStartupTests.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\nanob\source\repos\Raylib_Game\tests\editor_startup\obj\Debug\net10.0-windows\EditorStartupTests.AssemblyInfoInputs.cache
+C:\Users\nanob\source\repos\Raylib_Game\tests\editor_startup\obj\Debug\net10.0-windows\EditorStartupTests.AssemblyInfo.cs
+C:\Users\nanob\source\repos\Raylib_Game\tests\editor_startup\obj\Debug\net10.0-windows\EditorStartupTests.csproj.CoreCompileInputs.cache
+C:\Users\nanob\source\repos\Raylib_Game\tests\editor_startup\obj\Debug\net10.0-windows\EditorStartupTests.sourcelink.json
+C:\Users\nanob\source\repos\Raylib_Game\tests\editor_startup\obj\Debug\net10.0-windows\EditorSt.B28EF4EA.Up2Date
+C:\Users\nanob\source\repos\Raylib_Game\tests\editor_startup\obj\Debug\net10.0-windows\EditorStartupTests.dll
+C:\Users\nanob\source\repos\Raylib_Game\tests\editor_startup\obj\Debug\net10.0-windows\refint\EditorStartupTests.dll
+C:\Users\nanob\source\repos\Raylib_Game\tests\editor_startup\obj\Debug\net10.0-windows\EditorStartupTests.pdb
+C:\Users\nanob\source\repos\Raylib_Game\tests\editor_startup\obj\Debug\net10.0-windows\EditorStartupTests.genruntimeconfig.cache
+C:\Users\nanob\source\repos\Raylib_Game\tests\editor_startup\obj\Debug\net10.0-windows\ref\EditorStartupTests.dll

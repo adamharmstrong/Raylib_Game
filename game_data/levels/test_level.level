@@ -147,5 +147,9 @@ crushingBlock 470 105 50 32 1 0 65 1.1
 sawBlade 610 125 19 1 0 80 1.6
 electricalArc 750 120 850 120 1.6 7
 
+# Powered lift field with a loose ball suspended in its tapered force zone.
+antiGravityPad 860 284 64 16 150 1800
+ball 886 245 12 0.8
+
 # Exposed high-speed propeller trap, placed beside the spawn for quick inspection.
 spinnerTrap 940 274 24 540

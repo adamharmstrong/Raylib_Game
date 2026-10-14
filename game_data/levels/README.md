@@ -32,6 +32,15 @@ vertical, large horizontal, and small horizontal rows. Crossing the right edge
 opens a second fixed-camera screen containing all 22 spring objects in a regular
 inspection grid.
 
+`leedskalnin_workshop.level` collects the lifting machines, improvised tools,
+magnetic experiments, astronomical instruments, and balanced gate associated
+with Edward Leedskalnin in a dedicated unlocked test room.
+
+`incredible_machine_lab.level` is an unlocked test room for the classic
+contraption expansion: air tools, programmable balls, motion converters,
+accelerator tubes, pinball parts, focused-light ignition, RGB laser logic,
+buoyant craft, leaking counterweights, and destructible material variants.
+
 Supported records:
 
 - `script <power_pulley_panic|rotary_latch_lab|flooded_foundry|counterweight_row|button_sequence|portal_lift|neurotoxin_maze|clocktower_core|tileset_reference>`
@@ -71,6 +80,7 @@ Supported records:
 - `screw <centerX> <centerY> <length> <radius> <angleDegrees> <spinSpeed>`
 - `fan <x> <y> <dirX> <dirY> <length> <width> <strength> <power>`
 - `pinwheel <x> <y> <radius>`
+- `wedge <centerX> <centerY> <length> <thickness> <angleDegrees> [segmentCount]` — fixed triangular metal wedge using ramp slope collision. Center and length describe the sloped face; thickness sets its minimum base depth.
 - `ramp <centerX> <centerY> <length> <thickness> <angleDegrees> [segmentCount]`
 - `trapDoor <hingeX> <hingeY> <length> <thickness> <angleDegrees>`
 - `seeSaw <pivotX> <pivotY> <length> <thickness> <minAngle> <maxAngle> <response>`
@@ -100,6 +110,39 @@ Additional physics-guide records:
 - `limitSwitch|relay <x> <y> <width> <height> <powerChannel>`
 - `fuse <x> <y> <width> <height> <capacity> <powerChannel>`
 - `magnet <x> <y> <range> <strength> [powerChannel]`
+- `antiGravityPad <x> <y> <width> <height> <liftHeight> <strength> [powerChannel]`
+- `teleforce <x> <y> <width> <height> <dirX> <dirY> <range> <beamWidth> <force> <chargeSeconds> <pulseSeconds> <cooldownSeconds> [powerChannel]`
+- `teslaCoil <x> <y> <width> <height> <arcRange> <arcForce> <chargeSeconds> <pulseSeconds> <cooldownSeconds> <inputChannel> <wirelessOutputChannel>`
+- `tripodDerrick <x> <y> <width> <height>`
+- `chainHoist|blockAndTackle <anchorX> <anchorY> <travel> <speed> <strength> [powerChannel]`
+- `comeAlong <anchorX> <anchorY> <loadX> <loadY> <speed> <strength> [powerChannel]`
+- `manualBenchGrinder <centerX> <centerY> <radius> <rotationSpeed>`
+- `loadCart|rockHammer <x> <y> <width> <height> <mass>`
+- `revolvingStoneGate <x> <y> <width> <height> <bearingFriction0to1>`
+- `fieldCoil <centerX> <centerY> <range> <strength> [powerChannel]`
+- `spokePress <x> <y> <width> <height> <dirX> <dirY> <travel> <speed> [powerChannel]`
+- `polarisTelescope <x> <y> <sightLength> <angleDegrees> <powerChannel>`
+- `leedskalninSundial <centerX> <centerY> <radius> <cycleSeconds> <powerChannel>`
+- `perpetualMotionHolder <x> <y> <width> <height> <range> <strength> <pulseChannel>`
+- `bellows <x> <y> <width> <height> <dirX> <dirY> <range> <strength>`
+- `trampoline <x> <y> <width> <height> <bounceSpeed>`
+- `boxingGlove|vacuum <x> <y> <width> <height> <dirX> <dirY> <range> <strength> [powerChannel]`
+- `magnifyingGlass <centerX> <centerY> <radius> <focusDirX> <focusDirY> <focusLength>`
+- `lightSource <x> <y> <dirX> <dirY> <length> <width> [powerChannel]`
+- `ignitableFuse <x> <y> <width> <height> <outputChannel>`
+- `programmableBall <centerX> <centerY> <radius> <mass> <restitution0to1> <friction0to1> <gravityScale>`
+- `transRotoConverter <centerX> <centerY> <radius> <ratio>`
+- `rotoTransConverter <x> <y> <width> <height> <dirX> <dirY> <travel> <rotationSpeed> [powerChannel]`
+- `acceleratorTube <x> <y> <width> <height> <dirX> <dirY> <acceleration> [powerChannel]`
+- `pinballBumper <centerX> <centerY> <radius> <kickSpeed>`
+- `pinballFlipper <x> <y> <width> <height> <directionSign> <kickSpeed> [powerChannel]`
+- `laserEmitter <x> <y> <dirX> <dirY> <length> <red|green|blue> [powerChannel]`
+- `laserMixer <x> <y> <width> <height> <outputDirX> <outputDirY> <outputLength>`
+- `laserDetector <x> <y> <width> <height> <red|green|blue|yellow|magenta|cyan|white> <outputChannel>`
+- `hotAirBalloon <centerX> <centerY> <radius> <mass> <liftAcceleration>`
+- `blimp <x> <y> <width> <height> <mass> <liftAcceleration>`
+- `leakyBucket <x> <y> <width> <height> <dryMass> <waterMass> <leakMassPerSecond>`
+- `destructibleWood|destructibleBrick|destructibleGlass <x> <y> <width> <height> <durability>`
 - `piston|hydraulicCylinder <x> <y> <width> <height> <dirX> <dirY> <travel> <speed> [powerChannel]`
 - `rocketThruster <x> <y> <dirX> <dirY> <length> <width> <strength> [powerChannel]`
 - `sawBlade <x> <y> <radius> <dirX> <dirY> <travel> <speed>`
@@ -196,3 +239,15 @@ Spike shafts, spike rows, and pit foundations remain renderer-driven. They are
 shared hazard presentation, and the flooded pit must preserve its dynamic water
 layering. Do not duplicate them with `visualTile` records unless the renderer is
 changed at the same time.
+
+`tilePassage <sheetId> <column> <row> <blockedFaces>` sets passage for a source
+32px tile across all visual layers in this level. Face bits are top=1, right=2,
+bottom=4, left=8: 0 is passable, 15 is solid, 1 is a top-only platform.
+Flips and clockwise quarter-turns transform these faces with the artwork.
+Absent settings preserve the layer default (Collision solid, others passable).
+Solid and directional tiles collide only with bodies on the matching world layer;
+Collision-layer tiles are universal. Players occupy Middleground. Far Background
+and user layers have no matching physics bodies. Sprite animation keeps the base
+tile's passage setting. Editor collision overlays do not change these rules.
+
+Scuba gear pickups use `scubaGear <x> <y> <radius>` (for example, `scubaGear 120 80 16`). They refill air and allow underwater breathing, can be worn alongside a gasmask, and are lost on enemy contact or death.

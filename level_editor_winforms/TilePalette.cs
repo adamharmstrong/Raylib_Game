@@ -10,8 +10,14 @@ internal sealed class TilePalette : ScrollableControl
     private int dragColumn;
     private int dragRow;
     private bool selecting;
+    private int quarterTurns;
+    private bool flipX;
+    private bool flipY;
 
     internal event Action<int, int, int, int>? TileSelected;
+    internal event Action? SheetSizeChanged;
+    internal Func<int, int, int?>? PassageAt;
+    internal Size SheetSize => sheet?.Size ?? Size.Empty;
 
     internal TilePalette()
     {
@@ -23,14 +29,23 @@ internal sealed class TilePalette : ScrollableControl
 
     internal void LoadSheet(string path)
     {
+        // Clone the decoded bitmap so the source file remains free to replace or move.
+        Bitmap? replacement = null;
+        if (File.Exists(path))
+        {
+            using var image = new Bitmap(path);
+            replacement = new Bitmap(image);
+        }
         sheet?.Dispose();
-        sheet = File.Exists(path) ? new Bitmap(path) : null;
+        sheet = replacement;
+        AutoScrollPosition = Point.Empty;
         AutoScrollMinSize = sheet?.Size ?? Size.Empty;
         selectedColumn = 0;
         selectedRow = 0;
         selectionWidth = 1;
         selectionHeight = 1;
         Invalidate();
+        SheetSizeChanged?.Invoke();
         TileSelected?.Invoke(0, 0, 1, 1);
     }
 
@@ -46,6 +61,14 @@ internal sealed class TilePalette : ScrollableControl
         Invalidate();
     }
 
+    internal void SetBrushTransform(int turns, bool horizontalFlip, bool verticalFlip)
+    {
+        quarterTurns = turns;
+        flipX = horizontalFlip;
+        flipY = verticalFlip;
+        Invalidate();
+    }
+
     protected override void OnPaint(PaintEventArgs eventArgs)
     {
         base.OnPaint(eventArgs);
@@ -54,6 +77,43 @@ internal sealed class TilePalette : ScrollableControl
         eventArgs.Graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
         eventArgs.Graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
         eventArgs.Graphics.DrawImageUnscaled(sheet, offset.X, offset.Y);
+        if (PassageAt != null)
+        {
+            using var facePen = new Pen(Color.OrangeRed, 3);
+            using var textBrush = new SolidBrush(Color.LimeGreen);
+            for (var row = 0; row * 32 < sheet.Height; ++row)
+            for (var column = 0; column * 32 < sheet.Width; ++column)
+            {
+                var mask = PassageAt(column, row);
+                if (!mask.HasValue) continue;
+                var x = offset.X + column * 32;
+                var y = offset.Y + row * 32;
+                if (mask == 0) eventArgs.Graphics.DrawString("○", Font, textBrush, x + 8, y + 8);
+                if ((mask & 1) != 0) eventArgs.Graphics.DrawLine(facePen, x + 4, y + 3, x + 28, y + 3);
+                if ((mask & 2) != 0) eventArgs.Graphics.DrawLine(facePen, x + 29, y + 4, x + 29, y + 28);
+                if ((mask & 4) != 0) eventArgs.Graphics.DrawLine(facePen, x + 4, y + 29, x + 28, y + 29);
+                if ((mask & 8) != 0) eventArgs.Graphics.DrawLine(facePen, x + 3, y + 4, x + 3, y + 28);
+            }
+        }
+
+        if (quarterTurns != 0 || flipX || flipY)
+        {
+            for (var row = selectedRow; row < selectedRow + selectionHeight; ++row)
+            for (var column = selectedColumn; column < selectedColumn + selectionWidth; ++column)
+            {
+                var state = eventArgs.Graphics.Save();
+                var cell = new Rectangle(offset.X + column * 32, offset.Y + row * 32, 32, 32);
+                eventArgs.Graphics.SetClip(cell);
+                using var background = new SolidBrush(BackColor);
+                eventArgs.Graphics.FillRectangle(background, cell);
+                eventArgs.Graphics.TranslateTransform(cell.X + 16, cell.Y + 16);
+                eventArgs.Graphics.RotateTransform(quarterTurns * 90);
+                eventArgs.Graphics.ScaleTransform(flipX ? -1 : 1, flipY ? -1 : 1);
+                eventArgs.Graphics.DrawImage(sheet, new Rectangle(-16, -16, 32, 32),
+                    new Rectangle(column * 32, row * 32, 32, 32), GraphicsUnit.Pixel);
+                eventArgs.Graphics.Restore(state);
+            }
+        }
 
         using var grid = new Pen(Color.FromArgb(95, 255, 255, 255));
         for (var x = 0; x <= sheet.Width; x += 32)
