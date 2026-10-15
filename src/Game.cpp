@@ -1,4 +1,5 @@
 #include "Game.h"
+#include "LevelFileDialog.h"
 
 #include "Collision.h"
 #include "Constants.h"
@@ -13,6 +14,8 @@
 #include <cctype>
 #include <cmath>
 #include <initializer_list>
+#include <iomanip>
+#include <fstream>
 #include <iterator>
 #include <sstream>
 #include <string>
@@ -3539,8 +3542,9 @@ void Game::Reset() {
         fallback = CreateFloodedFoundryLevel();
     }
     ClearLevelAudio();
-    level = LoadLevelFromFile(playtestLevelPath.empty()
-        ? "game_data/levels/" + levelId + ".level" : playtestLevelPath, fallback);
+    const std::string levelPath = !playtestLevelPath.empty() ? playtestLevelPath
+        : !customLevelPath.empty() ? customLevelPath : "game_data/levels/" + levelId + ".level";
+    level = LoadLevelFromFile(levelPath, fallback);
     spriteSheets.Load(level.spriteSheetPaths);
     for (RotaryLatch& latch : level.rotaryLatches) {
         ResetRotaryLatch(latch);
@@ -3621,14 +3625,12 @@ void Game::Reset() {
     toxinLevelTimer = 0.0f;
     activeCameraZone = -1;
     UpdateGameplayCamera(0.0f, true);
-    luaScripts.Load(level, playtestLevelPath.empty()
-        ? "game_data/levels/" + levelId + ".level" : playtestLevelPath,
+    luaScripts.Load(level, levelPath,
         {&player, multiplayerEnabled ? &player2 : nullptr, threePlayerEnabled ? &player3 : nullptr,
             fourPlayerEnabled ? &player4 : nullptr},
         [this](const std::string& message) { console.AddLine(message); TraceLog(LOG_WARNING, "%s", message.c_str()); },
         [this]() { luaExitOpen = true; });
-    cppScripts.Load(level, playtestLevelPath.empty()
-        ? "game_data/levels/" + levelId + ".level" : playtestLevelPath,
+    cppScripts.Load(level, levelPath,
         {&player, multiplayerEnabled ? &player2 : nullptr, threePlayerEnabled ? &player3 : nullptr,
             fourPlayerEnabled ? &player4 : nullptr},
         [this](const std::string& message) { console.AddLine(message); TraceLog(LOG_WARNING, "%s", message.c_str()); },
@@ -3639,6 +3641,32 @@ void Game::StartGame() {
     Reset();
     mode = GameMode::Playing;
     menuMessage.clear();
+}
+
+void Game::LoadCustomLevel(const std::string& path) {
+    if (path.empty()) return;
+    std::ifstream file(path);
+    if (!IsFileExtension(path.c_str(), ".level") || !file) {
+        menuMessage = "Choose a readable .level file saved by the level editor.";
+        return;
+    }
+    // The level parser is deliberately permissive; require a valid spawn before playing.
+    bool hasSpawn = false;
+    std::string line;
+    while (std::getline(file, line)) {
+        std::istringstream row(line);
+        std::string command;
+        float x, y;
+        if (row >> command && command == "playerStart" && row >> x >> y &&
+            std::isfinite(x) && std::isfinite(y)) hasSpawn = true;
+    }
+    if (!hasSpawn) {
+        menuMessage = "This level needs a valid player start. Save it in the level editor first.";
+        return;
+    }
+    customLevelPath = path;
+    titleModeMenuOpen = true;
+    menuMessage = "Custom level selected. Choose the number of players.";
 }
 
 void Game::OpenCharacterSelect(int playerCount) {
@@ -3707,6 +3735,7 @@ void Game::InitializeOverworld() {
 }
 
 void Game::OpenOverworld() {
+    customLevelPath.clear();
     if (overworldNodes.empty()) {
         InitializeOverworld();
     }
@@ -3774,6 +3803,15 @@ void Game::CompleteCurrentLevelAndReturnToMap() {
         shouldQuit = true;
         return;
     }
+    if (!customLevelPath.empty()) {
+        mode = GameMode::Title;
+        titleModeMenuOpen = false;
+        won = false;
+        lost = false;
+        levelClearTimer = 0.0f;
+        menuMessage = "Custom level complete!";
+        return;
+    }
     if (!overworldNodes.empty()) {
         currentLevelNode = std::clamp(currentLevelNode, 0, static_cast<int>(overworldNodes.size()) - 1);
         overworldNodes[currentLevelNode].completed = true;
@@ -3839,6 +3877,11 @@ void Game::Update(float dt) {
 
     if (mode == GameMode::Title) {
         UpdateTitle();
+        return;
+    }
+
+    if (mode == GameMode::Credits) {
+        UpdateCredits();
         return;
     }
 
@@ -3991,6 +4034,12 @@ void Game::Update(float dt) {
 }
 
 void Game::UpdateTitle() {
+    if (IsFileDropped()) {
+        const FilePathList files = LoadDroppedFiles();
+        if (files.count > 0) LoadCustomLevel(files.paths[0]);
+        UnloadDroppedFiles(files);
+        return;
+    }
     const int titleGamepad = AvailableGamepad(controllerSettings[0]);
     const bool controllerConfirmPressed =
         titleGamepad >= 0 && IsGamepadButtonPressed(titleGamepad, controllerSettings[0].jump);
@@ -4037,6 +4086,7 @@ void Game::UpdateTitle() {
     }
 
     if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE) || controllerConfirmPressed) {
+        customLevelPath.clear();
         titleModeMenuOpen = true;
         menuMessage.clear();
     }
@@ -4046,27 +4096,136 @@ void Game::UpdateTitle() {
         {{92, 539, 386, 40}, "Continue"},
         {{92, 588, 386, 40}, "Load Custom"},
         {{92, 637, 386, 40}, "Settings"},
-        {{92, 686, 386, 40}, "Quit Game"}
+        {{92, 686, 386, 40}, "Credits"},
+        {{92, 735, 386, 40}, "Quit Game"}
     };
 
     if (WasButtonPressed(buttons[0])) {
+        customLevelPath.clear();
         titleModeMenuOpen = true;
         menuMessage.clear();
     }
     else if (WasButtonPressed(buttons[1])) {
+        customLevelPath.clear();
         OpenCharacterSelect(1);
     }
     else if (WasButtonPressed(buttons[2])) {
-        menuMessage = "Custom level loading is not available yet.";
+        menuMessage = "Drop a .level file onto the title screen to load it.";
+        LoadCustomLevel(PickCustomLevelFile());
     }
     else if (WasButtonPressed(buttons[3])) {
         OpenSettingsPopup();
     }
     else if (WasButtonPressed(buttons[4])) {
+        LoadCredits();
+        mode = GameMode::Credits;
+        menuMessage.clear();
+    }
+    else if (WasButtonPressed(buttons[5])) {
         quitConfirmationOpen = true;
         titleModeMenuOpen = false;
         menuMessage.clear();
     }
+}
+
+void Game::LoadCredits() {
+    credits.clear();
+    creditsPage = 0;
+    char* text = LoadFileText("game_data/credits.txt");
+    if (!text) return;
+    std::istringstream file(text);
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.find_first_not_of(" \t\r") == std::string::npos ||
+            line[line.find_first_not_of(" \t\r")] == '#') continue;
+        std::istringstream row(line);
+        CreditEntry entry;
+        if (row >> std::quoted(entry.jobTitle) >> std::quoted(entry.realName) >> std::quoted(entry.username) &&
+            !entry.jobTitle.empty() && !entry.realName.empty() && !entry.username.empty()) {
+            credits.push_back(std::move(entry));
+        }
+    }
+    UnloadFileText(text);
+}
+
+void Game::UpdateCredits() {
+    const int gamepad = AvailableGamepad(controllerSettings[0]);
+    const bool backPressed = gamepad >= 0 &&
+        IsGamepadButtonPressed(gamepad, controllerSettings[0].interact);
+    if (IsKeyPressed(KEY_ESCAPE) || backPressed ||
+        WasButtonPressed({{625, 790, 350, 46}, "Back to Title"})) {
+        mode = GameMode::Title;
+        titleModeMenuOpen = false;
+        return;
+    }
+    const int pageCount = std::max(1, (static_cast<int>(credits.size()) + 4) / 5);
+    const bool previous = IsKeyPressed(KEY_LEFT) ||
+        (gamepad >= 0 && IsGamepadButtonPressed(gamepad, GAMEPAD_BUTTON_LEFT_FACE_LEFT)) ||
+        WasButtonPressed({{220, 710, 220, 46}, "Previous", creditsPage > 0});
+    const bool next = IsKeyPressed(KEY_RIGHT) ||
+        (gamepad >= 0 && IsGamepadButtonPressed(gamepad, GAMEPAD_BUTTON_LEFT_FACE_RIGHT)) ||
+        WasButtonPressed({{1160, 710, 220, 46}, "Next", creditsPage + 1 < pageCount});
+    creditsPage = std::clamp(creditsPage + (next ? 1 : 0) - (previous ? 1 : 0), 0, pageCount - 1);
+}
+
+void Game::DrawCreditsScreen() {
+    DrawTilesetBackgroundFill(industrialBackground,
+        {0, 0, static_cast<float>(Constants::ScreenWidth), static_cast<float>(Constants::ScreenHeight)}, WHITE);
+    DrawRectangle(0, 0, Constants::ScreenWidth, Constants::ScreenHeight, Fade(Color{9, 14, 20, 255}, 0.85f));
+    DrawCenteredText("CREDITS", Constants::ScreenWidth / 2, 60, 52, RAYWHITE);
+    DrawCenteredText("The people behind Power Pulley Panic", Constants::ScreenWidth / 2, 126, 24, LIGHTGRAY);
+    DrawText("JOB TITLE", 245, 206, 20, ORANGE);
+    DrawText("REAL NAME", 650, 206, 20, ORANGE);
+    DrawText("USERNAME", 1055, 206, 20, ORANGE);
+    for (int i = 0; i < 5; ++i) {
+        const int index = creditsPage * 5 + i;
+        if (index >= static_cast<int>(credits.size())) break;
+        const auto& entry = credits[index];
+        const int y = 250 + i * 84;
+        DrawRectangle(220, y, 1160, 70, Fade(BLACK, 0.4f));
+        const std::string* fields[] = {&entry.jobTitle, &entry.realName, &entry.username};
+        for (int column = 0; column < 3; ++column) {
+            if (column == 0) {
+                std::istringstream words(entry.jobTitle);
+                std::vector<std::string> lines;
+                std::string word;
+                std::string line;
+                while (words >> word) {
+                    const std::string candidate = line.empty() ? word : line + " " + word;
+                    if (!line.empty() && MeasureText(candidate.c_str(), 20) > 350) {
+                        lines.push_back(line);
+                        line = word;
+                    } else {
+                        line = candidate;
+                    }
+                }
+                if (!line.empty()) lines.push_back(line);
+                const int lineHeight = std::min(24, 64 / std::max(1, static_cast<int>(lines.size())));
+                const int top = y + (70 - lineHeight * static_cast<int>(lines.size())) / 2;
+                for (int n = 0; n < static_cast<int>(lines.size()); ++n) {
+                    int fontSize = std::min(20, lineHeight);
+                    while (fontSize > 1 && MeasureText(lines[n].c_str(), fontSize) > 350) --fontSize;
+                    DrawText(lines[n].c_str(), 245, top + n * lineHeight, fontSize, RAYWHITE);
+                }
+                continue;
+            }
+            int fontSize = 24;
+            while (fontSize > 1 && MeasureText(fields[column]->c_str(), fontSize) > 350) --fontSize;
+            DrawText(fields[column]->c_str(), 245 + column * 405, y + (70 - fontSize) / 2,
+                fontSize, RAYWHITE);
+        }
+    }
+    if (credits.empty()) {
+        DrawCenteredText("Contributor details coming soon.", Constants::ScreenWidth / 2, 420, 28, LIGHTGRAY);
+    }
+    const int pageCount = std::max(1, (static_cast<int>(credits.size()) + 4) / 5);
+    if (pageCount > 1) {
+        DrawMenuButton({{220, 710, 220, 46}, "Previous", creditsPage > 0});
+        DrawCenteredText(TextFormat("Page %i / %i", creditsPage + 1, pageCount), 800, 722, 24, LIGHTGRAY);
+        DrawMenuButton({{1160, 710, 220, 46}, "Next", creditsPage + 1 < pageCount});
+    }
+    DrawMenuButton({{625, 790, 350, 46}, "Back to Title"});
+    DrawCenteredText("Esc / controller Back: return    Left / Right: change page", 800, 856, 18, LIGHTGRAY);
 }
 
 void Game::UpdateCharacterSelect() {
@@ -4166,7 +4325,8 @@ void Game::UpdateCharacterSelect() {
     }
     if ((allReady && (IsKeyPressed(KEY_ENTER) || controllerStartPressed)) ||
         (allReady && WasButtonPressed({startButton, "Continue"}))) {
-        OpenOverworld();
+        if (!customLevelPath.empty()) StartGame();
+        else OpenOverworld();
     }
     else if (WasButtonPressed({backButton, "Back"})) {
         mode = GameMode::Title;
@@ -6979,6 +7139,12 @@ void Game::DrawScene() {
         return;
     }
 
+    if (mode == GameMode::Credits) {
+        DrawCreditsScreen();
+        console.Draw(Constants::ScreenWidth, Constants::ScreenHeight);
+        return;
+    }
+
     if (mode == GameMode::CharacterSelect) {
         DrawCharacterSelect();
         achievements.Draw(Constants::ScreenWidth, Constants::ScreenHeight);
@@ -7177,8 +7343,8 @@ void Game::DrawTitleScreen() {
     boulder.rotation = (boulderMovingRight ? 1.0f : -1.0f) * rotation * 1.8f;
     DrawBoulder(boulder, boulderTexture);
 
-    DrawRectangle(68, 464, 434, 294, Fade(BLACK, 0.34f));
-    DrawRectangleLinesEx({68, 464, 434, 294}, 2.0f, Fade(RAYWHITE, 0.17f));
+    DrawRectangle(68, 464, 434, 326, Fade(BLACK, 0.34f));
+    DrawRectangleLinesEx({68, 464, 434, 326}, 2.0f, Fade(RAYWHITE, 0.17f));
 
     std::vector<MenuButton> buttons;
     if (titleModeMenuOpen) {
@@ -7197,7 +7363,8 @@ void Game::DrawTitleScreen() {
             {{92, 539, 386, 40}, "Continue"},
             {{92, 588, 386, 40}, "Load Custom"},
             {{92, 637, 386, 40}, "Settings"},
-            {{92, 686, 386, 40}, "Quit Game"}
+            {{92, 686, 386, 40}, "Credits"},
+            {{92, 735, 386, 40}, "Quit Game"}
         };
     }
 
@@ -7206,7 +7373,7 @@ void Game::DrawTitleScreen() {
     }
 
     if (!menuMessage.empty()) {
-        DrawText(menuMessage.c_str(), 76, 766, 18, ORANGE);
+        DrawText(menuMessage.c_str(), 76, 802, 18, ORANGE);
     }
 }
 
@@ -8171,7 +8338,7 @@ void Game::DrawGameplay() {
             }
         }
     };
-    bool hasExplicitVisualTiles = std::any_of(level.visualTiles.begin(), level.visualTiles.end(), [](const VisualTile& tile) {
+    const bool hasExplicitVisualTiles = std::any_of(level.visualTiles.begin(), level.visualTiles.end(), [](const VisualTile& tile) {
         return tile.layer != TileLayer::Collision;
     });
     if (hasExplicitVisualTiles) {
@@ -8186,6 +8353,14 @@ void Game::DrawGameplay() {
         }
         for (const VisualTile& tile : level.visualTiles) {
             if (tile.layer == TileLayer::Background) {
+                const Texture2D sheet = spriteSheets.Get(tile.sheetIndex, industrialTiles, industrialBackground, industrialFarBackground);
+                DrawTilesetTile(sheet, tile.sheetIndex == 2 ? 0 : tile.column,
+                    tile.sheetIndex == 2 ? 0 : tile.row, tile.position, WHITE,
+                    tile.quarterTurns, tile.flipX, tile.flipY, tile.animationFrames, tile.animationFrameSeconds);
+            }
+        }
+        for (const VisualTile& tile : level.visualTiles) {
+            if (tile.layer == TileLayer::Middleground) {
                 const Texture2D sheet = spriteSheets.Get(tile.sheetIndex, industrialTiles, industrialBackground, industrialFarBackground);
                 DrawTilesetTile(sheet, tile.sheetIndex == 2 ? 0 : tile.column,
                     tile.sheetIndex == 2 ? 0 : tile.row, tile.position, WHITE,
@@ -8968,7 +9143,7 @@ void Game::DrawGameplay() {
 }
 
 void Game::UpdateMusic() {
-    const bool titleActive = mode == GameMode::Title || mode == GameMode::CharacterSelect;
+    const bool titleActive = mode == GameMode::Title || mode == GameMode::Credits || mode == GameMode::CharacterSelect;
     const bool levelSelectActive = mode == GameMode::Overworld;
     const bool gameplayMusicActive = mode == GameMode::Playing || mode == GameMode::Paused;
     if (IsAudioDeviceReady() && gameplayMusicActive) {

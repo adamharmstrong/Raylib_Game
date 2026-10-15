@@ -49,18 +49,33 @@ internal sealed class LevelDocument
         for (var index = lines.Count - 1; index >= 0; --index)
         {
             var record = lines[index].Object;
-            if (record?.Type == "tilePassage" && record.Arguments.StartsWith(prefix) &&
-                int.TryParse(record.Arguments[prefix.Length..], out var mask)) return mask;
+            if (record?.Type != "tilePassage" || !record.Arguments.StartsWith(prefix)) continue;
+            var values = record.Arguments[prefix.Length..].Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            if (values.Length > 0 && int.TryParse(values[0], out var mask)) return mask;
         }
         return null;
     }
 
-    internal void SetTilePassage(int sheet, int column, int row, int? mask)
+    internal int GetTilePassageLineWidth(int sheet, int column, int row)
+    {
+        var prefix = $"{sheet} {column} {row} ";
+        for (var index = lines.Count - 1; index >= 0; --index)
+        {
+            var record = lines[index].Object;
+            if (record?.Type != "tilePassage" || !record.Arguments.StartsWith(prefix)) continue;
+            var values = record.Arguments[prefix.Length..].Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            if (values.Length > 1 && int.TryParse(values[1], out var width)) return Math.Clamp(width, 1, 100);
+        }
+        return 50;
+    }
+
+    internal void SetTilePassage(int sheet, int column, int row, int? mask, int lineWidth = 50)
     {
         var prefix = $"{sheet} {column} {row} ";
         lines.RemoveAll(line => line.Object?.Type == "tilePassage" && line.Object.Arguments.StartsWith(prefix));
         if (mask.HasValue)
-            lines.Add(new LineRecord(string.Empty, new LevelObject("tilePassage", 1, prefix + Math.Clamp(mask.Value, 0, 15))));
+            lines.Add(new LineRecord(string.Empty, new LevelObject("tilePassage", 1,
+                prefix + $"{Math.Clamp(mask.Value, 0, 15)} {Math.Clamp(lineWidth, 1, 100)}")));
     }
     internal IReadOnlyList<LevelObject> Objects => lines.Where(line => line.Object != null).Select(line => line.Object!).ToList();
 

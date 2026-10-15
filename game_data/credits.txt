@@ -1,0 +1,5 @@
+# Credits: one person per line, with three quoted fields.
+# "Job title" "Real name" "Username"
+"Project Lead, Programmer, Art Director, Level Designer" "Adam Armstrong" "Maphesdus"
+"Level Designer" "Wendi Hellewell" "Wenique"
+"Level Designer, Artist" "???" "Kiril"

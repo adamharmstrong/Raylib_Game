@@ -1,4 +1,3 @@
-C:\Users\nanob\source\repos\Raylib_Game\build\LevelEditor\LevelEditor.exe
 C:\Users\nanob\source\repos\Raylib_Game\build\LevelEditor\LevelEditor.deps.json
 C:\Users\nanob\source\repos\Raylib_Game\build\LevelEditor\LevelEditor.runtimeconfig.json
 C:\Users\nanob\source\repos\Raylib_Game\build\LevelEditor\LevelEditor.dll
@@ -98,3 +97,4 @@ C:\Users\nanob\source\repos\Raylib_Game\tmp\platform-loop-build\LevelEditor.deps
 C:\Users\nanob\source\repos\Raylib_Game\tmp\platform-loop-build\LevelEditor.runtimeconfig.json
 C:\Users\nanob\source\repos\Raylib_Game\tmp\platform-loop-build\LevelEditor.dll
 C:\Users\nanob\source\repos\Raylib_Game\tmp\platform-loop-build\LevelEditor.pdb
+C:\Users\nanob\source\repos\Raylib_Game\build\LevelEditor\LevelEditor.exe

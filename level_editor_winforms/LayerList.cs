@@ -29,6 +29,13 @@ internal sealed class LayerList : ListBox
         DrawMode = DrawMode.OwnerDrawFixed;
         IntegralHeight = false;
         ItemHeight = Font.Height + 8;
+        SetStyle(ControlStyles.ResizeRedraw | ControlStyles.OptimizedDoubleBuffer, true);
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        Invalidate();
     }
 
     internal bool GetItemChecked(int index) => checkedItems.Contains(Items[index]);

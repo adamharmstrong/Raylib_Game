@@ -377,8 +377,11 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
             TilePassage passage;
             if (stream >> passage.sheetIndex >> passage.column >> passage.row >> passage.blockedFaces &&
                 passage.sheetIndex >= 0 && passage.sheetIndex <= 255 && passage.column >= 0 &&
-                passage.row >= 0 && passage.blockedFaces >= 0 && passage.blockedFaces <= 15)
+                passage.row >= 0 && passage.blockedFaces >= 0 && passage.blockedFaces <= 15) {
+                if (!(stream >> passage.lineWidth)) passage.lineWidth = 50;
+                passage.lineWidth = std::clamp(passage.lineWidth, 1, 100);
                 level.tilePassages.push_back(passage);
+            }
         }
         else if (command == "visualTile") {
             std::string layer;
@@ -862,6 +865,15 @@ int GetTileBlockedFaces(const Level& level, const VisualTile& tile) {
     if (tile.flipY) mask = (mask & 10) | ((mask & 1) << 2) | ((mask & 4) >> 2);
     const int turns = ((tile.quarterTurns % 4) + 4) % 4;
     return ((mask << turns) | (mask >> (4 - turns))) & 15;
+}
+
+int GetTilePassageLineWidth(const Level& level, const VisualTile& tile) {
+    const int sheet = tile.sheetIndex >= 0 ? tile.sheetIndex :
+        tile.layer == TileLayer::FarBackground ? 2 : tile.layer == TileLayer::Background ? 1 : 0;
+    for (const auto& passage : level.tilePassages)
+        if (passage.sheetIndex == sheet && passage.column == tile.column && passage.row == tile.row)
+            return passage.lineWidth;
+    return 50;
 }
 
 bool TileCollidesWithLayer(TileLayer tileLayer, WorldLayer bodyLayer) {

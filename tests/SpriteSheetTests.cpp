@@ -17,7 +17,8 @@ int main() {
              << "spriteSheet 9999 invalid.png\n"
              << "objectScripts visualTile 1 [\"../scripts/tile behavior.cpp\",\"../scripts/extra.cpp\"]\n"
              << "objectScripts visualTile 0 []\n"
-             << "tilePassage 3 2 1 1\n"
+             << "tilePassage 3 2 1 1 24\n"
+             << "tilePassage 3 4 5 3\n"
              << "tilePassage 9999 0 0 15\n"
              << "visualTile foreground 2 1 32 64 0 0 0 1 0.12 3\n"
              << "visualTile background 0 0 64 64\n"
@@ -41,8 +42,14 @@ int main() {
         level.visualTiles.size() != 3 || level.visualTiles[0].sheetIndex != 3 || level.visualTiles[1].sheetIndex != 1 ||
         level.visualTiles[2].layer != TileLayer::Middleground || static_cast<int>(TileLayer::User1) != 4)
         throw std::runtime_error("Custom sheet paths, sparse IDs, or legacy tile defaults were lost.");
-    if (level.tilePassages.size() != 1 || GetTileBlockedFaces(level, level.visualTiles[0]) != 1)
+    if (level.tilePassages.size() != 2 || GetTileBlockedFaces(level, level.visualTiles[0]) != 1 ||
+        GetTilePassageLineWidth(level, level.visualTiles[0]) != 24)
         throw std::runtime_error("Passage settings did not load.");
+    auto legacyPassageTile = level.visualTiles[0];
+    legacyPassageTile.column = 4;
+    legacyPassageTile.row = 5;
+    if (GetTilePassageLineWidth(level, legacyPassageTile) != 50)
+        throw std::runtime_error("Legacy passage width default changed.");
     auto tile = level.visualTiles[0];
     tile.quarterTurns = 1;
     if (GetTileBlockedFaces(level, tile) != 2) throw std::runtime_error("Rotated passage face is incorrect.");

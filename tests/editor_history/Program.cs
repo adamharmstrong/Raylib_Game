@@ -314,12 +314,14 @@ Console.WriteLine("Legacy riding-button detach and position-preservation tests p
 document.RestoreSnapshot("visualTile foreground 2 1 32 64 0 0 0 1 0.12 3");
 var beforePassage = document.CaptureSnapshot();
 history.Reset(beforePassage);
-document.SetTilePassage(3, 2, 1, 1);
+document.SetTilePassage(3, 2, 1, 1, 24);
 history.Record(document.CaptureSnapshot());
-Check(document.GetTilePassage(3, 2, 1) == 1, "Directional passage must be stored by sheet and tile.");
+Check(document.GetTilePassage(3, 2, 1) == 1 && document.GetTilePassageLineWidth(3, 2, 1) == 24,
+    "Directional passage and editor line width must be stored by sheet and tile.");
 var passageSnapshot = document.CaptureSnapshot();
 document.RestoreSnapshot(passageSnapshot);
-Check(document.GetTilePassage(3, 2, 1) == 1, "Passage must survive save/load.");
+Check(document.GetTilePassage(3, 2, 1) == 1 && document.GetTilePassageLineWidth(3, 2, 1) == 24,
+    "Passage and editor line width must survive save/load.");
 document.RestoreSnapshot(history.Undo()!);
 Check(document.GetTilePassage(3, 2, 1) == null, "Undo must remove the passage change.");
 document.RestoreSnapshot(history.Redo()!);

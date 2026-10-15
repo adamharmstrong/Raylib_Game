@@ -757,8 +757,8 @@ void DrawToolbarButton(Rectangle bounds, const char* label, Font font, bool acti
 }
 
 void DrawToolbarIconButton(Rectangle bounds, const char* label, Font font, Texture2D icons, int iconIndex,
-    bool active = false) {
-    const bool hovered = CheckCollisionPointRec(GetMousePosition(), bounds);
+    bool active = false, bool enabled = true) {
+    const bool hovered = enabled && CheckCollisionPointRec(GetMousePosition(), bounds);
     const Color fill = active ? Color{51, 91, 133, 255} :
         (hovered ? Color{59, 69, 84, 255} : Color{43, 49, 60, 255});
     DrawRectangleRounded(bounds, 0.18f, 6, fill);
@@ -774,9 +774,9 @@ void DrawToolbarIconButton(Rectangle bounds, const char* label, Font font, Textu
         };
         const Rectangle destination{bounds.x + 8.0f, bounds.y + 6.0f, 26.0f, 26.0f};
         const Rectangle source = iconSources[iconIndex];
-        DrawTexturePro(icons, source, destination, {}, 0.0f, WHITE);
+        DrawTexturePro(icons, source, destination, {}, 0.0f, enabled ? WHITE : Color{100, 105, 112, 255});
     }
-    DrawUiText(font, label, bounds.x + 41.0f, bounds.y + 10.0f, 15.0f, PrimaryText);
+    DrawUiText(font, label, bounds.x + 41.0f, bounds.y + 10.0f, 15.0f, enabled ? PrimaryText : Color{100, 105, 112, 255});
 }
 
 bool HasSolidTouchingTop(Rectangle rect, const std::vector<Rectangle>& solids) {
@@ -1310,7 +1310,7 @@ bool LevelEditor::SaveLevel() {
     output << "author " << level.author << "\n";
     for (const auto& passage : level.tilePassages)
         output << "tilePassage " << passage.sheetIndex << ' ' << passage.column << ' '
-            << passage.row << ' ' << passage.blockedFaces << '\n';
+            << passage.row << ' ' << passage.blockedFaces << ' ' << passage.lineWidth << '\n';
     for (size_t i = 0; i < level.spriteSheetPaths.size(); ++i) {
         if (!level.spriteSheetPaths[i].empty())
             output << "spriteSheet " << i + 3 << ' ' << level.spriteSheetPaths[i] << '\n';
@@ -2077,7 +2077,7 @@ Rectangle LevelEditor::SelectedTransformBounds() const {
     if (selection.kind == SelectionKind::PlayerStart)
         return PlayerStartBounds(level.playerStart, playerSprites.id != 0);
     if (selection.kind == SelectionKind::SceneObject &&
-        const_cast<LevelEditor*>(this)->TranslateSelectedScene({0.0f, 0.0f}))
+        const_cast<LevelEditor*>(this)->TranslateSelectedScene({0.0f, 0.0f}, true))
         return selectedSceneBounds;
     return {};
 }
@@ -2201,28 +2201,73 @@ Vector2 LevelEditor::SelectedRotationCenter() const {
     return TransformAnchorPoint(selectedSceneBounds);
 }
 
-bool LevelEditor::TranslateSelectedScene(Vector2 delta) {
+bool LevelEditor::SupportsTransform(TransformMode mode) const {
+    if (mode == TransformMode::Select) return true;
+    if (selection.kind == SelectionKind::None) return true;
+    // Group rotation is not implemented; never rotate just the primary object.
+    if (mode == TransformMode::Rotate && groupSelection.size() > 1) return false;
+    auto& editor = *const_cast<LevelEditor*>(this);
+    const auto supportsSingle = [&]() {
+        if (mode == TransformMode::Rotate) return SelectedRotation() != nullptr;
+        if (selection.kind == SelectionKind::PlayerStart) return mode == TransformMode::Move;
+        if (SelectedRectangle() != nullptr)
+            return mode == TransformMode::Move || selection.kind != SelectionKind::Exit;
+        return mode == TransformMode::Move ? editor.TranslateSelectedScene({}, true) :
+            editor.ScaleSelectedScene({}, true);
+    };
+    if (groupSelection.size() <= 1) return supportsSingle();
+    const Selection savedSelection = selection;
+    const std::string savedName = selectedSceneName;
+    const Rectangle savedBounds = selectedSceneBounds;
+    bool supported = true;
+    for (const Selection& item : groupSelection) {
+        editor.SetPrimarySelection(item);
+        if (!supportsSingle()) { supported = false; break; }
+    }
+    editor.selection = savedSelection;
+    editor.selectedSceneName = savedName;
+    editor.selectedSceneBounds = savedBounds;
+    return supported;
+}
+
+void LevelEditor::UpdateTransformAvailability() {
+    int mask = 0;
+    for (int index = 0; index < 4; ++index)
+        if (SupportsTransform(static_cast<TransformMode>(index))) mask |= 1 << index;
+    if (!SupportsTransform(transformMode)) {
+        transformMode = TransformMode::Select;
+        draggingTransform = false;
+    }
+    const int state = mask | (static_cast<int>(transformMode) << 4);
+    if (viewportOnly && state != lastTransformAvailability) {
+        lastTransformAvailability = state;
+        NotifyTileOperation("transformavailability " + std::to_string(mask) + " " +
+            std::to_string(static_cast<int>(transformMode)));
+    }
+}
+
+bool LevelEditor::TranslateSelectedScene(Vector2 delta, bool checkOnly) {
     if (selection.kind != SelectionKind::SceneObject || selection.index < 0) return false;
     const size_t index = static_cast<size_t>(selection.index);
     const auto movePoint = [&](Vector2& point) { point.x += delta.x; point.y += delta.y; };
     const auto moveRect = [&](Rectangle& rect) { rect.x += delta.x; rect.y += delta.y; };
     bool moved = true;
-    if (selectedSceneName.rfind("Platform Loop ", 0) == 0 && index < level.buttonPlatformLoops.size()) {
+    if (selectedSceneName.rfind("Platform Loop ", 0) == 0 && index < level.buttonPlatformLoops.size()) { if (checkOnly) return true;
         selectedSceneBounds = EditorLoopBounds(level.buttonPlatformLoops[index]);
         MoveEditorLoop(level, static_cast<int>(index), delta);
     }
-    else if (selectedSceneName.rfind("Enemy ", 0) == 0 && index < level.enemies.size()) moveRect(level.enemies[index].rect);
-    else if (selectedSceneName.rfind("Guide Object ", 0) == 0 && index < level.guideObjects.size()) {
+    else if (selectedSceneName.rfind("Enemy ", 0) == 0 && index < level.enemies.size()) { if (checkOnly) return true; moveRect(level.enemies[index].rect); }
+    else if (selectedSceneName.rfind("Guide Object ", 0) == 0 && index < level.guideObjects.size()) { if (checkOnly) return true;
         GuideObject& object = level.guideObjects[index];
         movePoint(object.transform.position); movePoint(object.origin);
         movePoint(object.constraint.anchorA); movePoint(object.constraint.anchorB); moveRect(object.sensor.bounds);
     }
-    else if (selectedSceneName.rfind("Breakable Tile ", 0) == 0 && index < level.breakableTiles.size()) moveRect(level.breakableTiles[index].rect);
-    else if (selectedSceneName.rfind("Directional Spikes ", 0) == 0 && index < level.directionalSpikeHazards.size()) moveRect(level.directionalSpikeHazards[index].rect);
-    else if (selectedSceneName.rfind("Button ", 0) == 0 && index < level.buttons.size()) moveRect(level.buttons[index].rect);
-    else if (selectedSceneName.rfind("Fluid Field ", 0) == 0 && index < level.fluids.size()) moveRect(level.fluids[index].bounds);
-    else if (selectedSceneName.rfind("Stone Block ", 0) == 0 && index < level.stoneBlocks.size()) moveRect(level.stoneBlocks[index].rect);
-    else if (selectedSceneName.rfind("Hanging Weight ", 0) == 0 && index < level.weights.size()) {
+    else if (selectedSceneName.rfind("Breakable Tile ", 0) == 0 && index < level.breakableTiles.size()) { if (checkOnly) return true; moveRect(level.breakableTiles[index].rect); }
+    else if (selectedSceneName.rfind("Directional Spikes ", 0) == 0 && index < level.directionalSpikeHazards.size()) { if (checkOnly) return true; moveRect(level.directionalSpikeHazards[index].rect); }
+    else if (selectedSceneName.rfind("Button ", 0) == 0 && index < level.buttons.size()) { if (checkOnly) return true; moveRect(level.buttons[index].rect); }
+    else if (selectedSceneName.rfind("Fluid Field ", 0) == 0 && index < level.fluids.size()) { if (checkOnly) return true; moveRect(level.fluids[index].bounds); }
+    else if (selectedSceneName.rfind("Stone Block ", 0) == 0 && index < level.stoneBlocks.size()) { if (checkOnly) return true; moveRect(level.stoneBlocks[index].rect); }
+    else if (selectedSceneName.rfind("Hanging Weight ", 0) == 0 && index < level.weights.size()) { if (checkOnly) return true;
         HangingWeight& weight = level.weights[index];
         size_t pulleyIndex = level.pulleys.size();
         float nearestDistance = INFINITY;
@@ -2236,35 +2281,36 @@ bool LevelEditor::TranslateSelectedScene(Vector2 delta) {
         movePoint(weight.pulley);
         moveRect(weight.rect);
     }
-    else if (selectedSceneName.rfind("Rotary Latch ", 0) == 0 && index < level.rotaryLatches.size()) movePoint(level.rotaryLatches[index].center);
-    else if (selectedSceneName.rfind("Boulder ", 0) == 0 && index < level.boulders.size()) movePoint(level.boulders[index].center);
-    else if (selectedSceneName.rfind("Physics Wheel ", 0) == 0 && index < level.physicsWheels.size()) movePoint(level.physicsWheels[index].center);
-    else if (selectedSceneName.rfind("Gear ", 0) == 0 && index < level.gears.size()) movePoint(level.gears[index].center);
-    else if (selectedSceneName.rfind("Flywheel ", 0) == 0 && index < level.flywheels.size()) movePoint(level.flywheels[index].center);
-    else if (selectedSceneName.rfind("Steering Wheel ", 0) == 0 && index < level.steeringWheels.size()) movePoint(level.steeringWheels[index].center);
-    else if (selectedSceneName.rfind("Pinwheel ", 0) == 0 && index < level.pinwheels.size()) movePoint(level.pinwheels[index].center);
-    else if (selectedSceneName.rfind("Portal Entrance ", 0) == 0 && index < level.portalPairs.size()) moveRect(level.portalPairs[index].entrance);
-    else if (selectedSceneName.rfind("Portal Exit ", 0) == 0 && index < level.portalPairs.size()) moveRect(level.portalPairs[index].exit);
-    else if (selectedSceneName.rfind("Pulley ", 0) == 0 && index < level.pulleys.size()) movePoint(level.pulleys[index]);
-    else if (selectedSceneName.rfind("Screw ", 0) == 0 && index < level.screws.size()) movePoint(level.screws[index].center);
-    else if (selectedSceneName.rfind("Fan ", 0) == 0 && index < level.fans.size()) movePoint(level.fans[index].center);
-    else if ((selectedSceneName.rfind("Ramp ", 0) == 0 || selectedSceneName.rfind("Wedge ", 0) == 0) && index < level.ramps.size()) movePoint(level.ramps[index].center);
-    else if (selectedSceneName.rfind("See Saw ", 0) == 0 && index < level.seeSaws.size()) movePoint(level.seeSaws[index].pivot);
-    else if (selectedSceneName.rfind("Trap Door ", 0) == 0 && index < level.trapDoors.size()) movePoint(level.trapDoors[index].hinge);
-    else if (selectedSceneName.rfind("Chain ", 0) == 0 && index < level.chains.size()) { movePoint(level.chains[index].start); movePoint(level.chains[index].end); }
-    else if (selectedSceneName.rfind("Physics Rope ", 0) == 0 && index < level.physicsRopes.size()) { movePoint(level.physicsRopes[index].start); movePoint(level.physicsRopes[index].end); }
-    else if (selectedSceneName.rfind("Arrow Trap ", 0) == 0 && index < level.arrowTraps.size()) movePoint(level.arrowTraps[index].position);
-    else if (selectedSceneName.rfind("Visual Tile ", 0) == 0 && index < level.visualTiles.size()) movePoint(level.visualTiles[index].position);
-    else if (selectedSceneName.rfind("Label ", 0) == 0 && index < level.labels.size()) movePoint(level.labels[index].position);
-    else if (selectedSceneName == "Valve") movePoint(level.valve.center);
-    else if (selectedSceneName == "Water Pit") {
+    else if (selectedSceneName.rfind("Rotary Latch ", 0) == 0 && index < level.rotaryLatches.size()) { if (checkOnly) return true; movePoint(level.rotaryLatches[index].center); }
+    else if (selectedSceneName.rfind("Boulder ", 0) == 0 && index < level.boulders.size()) { if (checkOnly) return true; movePoint(level.boulders[index].center); }
+    else if (selectedSceneName.rfind("Physics Wheel ", 0) == 0 && index < level.physicsWheels.size()) { if (checkOnly) return true; movePoint(level.physicsWheels[index].center); }
+    else if (selectedSceneName.rfind("Gear ", 0) == 0 && index < level.gears.size()) { if (checkOnly) return true; movePoint(level.gears[index].center); }
+    else if (selectedSceneName.rfind("Flywheel ", 0) == 0 && index < level.flywheels.size()) { if (checkOnly) return true; movePoint(level.flywheels[index].center); }
+    else if (selectedSceneName.rfind("Steering Wheel ", 0) == 0 && index < level.steeringWheels.size()) { if (checkOnly) return true; movePoint(level.steeringWheels[index].center); }
+    else if (selectedSceneName.rfind("Pinwheel ", 0) == 0 && index < level.pinwheels.size()) { if (checkOnly) return true; movePoint(level.pinwheels[index].center); }
+    else if (selectedSceneName.rfind("Portal Entrance ", 0) == 0 && index < level.portalPairs.size()) { if (checkOnly) return true; moveRect(level.portalPairs[index].entrance); }
+    else if (selectedSceneName.rfind("Portal Exit ", 0) == 0 && index < level.portalPairs.size()) { if (checkOnly) return true; moveRect(level.portalPairs[index].exit); }
+    else if (selectedSceneName.rfind("Pulley ", 0) == 0 && index < level.pulleys.size()) { if (checkOnly) return true; movePoint(level.pulleys[index]); }
+    else if (selectedSceneName.rfind("Screw ", 0) == 0 && index < level.screws.size()) { if (checkOnly) return true; movePoint(level.screws[index].center); }
+    else if (selectedSceneName.rfind("Fan ", 0) == 0 && index < level.fans.size()) { if (checkOnly) return true; movePoint(level.fans[index].center); }
+    else if ((selectedSceneName.rfind("Ramp ", 0) == 0 || selectedSceneName.rfind("Wedge ", 0) == 0) && index < level.ramps.size()) { if (checkOnly) return true; movePoint(level.ramps[index].center); }
+    else if (selectedSceneName.rfind("See Saw ", 0) == 0 && index < level.seeSaws.size()) { if (checkOnly) return true; movePoint(level.seeSaws[index].pivot); }
+    else if (selectedSceneName.rfind("Trap Door ", 0) == 0 && index < level.trapDoors.size()) { if (checkOnly) return true; movePoint(level.trapDoors[index].hinge); }
+    else if (selectedSceneName.rfind("Chain ", 0) == 0 && index < level.chains.size()) { if (checkOnly) return true; movePoint(level.chains[index].start); movePoint(level.chains[index].end); }
+    else if (selectedSceneName.rfind("Physics Rope ", 0) == 0 && index < level.physicsRopes.size()) { if (checkOnly) return true; movePoint(level.physicsRopes[index].start); movePoint(level.physicsRopes[index].end); }
+    else if (selectedSceneName.rfind("Arrow Trap ", 0) == 0 && index < level.arrowTraps.size()) { if (checkOnly) return true; movePoint(level.arrowTraps[index].position); }
+    else if (selectedSceneName.rfind("Visual Tile ", 0) == 0 && index < level.visualTiles.size()) { if (checkOnly) return true; movePoint(level.visualTiles[index].position); }
+    else if (selectedSceneName.rfind("Label ", 0) == 0 && index < level.labels.size()) { if (checkOnly) return true; movePoint(level.labels[index].position); }
+    else if (selectedSceneName == "Valve") { if (checkOnly) return true; movePoint(level.valve.center); }
+    else if (selectedSceneName == "Water Pit") { if (checkOnly) return true;
         moveRect(level.waterPit.bounds);
         level.waterPit.surfaceY += delta.y;
         level.waterPit.targetSurfaceY += delta.y;
     }
-    else if (selectedSceneName == "Spike Hazard") moveRect(level.spikeHazard);
-    else if (selectedSceneName == "Clock Face") movePoint(level.clockFaceCenter);
+    else if (selectedSceneName == "Spike Hazard") { if (checkOnly) return true; moveRect(level.spikeHazard); }
+    else if (selectedSceneName == "Clock Face") { if (checkOnly) return true; movePoint(level.clockFaceCenter); }
     else moved = false;
+    if (checkOnly) return false;
     if (moved) {
         selectedSceneBounds.x += delta.x; selectedSceneBounds.y += delta.y;
         selection.sceneBounds = selectedSceneBounds;
@@ -2272,9 +2318,9 @@ bool LevelEditor::TranslateSelectedScene(Vector2 delta) {
     return moved;
 }
 
-bool LevelEditor::ScaleSelectedScene(Vector2 delta) {
+bool LevelEditor::ScaleSelectedScene(Vector2 delta, bool checkOnly) {
     if (selection.kind != SelectionKind::SceneObject || selection.index < 0) return false;
-    if ((IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT)) &&
+    if (!checkOnly && (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT)) &&
         selectedSceneBounds.width > 0.0f && selectedSceneBounds.height > 0.0f) {
         const float scaleX = delta.x / selectedSceneBounds.width;
         const float scaleY = delta.y / selectedSceneBounds.height;
@@ -2292,15 +2338,15 @@ bool LevelEditor::ScaleSelectedScene(Vector2 delta) {
         }
     };
     const auto scaleRadius = [&](float& radius) { radius = std::max(1.0f, radius + radialDelta); };
-    if (selectedSceneName.rfind("Platform Loop ", 0) == 0 && index < level.buttonPlatformLoops.size()) {
+    if (selectedSceneName.rfind("Platform Loop ", 0) == 0 && index < level.buttonPlatformLoops.size()) { if (checkOnly) return true;
         ResizeEditorLoop(level, static_cast<int>(index), delta, IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT));
         selectedSceneBounds = EditorLoopBounds(level.buttonPlatformLoops[index]);
         selection.sceneBounds = selectedSceneBounds;
         return true;
     }
     bool scaled = true;
-    if (selectedSceneName.rfind("Enemy ", 0) == 0 && index < level.enemies.size()) scaleRect(level.enemies[index].rect);
-    else if (selectedSceneName.rfind("Guide Object ", 0) == 0 && index < level.guideObjects.size()) {
+    if (selectedSceneName.rfind("Enemy ", 0) == 0 && index < level.enemies.size()) { if (checkOnly) return true; scaleRect(level.enemies[index].rect); }
+    else if (selectedSceneName.rfind("Guide Object ", 0) == 0 && index < level.guideObjects.size()) { if (checkOnly) return true;
         GuideObject& object = level.guideObjects[index];
         if (object.collider.shape == ColliderShape::Circle) scaleRadius(object.collider.radius);
         else if (object.collider.shape == ColliderShape::Rectangle) {
@@ -2309,35 +2355,35 @@ bool LevelEditor::ScaleSelectedScene(Vector2 delta) {
         }
         else { object.length = std::max(1.0f, object.length + delta.x); object.width = std::max(1.0f, object.width + delta.y); }
     }
-    else if (selectedSceneName.rfind("Breakable Tile ", 0) == 0 && index < level.breakableTiles.size()) scaleRect(level.breakableTiles[index].rect);
-    else if (selectedSceneName.rfind("Directional Spikes ", 0) == 0 && index < level.directionalSpikeHazards.size()) scaleRect(level.directionalSpikeHazards[index].rect);
-    else if (selectedSceneName.rfind("Button ", 0) == 0 && index < level.buttons.size()) scaleRect(level.buttons[index].rect);
-    else if (selectedSceneName.rfind("Fluid Field ", 0) == 0 && index < level.fluids.size()) scaleRect(level.fluids[index].bounds);
-    else if (selectedSceneName.rfind("Stone Block ", 0) == 0 && index < level.stoneBlocks.size()) scaleRect(level.stoneBlocks[index].rect);
-    else if (selectedSceneName.rfind("Rotary Latch ", 0) == 0 && index < level.rotaryLatches.size()) scaleRadius(level.rotaryLatches[index].radius);
-    else if (selectedSceneName.rfind("Boulder ", 0) == 0 && index < level.boulders.size()) scaleRadius(level.boulders[index].radius);
-    else if (selectedSceneName.rfind("Physics Wheel ", 0) == 0 && index < level.physicsWheels.size()) scaleRadius(level.physicsWheels[index].radius);
-    else if (selectedSceneName.rfind("Gear ", 0) == 0 && index < level.gears.size()) scaleRadius(level.gears[index].radius);
-    else if (selectedSceneName.rfind("Flywheel ", 0) == 0 && index < level.flywheels.size()) scaleRadius(level.flywheels[index].radius);
-    else if (selectedSceneName.rfind("Steering Wheel ", 0) == 0 && index < level.steeringWheels.size()) scaleRadius(level.steeringWheels[index].radius);
-    else if (selectedSceneName.rfind("Pinwheel ", 0) == 0 && index < level.pinwheels.size()) scaleRadius(level.pinwheels[index].radius);
-    else if (selectedSceneName.rfind("Portal Entrance ", 0) == 0 && index < level.portalPairs.size()) scaleRect(level.portalPairs[index].entrance);
-    else if (selectedSceneName.rfind("Portal Exit ", 0) == 0 && index < level.portalPairs.size()) scaleRect(level.portalPairs[index].exit);
-    else if (selectedSceneName.rfind("Screw ", 0) == 0 && index < level.screws.size()) { level.screws[index].length = std::max(1.0f, level.screws[index].length + delta.x); scaleRadius(level.screws[index].radius); }
-    else if (selectedSceneName.rfind("Fan ", 0) == 0 && index < level.fans.size()) { level.fans[index].length = std::max(1.0f, level.fans[index].length + delta.x); level.fans[index].width = std::max(1.0f, level.fans[index].width + delta.y); }
-    else if ((selectedSceneName.rfind("Ramp ", 0) == 0 || selectedSceneName.rfind("Wedge ", 0) == 0) && index < level.ramps.size()) { level.ramps[index].length = std::max(1.0f, level.ramps[index].length + delta.x); level.ramps[index].thickness = std::max(1.0f, level.ramps[index].thickness + delta.y); }
-    else if (selectedSceneName.rfind("See Saw ", 0) == 0 && index < level.seeSaws.size()) { level.seeSaws[index].length = std::max(1.0f, level.seeSaws[index].length + delta.x); level.seeSaws[index].thickness = std::max(1.0f, level.seeSaws[index].thickness + delta.y); }
-    else if (selectedSceneName.rfind("Trap Door ", 0) == 0 && index < level.trapDoors.size()) { level.trapDoors[index].length = std::max(1.0f, level.trapDoors[index].length + delta.x); level.trapDoors[index].thickness = std::max(1.0f, level.trapDoors[index].thickness + delta.y); }
+    else if (selectedSceneName.rfind("Breakable Tile ", 0) == 0 && index < level.breakableTiles.size()) { if (checkOnly) return true; scaleRect(level.breakableTiles[index].rect); }
+    else if (selectedSceneName.rfind("Directional Spikes ", 0) == 0 && index < level.directionalSpikeHazards.size()) { if (checkOnly) return true; scaleRect(level.directionalSpikeHazards[index].rect); }
+    else if (selectedSceneName.rfind("Button ", 0) == 0 && index < level.buttons.size()) { if (checkOnly) return true; scaleRect(level.buttons[index].rect); }
+    else if (selectedSceneName.rfind("Fluid Field ", 0) == 0 && index < level.fluids.size()) { if (checkOnly) return true; scaleRect(level.fluids[index].bounds); }
+    else if (selectedSceneName.rfind("Stone Block ", 0) == 0 && index < level.stoneBlocks.size()) { if (checkOnly) return true; scaleRect(level.stoneBlocks[index].rect); }
+    else if (selectedSceneName.rfind("Rotary Latch ", 0) == 0 && index < level.rotaryLatches.size()) { if (checkOnly) return true; scaleRadius(level.rotaryLatches[index].radius); }
+    else if (selectedSceneName.rfind("Boulder ", 0) == 0 && index < level.boulders.size()) { if (checkOnly) return true; scaleRadius(level.boulders[index].radius); }
+    else if (selectedSceneName.rfind("Physics Wheel ", 0) == 0 && index < level.physicsWheels.size()) { if (checkOnly) return true; scaleRadius(level.physicsWheels[index].radius); }
+    else if (selectedSceneName.rfind("Gear ", 0) == 0 && index < level.gears.size()) { if (checkOnly) return true; scaleRadius(level.gears[index].radius); }
+    else if (selectedSceneName.rfind("Flywheel ", 0) == 0 && index < level.flywheels.size()) { if (checkOnly) return true; scaleRadius(level.flywheels[index].radius); }
+    else if (selectedSceneName.rfind("Steering Wheel ", 0) == 0 && index < level.steeringWheels.size()) { if (checkOnly) return true; scaleRadius(level.steeringWheels[index].radius); }
+    else if (selectedSceneName.rfind("Pinwheel ", 0) == 0 && index < level.pinwheels.size()) { if (checkOnly) return true; scaleRadius(level.pinwheels[index].radius); }
+    else if (selectedSceneName.rfind("Portal Entrance ", 0) == 0 && index < level.portalPairs.size()) { if (checkOnly) return true; scaleRect(level.portalPairs[index].entrance); }
+    else if (selectedSceneName.rfind("Portal Exit ", 0) == 0 && index < level.portalPairs.size()) { if (checkOnly) return true; scaleRect(level.portalPairs[index].exit); }
+    else if (selectedSceneName.rfind("Screw ", 0) == 0 && index < level.screws.size()) { if (checkOnly) return true; level.screws[index].length = std::max(1.0f, level.screws[index].length + delta.x); scaleRadius(level.screws[index].radius); }
+    else if (selectedSceneName.rfind("Fan ", 0) == 0 && index < level.fans.size()) { if (checkOnly) return true; level.fans[index].length = std::max(1.0f, level.fans[index].length + delta.x); level.fans[index].width = std::max(1.0f, level.fans[index].width + delta.y); }
+    else if ((selectedSceneName.rfind("Ramp ", 0) == 0 || selectedSceneName.rfind("Wedge ", 0) == 0) && index < level.ramps.size()) { if (checkOnly) return true; level.ramps[index].length = std::max(1.0f, level.ramps[index].length + delta.x); level.ramps[index].thickness = std::max(1.0f, level.ramps[index].thickness + delta.y); }
+    else if (selectedSceneName.rfind("See Saw ", 0) == 0 && index < level.seeSaws.size()) { if (checkOnly) return true; level.seeSaws[index].length = std::max(1.0f, level.seeSaws[index].length + delta.x); level.seeSaws[index].thickness = std::max(1.0f, level.seeSaws[index].thickness + delta.y); }
+    else if (selectedSceneName.rfind("Trap Door ", 0) == 0 && index < level.trapDoors.size()) { if (checkOnly) return true; level.trapDoors[index].length = std::max(1.0f, level.trapDoors[index].length + delta.x); level.trapDoors[index].thickness = std::max(1.0f, level.trapDoors[index].thickness + delta.y); }
     else if (selectedSceneName.rfind("Chain ", 0) == 0 && index < level.chains.size())
-        level.chains[index].scale = std::max(0.1f, level.chains[index].scale + radialDelta / 24.0f);
+        { if (checkOnly) return true; level.chains[index].scale = std::max(0.1f, level.chains[index].scale + radialDelta / 24.0f); }
     else if (selectedSceneName.rfind("Physics Rope ", 0) == 0 && index < level.physicsRopes.size())
-        level.physicsRopes[index].thickness = std::max(1.0f, level.physicsRopes[index].thickness + radialDelta);
-    else if (selectedSceneName.rfind("Label ", 0) == 0 && index < level.labels.size()) level.labels[index].fontSize = std::clamp(level.labels[index].fontSize + static_cast<int>(roundf(radialDelta)), 8, 72);
-    else if (selectedSceneName.rfind("Hanging Weight ", 0) == 0 && index < level.weights.size()) {
+        { if (checkOnly) return true; level.physicsRopes[index].thickness = std::max(1.0f, level.physicsRopes[index].thickness + radialDelta); }
+    else if (selectedSceneName.rfind("Label ", 0) == 0 && index < level.labels.size()) { if (checkOnly) return true; level.labels[index].fontSize = std::clamp(level.labels[index].fontSize + static_cast<int>(roundf(radialDelta)), 8, 72); }
+    else if (selectedSceneName.rfind("Hanging Weight ", 0) == 0 && index < level.weights.size()) { if (checkOnly) return true;
         scaleRect(level.weights[index].rect);
         scaleRadius(level.weights[index].pulleyRadius);
     }
-    else if (selectedSceneName == "Water Pit") {
+    else if (selectedSceneName == "Water Pit") { if (checkOnly) return true;
         WaterPit& pit = level.waterPit;
         const float centerY = pit.bounds.y + pit.bounds.height * 0.5f;
         const float scaleY = std::max(1.0f, pit.bounds.height + delta.y) / pit.bounds.height;
@@ -2347,10 +2393,11 @@ bool LevelEditor::ScaleSelectedScene(Vector2 delta) {
             pit.targetSurfaceY = centerY + (pit.targetSurfaceY - centerY) * scaleY;
         }
     }
-    else if (selectedSceneName == "Valve") scaleRadius(level.valve.radius);
-    else if (selectedSceneName == "Spike Hazard") scaleRect(level.spikeHazard);
-    else if (selectedSceneName == "Clock Face") scaleRadius(level.clockFaceRadius);
+    else if (selectedSceneName == "Valve") { if (checkOnly) return true; scaleRadius(level.valve.radius); }
+    else if (selectedSceneName == "Spike Hazard") { if (checkOnly) return true; scaleRect(level.spikeHazard); }
+    else if (selectedSceneName == "Clock Face") { if (checkOnly) return true; scaleRadius(level.clockFaceRadius); }
     else scaled = false;
+    if (checkOnly) return false;
     if (scaled) {
         const bool centerScale = IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT);
         const Vector2 originalLabelCenter{selectedSceneBounds.x + selectedSceneBounds.width * 0.5f,
@@ -2624,7 +2671,7 @@ LevelEditor::TransformHandle LevelEditor::TransformHandleAt(Vector2 world) const
     }
     else if (transformMode == TransformMode::Scale && (rect != nullptr || groupSelection.size() > 1 ||
         (selection.kind == SelectionKind::SceneObject &&
-            const_cast<LevelEditor*>(this)->ScaleSelectedScene({0.0f, 0.0f})))) {
+            const_cast<LevelEditor*>(this)->ScaleSelectedScene({0.0f, 0.0f}, true)))) {
         if (selection.kind == SelectionKind::Exit && groupSelection.size() <= 1) return TransformHandle::None;
         const Rectangle bounds = groupSelection.size() > 1 ? groupBounds :
             (rect != nullptr ? *rect : selectedSceneBounds);
@@ -2960,6 +3007,7 @@ void LevelEditor::UpdateDocking() {
 void LevelEditor::Update() {
     pivotToggledThisFrame = false;
     if (viewportOnly) ProcessViewportHostCommand();
+    UpdateTransformAvailability();
     if (IsKeyPressed(KEY_INSERT)) TogglePivotLock();
     if (!viewportOnly) {
         ProcessNativeMenuCommand();
@@ -3050,6 +3098,7 @@ void LevelEditor::Update() {
     for (int index = 0; index < 4; ++index) {
         if ((!controlDown && IsKeyPressed(transformKeys[index])) || (!viewportOnly && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
             CheckCollisionPointRec(mouse, GetTransformButtonBounds(index)))) {
+            if (!SupportsTransform(transformModes[index])) continue;
             activeTool = EditTool::Select;
             transformMode = transformModes[index];
             draggingCreate = false;
@@ -3579,6 +3628,7 @@ void LevelEditor::ProcessViewportHostCommand() {
             break;
         case 31:
             if (value < 0 || value > 3) break;
+            if (!SupportsTransform(static_cast<TransformMode>(value))) break;
             tilePaintTool = TilePaintTool::None;
             activeTool = EditTool::Select;
             transformMode = static_cast<TransformMode>(value);
@@ -5002,7 +5052,7 @@ void LevelEditor::UpdateEditing(Rectangle canvas) {
             rect->y += nudge.y;
             MarkDirty("Moved selection.");
         }
-        else if (selection.kind == SelectionKind::SceneObject && TranslateSelectedScene({0.0f, 0.0f})) {
+        else if (selection.kind == SelectionKind::SceneObject && TranslateSelectedScene({0.0f, 0.0f}, true)) {
             PushTileUndo();
             TranslateSelectedScene(nudge);
             MarkDirty("Moved selection.");
@@ -5086,13 +5136,13 @@ void LevelEditor::UpdateEditing(Rectangle canvas) {
                     activeTransformHandle <= TransformHandle::FluidResizeBottomRight;
                 if (!draggingAnchorPoint && (resizingFluid || (transformMode == TransformMode::Move &&
                     (selection.kind == SelectionKind::PlayerStart || SelectedRectangle() != nullptr ||
-                        (selection.kind == SelectionKind::SceneObject && TranslateSelectedScene({0.0f, 0.0f})))) ||
+                        (selection.kind == SelectionKind::SceneObject && TranslateSelectedScene({0.0f, 0.0f}, true)))) ||
                     (transformMode == TransformMode::Scale &&
                         (activeTransformHandle == TransformHandle::ScaleX ||
                             activeTransformHandle == TransformHandle::ScaleY ||
                             activeTransformHandle == TransformHandle::ScaleBottomRight) &&
                         ((SelectedRectangle() != nullptr && selection.kind != SelectionKind::Exit) || groupSelection.size() > 1 ||
-                            (selection.kind == SelectionKind::SceneObject && ScaleSelectedScene({0.0f, 0.0f})))) ||
+                            (selection.kind == SelectionKind::SceneObject && ScaleSelectedScene({0.0f, 0.0f}, true)))) ||
                     (transformMode == TransformMode::Rotate && SelectedRotation() != nullptr &&
                         activeTransformHandle == TransformHandle::RotateRing))) {
                     PushTileUndo();
@@ -6893,7 +6943,7 @@ void LevelEditor::DrawEditOverlay() const {
         drawAnchorMarker(transformMode == TransformMode::Rotate && draggingTransform ? transformPivot :
             TransformAnchorPoint(selectedSceneBounds));
         if (transformMode == TransformMode::Move &&
-            const_cast<LevelEditor*>(this)->TranslateSelectedScene({0.0f, 0.0f})) {
+            const_cast<LevelEditor*>(this)->TranslateSelectedScene({0.0f, 0.0f}, true)) {
             const Vector2 center = TransformAnchorPoint(selectedSceneBounds);
             const float handleRadius = 5.5f / camera.zoom;
             const Vector2 xHandle{center.x + TransformAxisLength(selectedSceneBounds, center, true), center.y};
@@ -6904,7 +6954,7 @@ void LevelEditor::DrawEditOverlay() const {
             DrawCircleV(center, handleRadius * (hovered == TransformHandle::MoveCenter ? 1.35f : 1.0f), RAYWHITE);
         }
         if (transformMode == TransformMode::Scale &&
-            const_cast<LevelEditor*>(this)->ScaleSelectedScene({0.0f, 0.0f})) {
+            const_cast<LevelEditor*>(this)->ScaleSelectedScene({0.0f, 0.0f}, true)) {
             const TransformHandle hovered = TransformHandleAt(GetScreenToWorld2D(GetMousePosition(), camera));
             drawScaleHandles(selectedSceneBounds, hovered);
         }
@@ -7193,8 +7243,8 @@ void LevelEditor::DrawLevelPreview() const {
         if ((collisionTileLayerMask & bit) == 0 || (visibleTileLayerMask & bit) == 0) continue;
         const int mask = GetTileBlockedFaces(level, tile);
         const float x = tile.position.x, y = tile.position.y;
-        const Color color = tile.layer == TileLayer::Collision ? Color{255, 82, 88, 255} : Color{255, 183, 67, 255};
-        const float width = lineWidth * 2;
+        const Color color{255, 69, 0, 255};
+        const float width = static_cast<float>(GetTilePassageLineWidth(level, tile)) / camera.zoom;
         if (mask & 1) DrawLineEx({x, y}, {x + 32, y}, width, color);
         if (mask & 2) DrawLineEx({x + 32, y}, {x + 32, y + 32}, width, color);
         if (mask & 4) DrawLineEx({x, y + 32}, {x + 32, y + 32}, width, color);
@@ -7216,7 +7266,7 @@ void LevelEditor::DrawToolbar() const {
     const char* labels[] = {"Select", "Move", "Rotate", "Scale"};
     for (int index = 0; index < 4; ++index) {
         DrawToolbarIconButton(GetTransformButtonBounds(index), labels[index], uiFont, toolbarIcons, index,
-            activeTool == EditTool::Select && transformMode == modes[index]);
+            activeTool == EditTool::Select && transformMode == modes[index], SupportsTransform(modes[index]));
     }
     DrawToolbarIconButton(GetFitButtonBounds(), "Frame", uiFont, toolbarIcons, 4);
     const std::string mode = activeTool == EditTool::Select ? "Transform mode" : std::string("Place: ") + ToolName(activeTool);

@@ -379,8 +379,11 @@ private:
     const float* SelectedRotation() const;
     Vector2 SelectedRotationCenter() const;
     bool IsSelectedFluid() const;
-    bool TranslateSelectedScene(Vector2 delta);
-    bool ScaleSelectedScene(Vector2 delta);
+    bool TranslateSelectedScene(Vector2 delta, bool checkOnly = false);
+    bool ScaleSelectedScene(Vector2 delta, bool checkOnly = false);
+    bool SupportsTransform(TransformMode mode) const;
+    void UpdateTransformAvailability();
+    int lastTransformAvailability{-1};
     bool DeleteSelectedSceneObject();
     bool DuplicateSelectedSceneObject();
     TransformHandle TransformHandleAt(Vector2 world) const;

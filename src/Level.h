@@ -97,10 +97,12 @@ struct TilePassage {
     int column{0};
     int row{0};
     int blockedFaces{0};
+    int lineWidth{50};
 };
 
 struct Level;
 int GetTileBlockedFaces(const Level& level, const VisualTile& tile);
+int GetTilePassageLineWidth(const Level& level, const VisualTile& tile);
 bool TileCollidesWithLayer(TileLayer tileLayer, WorldLayer bodyLayer);
 void AppendDirectionalTileSolids(std::vector<Rectangle>& solids, const Level& level,
     WorldLayer layer, Rectangle previous, Vector2 velocity, bool horizontal);

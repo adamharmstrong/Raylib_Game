@@ -8,10 +8,34 @@ struct EditorRotationTestAccess {
     static void Check(bool condition, const char* message) { if (!condition) throw std::runtime_error(message); }
     static void Run() {
         LevelEditor editor;
+        using Mode = LevelEditor::TransformMode;
+        Check(editor.SupportsTransform(Mode::Select) && editor.SupportsTransform(Mode::Move),
+            "An empty selection must allow choosing a tool before picking an object.");
+        editor.selection = {LevelEditor::SelectionKind::Exit, 0};
+        editor.level.exitTrigger = {100, 200, 48, 64};
+        Check(editor.SupportsTransform(Mode::Move) && !editor.SupportsTransform(Mode::Scale) &&
+            !editor.SupportsTransform(Mode::Rotate), "Exit doors must move but cannot rotate or scale.");
+        editor.transformMode = Mode::Scale;
+        editor.UpdateTransformAvailability();
+        Check(editor.transformMode == Mode::Select, "An unavailable active tool must fall back to Select.");
+        editor.selection = {LevelEditor::SelectionKind::PlayerStart, 0};
+        Check(editor.SupportsTransform(Mode::Move) && !editor.SupportsTransform(Mode::Scale) &&
+            !editor.SupportsTransform(Mode::Rotate), "Player Start must only support Select and Move.");
         Gear gear{}; gear.center = {200, 200}; gear.radius = 32;
         editor.level.gears.push_back(gear);
         editor.selection = {LevelEditor::SelectionKind::SceneObject, 0};
         editor.selectedSceneName = "Gear 1";
+        Check(editor.SupportsTransform(Mode::Move) && editor.SupportsTransform(Mode::Scale) &&
+            editor.SupportsTransform(Mode::Rotate), "Gears must support all four gizmos.");
+        Check(editor.level.gears[0].radius == 32 && editor.level.gears[0].center.x == 200,
+            "Checking capabilities must never change object dimensions or position.");
+        editor.groupSelection = {{LevelEditor::SelectionKind::SceneObject, 0, "Gear 1"},
+            {LevelEditor::SelectionKind::Exit, 0}};
+        Check(editor.SupportsTransform(Mode::Move) && !editor.SupportsTransform(Mode::Scale) &&
+            !editor.SupportsTransform(Mode::Rotate), "Mixed groups must only enable tools supported by every member.");
+        Check(editor.selectedSceneName == "Gear 1" && editor.selection.kind == LevelEditor::SelectionKind::SceneObject,
+            "Group capability checks must preserve the primary selection.");
+        editor.groupSelection.clear();
         editor.transformMode = LevelEditor::TransformMode::Rotate;
         for (float zoom : {0.25f, 1.0f, 6.0f}) {
             editor.camera.zoom = zoom;

@@ -240,9 +240,11 @@ shared hazard presentation, and the flooded pit must preserve its dynamic water
 layering. Do not duplicate them with `visualTile` records unless the renderer is
 changed at the same time.
 
-`tilePassage <sheetId> <column> <row> <blockedFaces>` sets passage for a source
+`tilePassage <sheetId> <column> <row> <blockedFaces> [lineWidth]` sets passage for a source
 32px tile across all visual layers in this level. Face bits are top=1, right=2,
 bottom=4, left=8: 0 is passable, 15 is solid, 1 is a top-only platform.
+An optional fifth value sets the editor collision-line width in screen pixels
+(1-100, default 50); it changes visualization only, not collision behavior.
 Flips and clockwise quarter-turns transform these faces with the artwork.
 Absent settings preserve the layer default (Collision solid, others passable).
 Solid and directional tiles collide only with bodies on the matching world layer;

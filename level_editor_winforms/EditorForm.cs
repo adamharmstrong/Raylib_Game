@@ -91,6 +91,7 @@ internal sealed class EditorForm : Form
     private readonly LayerList visibleLayers = new() { Dock = DockStyle.Fill, BorderStyle = BorderStyle.FixedSingle, IntegralHeight = false };
     private readonly RowStyle layerListRow = new(SizeType.Absolute);
     private int layerListHeightAdjustment;
+    private bool tileLayersInitialized;
     private readonly ToolStripButton renameLayer = new() { Text = "Rename Layer", ToolTipText = "Rename selected user layer" };
     private readonly ToolStripButton moveLayerUp = new("↑ Move Up");
     private readonly ToolStripButton moveLayerDown = new("↓ Move Down");
@@ -900,6 +901,14 @@ internal sealed class EditorForm : Form
         var checks = faces.Select((text, index) => new CheckBox { Text = text, AutoSize = true,
             Checked = (mask & (1 << index)) != 0 }).ToArray();
         foreach (var check in checks) layout.Controls.Add(check);
+        var widthRow = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            WrapContents = false, FlowDirection = FlowDirection.LeftToRight, Margin = new Padding(0) };
+        widthRow.Controls.Add(new Label { Text = "Collision line width (pixels):", AutoSize = true,
+            Margin = new Padding(0, 5, 8, 0) });
+        var lineWidth = new NumericUpDown { Minimum = 1, Maximum = 100, Value = document.GetTilePassageLineWidth(
+            SelectedSheetId(), paintTileColumn, paintTileRow), Width = 72, Margin = Padding.Empty };
+        widthRow.Controls.Add(lineWidth);
+        layout.Controls.Add(widthRow);
         var buttons = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
             WrapContents = false };
         var passable = new Button { Text = "○ Passable", AutoSize = true };
@@ -920,7 +929,8 @@ internal sealed class EditorForm : Form
         mask = checks.Select((check, index) => check.Checked ? 1 << index : 0).Aggregate(0, (a, b) => a | b);
         for (var row = paintTileRow; row < paintTileRow + paintTileHeight; ++row)
         for (var column = paintTileColumn; column < paintTileColumn + paintTileWidth; ++column)
-            document.SetTilePassage(SelectedSheetId(), column, row, result == DialogResult.Retry ? null : mask);
+            document.SetTilePassage(SelectedSheetId(), column, row, result == DialogResult.Retry ? null : mask,
+                (int)lineWidth.Value);
         SetDirty(true, "Tile passage updated");
         RefreshViewportFromDetails();
         tilePalette.Invalidate();
@@ -1303,14 +1313,16 @@ internal sealed class EditorForm : Form
         new(3, "collision", "Collision")
     ];
 
-    private int ActiveLayerId() => visibleLayers.SelectedItem is TileLayerEntry entry ? entry.Id : 2;
+    private int ActiveLayerId() => visibleLayers.SelectedItem is TileLayerEntry entry ? entry.Id : 12;
 
     private void RefreshTileLayers()
     {
         var previousChecks = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         foreach (var item in visibleLayers.Items.OfType<TileLayerEntry>())
             previousChecks[item.Key] = visibleLayers.GetItemChecked(visibleLayers.Items.IndexOf(item));
-        var selectedKey = (visibleLayers.SelectedItem as TileLayerEntry)?.Key ?? "foreground";
+        var selectedKey = tileLayersInitialized
+            ? (visibleLayers.SelectedItem as TileLayerEntry)?.Key ?? "middleground"
+            : "middleground";
         visibleLayers.BeginUpdate();
         visibleLayers.ClearCheckStates();
         visibleLayers.Items.Clear();
@@ -1328,8 +1340,15 @@ internal sealed class EditorForm : Form
             visibleLayers.SetItemChecked(index, previousChecks.TryGetValue(entry.Key, out var wasChecked) ? wasChecked : true);
             if (entry.Key.Equals(selectedKey, StringComparison.OrdinalIgnoreCase)) visibleLayers.SelectedIndex = index;
         }
+        if (visibleLayers.SelectedIndex < 0)
+        {
+            var middleLayer = visibleLayers.Items.OfType<TileLayerEntry>()
+                .FirstOrDefault(entry => entry.Key == "middleground");
+            if (middleLayer != null) visibleLayers.SelectedIndex = visibleLayers.Items.IndexOf(middleLayer);
+        }
         if (visibleLayers.SelectedIndex < 0) visibleLayers.SelectedIndex = 0;
         visibleLayers.EndUpdate();
+        tileLayersInitialized = true;
         UpdateLayerListHeight();
         OnActiveLayerChanged();
     }
@@ -2298,6 +2317,7 @@ internal sealed class EditorForm : Form
 
     private void SelectTransform(Keys key, string name)
     {
+        if (transformButtons.TryGetValue(key, out var button) && !button.Enabled) return;
         CancelViewportLink();
         DeactivatePaintTools();
         SetActiveTransformButton(key);
@@ -2633,6 +2653,22 @@ internal sealed class EditorForm : Form
             float.TryParse(values[4], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var solidStateHeight))
         {
             document.AddSolid(solidStateX, solidStateY, solidStateWidth, solidStateHeight);
+            return;
+        }
+        if (values.Length == 3 && values[0] == "transformavailability" &&
+            int.TryParse(values[1], out var transformMask) && int.TryParse(values[2], out var activeTransform))
+        {
+            Keys[] keys = [Keys.Q, Keys.W, Keys.E, Keys.R];
+            string[] names = ["Select", "Move", "Rotate", "Scale"];
+            for (var index = 0; index < keys.Length; index++)
+                transformButtons[keys[index]].Enabled = (transformMask & (1 << index)) != 0;
+            var checkedTool = transformButtons.FirstOrDefault(pair => pair.Value.Checked).Key;
+            if (checkedTool != Keys.None && checkedTool != Keys.F &&
+                activeTransform >= 0 && activeTransform < keys.Length)
+            {
+                SetActiveTransformButton(keys[activeTransform]);
+                activeToolIndicator.Text = $"Active: {names[activeTransform]}";
+            }
             return;
         }
         if (values.Length >= 2 && values[0] == "toolstatus")

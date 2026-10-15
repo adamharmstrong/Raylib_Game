@@ -15,6 +15,7 @@
 
 enum class GameMode {
     Title,
+    Credits,
     CharacterSelect,
     Overworld,
     Playing,
@@ -101,6 +102,8 @@ public:
 
 private:
     std::string playtestLevelPath;
+    std::string customLevelPath;
+    void LoadCustomLevel(const std::string& path);
     void Load();
     void Reset();
     void Update(float dt);
@@ -116,6 +119,8 @@ private:
     void BeginLevelClear();
     void CompleteCurrentLevelAndReturnToMap();
     void UpdateTitle();
+    void UpdateCredits();
+    void LoadCredits();
     void UpdateCharacterSelect();
     void UpdateOverworld();
     void UpdatePaused();
@@ -171,6 +176,7 @@ private:
     void ApplyPendingSettings();
     void DrawScene();
     void DrawTitleScreen();
+    void DrawCreditsScreen();
     void DrawCharacterSelect();
     void DrawOverworld();
     void DrawGameplay();
@@ -187,6 +193,13 @@ private:
     void DrawDebugCollision() const;
 
     GameMode mode{GameMode::Title};
+    struct CreditEntry {
+        std::string jobTitle;
+        std::string realName;
+        std::string username;
+    };
+    std::vector<CreditEntry> credits;
+    int creditsPage{0};
     bool shouldQuit{false};
     Level level{};
     Music customMusic{};

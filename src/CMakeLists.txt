@@ -7,3 +7,7 @@ list(REMOVE_ITEM SOURCE_FILES "${GAME_ENTRY_POINT}")
 target_sources(RaylibGameCore PRIVATE ${SOURCE_FILES} ${HEADER_FILES})
 target_include_directories(RaylibGameCore PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_sources(${PROJECT_NAME} PRIVATE "${GAME_ENTRY_POINT}")
+
+if(WIN32)
+    target_link_libraries(RaylibGameCore PUBLIC comdlg32)
+endif()
