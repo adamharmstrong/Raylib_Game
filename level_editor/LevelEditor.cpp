@@ -2395,6 +2395,12 @@ bool LevelEditor::DeleteSelectedSceneObject() {
     };
     if (selectedSceneName.rfind("Enemy ", 0) == 0) return eraseAt(level.enemies);
     if (selectedSceneName.rfind("Guide Object ", 0) == 0) return eraseAt(level.guideObjects);
+    if (selectedSceneName.rfind("Visual Tile ", 0) == 0) {
+        if (index >= level.visualTiles.size()) return false;
+        const VisualTile tile = level.visualTiles[index];
+        NotifyTileErased(tile.layer, tile.position);
+        return eraseAt(level.visualTiles);
+    }
     if (selectedSceneName.rfind("Breakable Tile ", 0) == 0) return eraseAt(level.breakableTiles);
     if (selectedSceneName.rfind("Directional Spikes ", 0) == 0) return eraseAt(level.directionalSpikeHazards);
     if (selectedSceneName.rfind("Button ", 0) == 0) {
