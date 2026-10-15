@@ -4090,25 +4090,35 @@ void DrawGuideObject(const GuideObject& object, Texture2D rockTexture) {
             const float flagHeight = fmaxf(12.0f, fminf(bounds.height * 0.36f, flagWidth * 0.72f));
             DrawLineEx({poleX, bounds.y + bounds.height}, {poleX, bounds.y}, 4.0f, LIGHTGRAY);
 
-            Vector2 flagTip;
-            Vector2 flagTopRight;
-            Vector2 flagBottom;
+    const Color flagGreen{76, 255, 91, 255};
+    const Color flagEdge{12, 66, 28, 255};
             if (object.triggered) {
                 const float flutter = sinf(object.timer * 12.0f) * flagHeight * 0.16f;
-                flagTopRight = {poleX + flagWidth, flagTop + flagHeight * 0.5f + flutter};
-                flagBottom = {poleX + 1.0f, flagTop + flagHeight};
-                flagTip = {poleX + 1.0f, flagTop};
+        const Vector2 flagTip{poleX + 1.0f, flagTop};
+        const Vector2 flagTopRight{poleX + flagWidth, flagTop + flagHeight * 0.5f + flutter};
+        const Vector2 flagBottom{poleX + 1.0f, flagTop + flagHeight};
+        DrawTriangle(flagTip, flagBottom, flagTopRight, flagGreen);
+        DrawLineEx(flagTip, flagTopRight, 1.5f, flagEdge);
+        DrawLineEx(flagTopRight, flagBottom, 1.5f, flagEdge);
+        DrawLineEx(flagBottom, flagTip, 1.5f, flagEdge);
             }
             else {
-                flagTopRight = {poleX + flagWidth, flagTop};
-                flagBottom = {poleX + flagWidth * 0.5f, flagTop + flagHeight};
-                flagTip = {poleX + 1.0f, flagTop};
+        const float limpWidth = fmaxf(6.0f, flagWidth * 0.36f);
+        const Vector2 topLeft{poleX + 1.0f, flagTop};
+        const Vector2 topRight{poleX + limpWidth, flagTop + 1.0f};
+        const Vector2 lowerRight{poleX + limpWidth - 1.0f, flagTop + flagHeight * 0.82f};
+        const Vector2 fold{poleX + limpWidth * 0.55f, flagTop + flagHeight};
+        const Vector2 lowerLeft{poleX + 1.0f, flagTop + flagHeight * 0.84f};
+
+        DrawTriangle(topLeft, lowerLeft, fold, flagGreen);
+        DrawTriangle(topLeft, fold, lowerRight, flagGreen);
+        DrawTriangle(topLeft, lowerRight, topRight, flagGreen);
+        DrawLineEx(topLeft, topRight, 1.5f, flagEdge);
+        DrawLineEx(topRight, lowerRight, 1.5f, flagEdge);
+        DrawLineEx(lowerRight, fold, 1.5f, flagEdge);
+        DrawLineEx(fold, lowerLeft, 1.5f, flagEdge);
+        DrawLineEx(lowerLeft, topLeft, 1.5f, flagEdge);
             }
-            const Color flagGreen{54, 190, 83, 255};
-            DrawTriangle(flagTip, flagTopRight, flagBottom, flagGreen);
-            DrawLineEx(flagTip, flagTopRight, 1.5f, Color{23, 103, 48, 255});
-            DrawLineEx(flagTopRight, flagBottom, 1.5f, Color{23, 103, 48, 255});
-            DrawLineEx(flagBottom, flagTip, 1.5f, Color{23, 103, 48, 255});
             break;
         }
         case GuideObjectType::Collectible:
