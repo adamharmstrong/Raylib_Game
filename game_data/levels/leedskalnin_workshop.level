@@ -1,4 +1,5 @@
 # A playful workshop of machines documented at Coral Castle or described by Edward Leedskalnin.
+author Adam Armstrong
 script power_pulley_panic
 playerStart 45 805
 

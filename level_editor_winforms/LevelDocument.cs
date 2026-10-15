@@ -13,6 +13,7 @@ internal sealed class LevelDocument
     internal LevelDocument()
     {
         lines.Add(new LineRecord("# New Power Pulley Panic level.", null));
+        lines.Add(new LineRecord("author Unknown", new LevelObject("author", 1, "Unknown")));
         lines.Add(new LineRecord("script power_pulley_panic", new LevelObject("script", 1, "power_pulley_panic")));
         lines.Add(new LineRecord("bounds 0 0 1600 900", new LevelObject("bounds", 1, "0 0 1600 900")));
         lines.Add(new LineRecord("playerStart 80 600 0", new LevelObject("playerStart", 1, "80 600 0")));
@@ -27,6 +28,19 @@ internal sealed class LevelDocument
     {
         lines.RemoveAll(line => line.Object?.Type == "music");
         if (!string.IsNullOrEmpty(path)) AddEditableRecord("music", QuoteAudio(path));
+    }
+
+    internal string Author
+    {
+        get => Objects.LastOrDefault(item => item.Type.Equals("author", StringComparison.OrdinalIgnoreCase))?.Arguments.Trim() ?? "Unknown";
+        set
+        {
+            value = value.Trim();
+            if (value.Length is < 1 or > 80 || value.Contains('\n') || value.Contains('\r'))
+                throw new ArgumentException("Enter an author name between 1 and 80 characters.");
+            lines.RemoveAll(line => line.Object?.Type.Equals("author", StringComparison.OrdinalIgnoreCase) == true);
+            lines.Insert(Math.Min(1, lines.Count), new LineRecord($"author {value}", new LevelObject("author", 1, value)));
+        }
     }
 
     internal int? GetTilePassage(int sheet, int column, int row)

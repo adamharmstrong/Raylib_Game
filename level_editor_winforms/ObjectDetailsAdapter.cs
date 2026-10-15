@@ -25,6 +25,7 @@ internal sealed class ObjectDetailsAdapter : ICustomTypeDescriptor
     private static readonly Dictionary<string, ObjectField[]> Schemas = new(StringComparer.OrdinalIgnoreCase)
     {
         ["bounds"] = [X, Y, Width, Height],
+        ["author"] = [new("Author", "Level", ObjectFieldKind.Text, Remainder: true)],
         ["solid"] = [X, Y, Width, Height], ["platform"] = [X, Y, Width, Height],
         ["ladder"] = [X, Y, Width, Height], ["cameraZone"] = [X, Y, Width, Height],
         ["darkness"] = [X, Y, Width, Height], ["exit"] = [X, Y,
@@ -210,6 +211,7 @@ internal sealed class ObjectDetailsAdapter : ICustomTypeDescriptor
         ["teslaCoil"] = [X, Y, Width, Height, new("Arc Range", "Hazard"), new("Arc Force", "Hazard"),
             new("Charge Seconds", "Timing"), new("Pulse Seconds", "Timing"), new("Cooldown Seconds", "Timing"),
             new("Input Channel", "Power", ObjectFieldKind.Integer), new("Wireless Output Channel", "Power", ObjectFieldKind.Integer)],
+        ["thornyVines"] = [X, Y, Width, Height, new("Damage Per Second", "Hazard")],
         ["label"] = [X, Y, new("Text", "Content", ObjectFieldKind.Text, Remainder: true)],
         ["labelSized"] = [X, Y, new("Font Size", "Appearance", ObjectFieldKind.Integer),
             new("Text", "Content", ObjectFieldKind.Text, Remainder: true)],

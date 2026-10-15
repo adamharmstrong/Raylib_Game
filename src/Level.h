@@ -202,6 +202,7 @@ struct PlatformLoopButtonLink {
 
 struct Level {
     LevelScript script{LevelScript::PowerPulleyPanic};
+    std::string author{"Unknown"};
     std::vector<ObjectScriptAttachment> objectScripts;
     std::string musicPath;
     std::vector<ObjectAudioAttachment> objectSounds;
@@ -275,6 +276,7 @@ Level CreatePowerPulleyPanicLevel();
 Level CreateRotaryLatchLabLevel();
 Level CreateFloodedFoundryLevel();
 Level LoadLevelFromFile(const std::string& path, Level fallback);
+std::string LoadLevelAuthorFromFile(const std::string& path, const std::string& fallback = "Unknown");
 std::vector<TileLayer> GetTileLayerDrawOrder(const Level& level);
 std::vector<Rectangle> BuildSolids(const Level& level, WorldLayer layer = WorldLayer::Middleground);
 Vector2 GetButtonPlatformLoopPoint(const ButtonPlatformLoop& loop, float progress);

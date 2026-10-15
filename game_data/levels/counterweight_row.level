@@ -1,6 +1,7 @@
 # Level 4: Counterweight Row
 # Use the boulder as mobile cover, drop it through the weak floor, then roll it
 # along the lower service lane onto the counterweight plate.
+author Adam Armstrong
 script counterweight_row
 playerStart 78 140
 

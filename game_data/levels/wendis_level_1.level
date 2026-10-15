@@ -2,6 +2,7 @@
 # Roll one ball down the entry slide to Button 1. It releases the trap door,
 # dropping a second ball onto Button 2 and revealing the tower ladder. Roll the
 # upper ball from its ledge onto Button 3 to open the exit.
+author Wendi
 script button_sequence
 bounds 0 0 1600 900
 playerStart 72 168

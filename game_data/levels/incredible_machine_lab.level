@@ -1,4 +1,5 @@
 # Dedicated laboratory for classic contraption parts. Campaign levels are unchanged.
+author Adam Armstrong
 script power_pulley_panic
 bounds 0 0 1600 900
 playerStart 55 775

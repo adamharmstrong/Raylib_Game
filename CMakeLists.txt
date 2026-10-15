@@ -144,6 +144,18 @@ if (BUILD_TESTING AND NOT "${PLATFORM}" STREQUAL "Web")
     target_link_libraries(TeslaCoilTests PRIVATE RaylibGameCore)
     add_test(NAME tesla_coil COMMAND TeslaCoilTests)
 
+    add_executable(ThornyVinesTests tests/ThornyVinesTests.cpp)
+    target_link_libraries(ThornyVinesTests PRIVATE RaylibGameCore)
+    target_compile_definitions(ThornyVinesTests PRIVATE
+        WATER_ESCAPE_LEVEL_PATH="${CMAKE_SOURCE_DIR}/game_data/levels/kirils_level_3.level")
+    add_test(NAME thorny_vines COMMAND ThornyVinesTests)
+
+    add_executable(LevelAuthorTests tests/LevelAuthorTests.cpp)
+    target_link_libraries(LevelAuthorTests PRIVATE RaylibGameCore)
+    target_compile_definitions(LevelAuthorTests PRIVATE
+        LEVEL_DIRECTORY="${CMAKE_SOURCE_DIR}/game_data/levels")
+    add_test(NAME level_authors COMMAND LevelAuthorTests)
+
     add_executable(LeedskalninDeviceTests tests/LeedskalninDeviceTests.cpp)
     target_link_libraries(LeedskalninDeviceTests PRIVATE RaylibGameCore)
     target_compile_definitions(LeedskalninDeviceTests PRIVATE

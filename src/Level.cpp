@@ -259,7 +259,11 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
             continue;
         }
 
-        if (command == "music") {
+        if (command == "author") {
+            std::getline(stream >> std::ws, level.author);
+            if (level.author.empty()) level.author = "Unknown";
+        }
+        else if (command == "music") {
             stream >> std::quoted(level.musicPath);
         }
         else if (command == "objectSound") {
@@ -829,6 +833,21 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
     resolveAudio(level.musicPath);
     for (auto& sound : level.objectSounds) resolveAudio(sound.path);
     return level;
+}
+
+std::string LoadLevelAuthorFromFile(const std::string& path, const std::string& fallback) {
+    std::ifstream file(path);
+    std::string line;
+    while (std::getline(file, line)) {
+        std::istringstream stream(line);
+        std::string command;
+        stream >> command;
+        if (command != "author") continue;
+        std::string author;
+        std::getline(stream >> std::ws, author);
+        return author.empty() ? fallback : author;
+    }
+    return fallback;
 }
 
 int GetTileBlockedFaces(const Level& level, const VisualTile& tile) {

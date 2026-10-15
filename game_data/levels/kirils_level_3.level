@@ -2,6 +2,7 @@
 # The platform stack is mapped directly from Kiril's multi-level water-escape
 # sketch: pipe and player on the bottom floor; a lower-right ladder; the broad
 # boulder lane; then increasingly staggered platforms to the top-left exit.
+author Kiril
 script water_escape
 bounds 0 0 1600 900
 playerStart 520 810
@@ -40,6 +41,11 @@ platform 270 472 1200 30
 ladder 430 472 48 155
 enemy 630 432 34 40 545 745 65
 
+# The wall growths are real climbable hazards. These replace the former
+# decorative vines while preserving their original locations and footprints.
+thornyVines 40 270 30 130 0.34
+thornyVines 40 500 30 220 0.34
+
 # The second short door is attached under the y=350 ceiling platform. Its 70px
 # plank clears the y=472 floor when it swings down.
 button 1250 456 76 16
@@ -57,6 +63,7 @@ enemy 1110 310 34 40 1060 1320 66
 platform 460 259 370 30
 platform 1035 259 370 30
 ladder 650 157 48 102
+thornyVines 1035 259 30 112 0.34
 
 # Top-left exit floor, its separate raised release-button shelf, and the
 # upper-right shelf. Keeping the release shelf detached matches the diagram.

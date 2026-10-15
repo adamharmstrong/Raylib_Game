@@ -617,6 +617,15 @@ bool ParseGuideObject(const std::string& command, std::istringstream& stream, Gu
         ConfigureRectangle(object, x, y, width, height, BodyType::Static);
         object.collider.isTrigger = true;
     }
+    else if (command == "thornyVines") {
+        object.type = GuideObjectType::ThornyVines;
+        if (!(stream >> x >> y >> width >> height) || width <= 0.0f || height <= 0.0f) return false;
+        object.damage = 0.34f;
+        if (!(stream >> object.damage)) stream.clear();
+        object.damage = fmaxf(0.0f, object.damage);
+        ConfigureRectangle(object, x, y, width, height, BodyType::Static);
+        object.collider.isTrigger = true;
+    }
     else if (command == "ball") {
         object.type = GuideObjectType::Ball;
         stream >> x >> y >> object.collider.radius >> object.body.mass;
@@ -1321,6 +1330,15 @@ bool IsTeslaCoilDischarging(const GuideObject& object) {
     const float cycleDuration = object.capacity + object.damage + object.speed;
     const float cycleTime = fmodf(fmaxf(0.0f, object.timer), fmaxf(0.001f, cycleDuration));
     return cycleTime >= object.capacity && cycleTime < object.capacity + object.damage;
+}
+
+bool IsGuideObjectClimbable(const GuideObject& object) {
+    return object.type == GuideObjectType::ThornyVines && object.active &&
+        !object.broken && !object.collected;
+}
+
+float GetGuideObjectContactDamage(const GuideObject& object) {
+    return IsGuideObjectClimbable(object) ? fmaxf(0.0f, object.damage) : 0.0f;
 }
 
 Vector2 GetAntiGravityPadAcceleration(
@@ -2562,6 +2580,7 @@ const char* GetGuideObjectName(GuideObjectType type) {
         case GuideObjectType::Teleforce: return "Teleforce Projector";
         case GuideObjectType::Rock: return "Rock";
         case GuideObjectType::TeslaCoil: return "Tesla Coil";
+        case GuideObjectType::ThornyVines: return "Thorny Vines";
     }
     return "Object";
 }
@@ -2682,6 +2701,7 @@ const char* GetGuideObjectDescription(GuideObjectType type) {
         case GuideObjectType::Teleforce: return "A Tesla-inspired particle projector that charges, then launches and destroys anything caught in its brief discharge.";
         case GuideObjectType::Rock: return "A decorative rock by Kiril.";
         case GuideObjectType::TeslaCoil: return "A powered high-voltage coil that periodically arcs through its surroundings, jolts physics objects, and broadcasts wireless power while discharging.";
+        case GuideObjectType::ThornyVines: return "A climbable tangle of sharp vines that continuously damages players while they remain in contact.";
         case GuideObjectType::SignalDust: return "A placeable conductive trace that carries a fading 15-step signal from touching power sources into its configured channel.";
         case GuideObjectType::TernaryTrace: return "Carries a fading balanced-ternary signal: cyan for negative, gray for zero, and magenta for positive.";
         case GuideObjectType::TernarySwitch: return "Cycles between negative, zero, and positive states to drive a touching ternary trace network.";
@@ -4000,6 +4020,48 @@ void DrawGuideObject(const GuideObject& object, Texture2D rockTexture) {
                 DrawCircleV(terminal, 8.0f, RAYWHITE);
                 DrawCircleV(terminal, 4.0f, SKYBLUE);
             }
+            break;
+        }
+        case GuideObjectType::ThornyVines: {
+            const Color shadow{27, 45, 24, 255};
+            const Color stem{50, 105, 48, 255};
+            const Color highlight{91, 151, 66, 255};
+            const Color thorn{224, 205, 151, 255};
+            const int stemCount = std::max(2, static_cast<int>(bounds.width / 15.0f));
+            const int segments = std::max(4, static_cast<int>(bounds.height / 18.0f));
+            for (int vine = 0; vine < stemCount; ++vine) {
+                const float lane = (static_cast<float>(vine) + 0.5f) / static_cast<float>(stemCount);
+                Vector2 previous{bounds.x + bounds.width * lane, bounds.y + bounds.height};
+                for (int segment = 1; segment <= segments; ++segment) {
+                    const float amount = static_cast<float>(segment) / static_cast<float>(segments);
+                    const float sway = sinf(amount * 8.0f + vine * 2.1f) *
+                        fminf(8.0f, bounds.width / static_cast<float>(stemCount + 1));
+                    const Vector2 point{bounds.x + bounds.width * lane + sway,
+                        bounds.y + bounds.height * (1.0f - amount)};
+                    DrawLineEx(previous, point, 5.0f, shadow);
+                    DrawLineEx(previous, point, 2.5f, vine % 2 == 0 ? stem : highlight);
+
+                    const Vector2 delta{point.x - previous.x, point.y - previous.y};
+                    const float length = fmaxf(0.001f, sqrtf(delta.x * delta.x + delta.y * delta.y));
+                    const Vector2 normal{-delta.y / length, delta.x / length};
+                    const Vector2 thornBase{(previous.x + point.x) * 0.5f,
+                        (previous.y + point.y) * 0.5f};
+                    const float side = (segment + vine) % 2 == 0 ? 1.0f : -1.0f;
+                    const Vector2 thornTip{thornBase.x + normal.x * 7.0f * side,
+                        thornBase.y + normal.y * 7.0f * side};
+                    DrawLineEx(thornBase, thornTip, 2.0f, shadow);
+                    DrawCircleV(thornTip, 1.6f, thorn);
+
+                    if ((segment + vine) % 2 == 0) {
+                        const Vector2 leafCenter{thornBase.x - normal.x * 5.0f * side,
+                            thornBase.y - normal.y * 5.0f * side};
+                        DrawEllipse(static_cast<int>(leafCenter.x), static_cast<int>(leafCenter.y),
+                            5.0f, 3.0f, Color{62, 126, 55, 255});
+                    }
+                    previous = point;
+                }
+            }
+            DrawRectangleLinesEx(bounds, 1.0f, Fade(Color{143, 198, 96, 255}, 0.28f));
             break;
         }
         case GuideObjectType::Oil:

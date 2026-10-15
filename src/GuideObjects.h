@@ -207,7 +207,8 @@ enum class GuideObjectType {
     ScubaGear,
     Teleforce,
     TeslaCoil,
-    Rock
+    Rock,
+    ThornyVines
 };
 
 struct GuideObject {
@@ -273,6 +274,8 @@ void UpdateGuideObjects(
     const Level* tileLevel = nullptr
 );
 bool IsGuideObjectHazardTouchingPlayer(const GuideObject& object, Rectangle playerRect);
+bool IsGuideObjectClimbable(const GuideObject& object);
+float GetGuideObjectContactDamage(const GuideObject& object);
 void DrawGuideObject(const GuideObject& object, Texture2D rockTexture = {});
 const char* GetGuideObjectName(GuideObjectType type);
 const char* GetGuideObjectDescription(GuideObjectType type);

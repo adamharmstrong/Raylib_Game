@@ -33,7 +33,7 @@ internal sealed class EditorForm : Form
         "Pinball Flipper", "Laser Emitter", "Laser Mixer", "Laser Detector", "Hot-Air Balloon", "Blimp",
         "Leaky Bucket", "Destructible Wood", "Destructible Brick", "Destructible Glass", "Glass Pane", "Glass Block",
         "Ice Block", "Ice Sheet", "Heater", "Campfire", "Torch", "Bucket of Water", "Signal Dust",
-        "Ternary Trace", "Ternary Switch", "TNT", "Wedge", "Scuba Gear", "Teleforce Projector", "Tesla Coil", "Rock", "Platform Loop"
+        "Ternary Trace", "Ternary Switch", "TNT", "Wedge", "Scuba Gear", "Teleforce Projector", "Tesla Coil", "Rock", "Platform Loop", "Thorny Vines"
     ];
 
     private readonly LevelDocument document = new();
@@ -1626,6 +1626,7 @@ internal sealed class EditorForm : Form
     private static string GetAssetCategory(int index) => GetAssetCommandIndex(index) switch
     {
         160 => "Mechanical",
+        161 => "Hazards",
         11 or 16 or 17 or 18 or 19 or 20 or 22 or 23 or 24 or 71 or 105 or 155 => "Simple Machines",
         0 or 1 or 2 or 44 or 46 or 159 => "Geometry",
         3 or 4 => "Regions",
@@ -1820,6 +1821,7 @@ internal sealed class EditorForm : Form
         item.Type.Equals("visualTileRect", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsLevelSettingOutlinerItem(LevelObject item) =>
+        item.Type.Equals("author", StringComparison.OrdinalIgnoreCase) ||
         item.Type.Equals("music", StringComparison.OrdinalIgnoreCase) ||
         item.Type.Equals("script", StringComparison.OrdinalIgnoreCase) ||
         item.Type.Equals("bounds", StringComparison.OrdinalIgnoreCase) ||
@@ -2262,7 +2264,8 @@ internal sealed class EditorForm : Form
         ClearActiveTransformButton();
         var index = Array.IndexOf(AssetNames, name);
         var placeable = index >= 0;
-        var boundsTool = index is >= 7 and <= 10 or 101 or 102;
+        var boundsTool = index is >= 7 and <= 10 or 101 or 102 ||
+            index >= 0 && GetAssetCommandIndex(index) == 161;
         if (placeable) viewport.SendCommand(27, GetAssetCommandIndex(index));
         statusLabel.Text = placeable
             ? boundsTool
@@ -2276,7 +2279,8 @@ internal sealed class EditorForm : Form
     private void SelectBrowserAsset(string? name)
     {
         var index = Array.IndexOf(AssetNames, name);
-        if (index is >= 7 and <= 10 or 101 or 102)
+        if (index is >= 7 and <= 10 or 101 or 102 ||
+            index >= 0 && GetAssetCommandIndex(index) == 161)
         {
             ActivateAsset(name);
             return;

@@ -1371,9 +1371,16 @@ namespace {
         })) {
             return true;
         }
-        return std::any_of(level.buttonLadderLinks.begin(), level.buttonLadderLinks.end(),
+        if (std::any_of(level.buttonLadderLinks.begin(), level.buttonLadderLinks.end(),
             [rect](const ButtonLadderLink& link) {
                 return link.activated && CheckCollisionRecs(rect, GetRevealedLadderRect(link));
+            })) {
+            return true;
+        }
+        return std::any_of(level.guideObjects.begin(), level.guideObjects.end(),
+            [rect](const GuideObject& object) {
+                return IsPlayerCollisionLayer(object.layer) && IsGuideObjectClimbable(object) &&
+                    CheckCollisionRecs(rect, GetGuideObjectBounds(object));
             });
     }
 
@@ -3604,6 +3611,8 @@ void Game::Reset() {
     toxinExposure = {};
     playerAir = {1.0f, 1.0f, 1.0f, 1.0f};
     playerAirWarningPhase = {};
+    playerHealth = {1.0f, 1.0f, 1.0f, 1.0f};
+    playerTouchingThorns = {};
     playerGasMasks = {};
     playerScubaGear = {};
     playerEnemyDamageGraceTimers = {};
@@ -3650,26 +3659,30 @@ void Game::OpenCharacterSelect(int playerCount) {
 
 void Game::InitializeOverworld() {
     overworldNodes = {
-        {"gatehouse", "1", "Gatehouse Generator", {280.0f, 500.0f}, 0, true, false},
-        {"rotary_latch_lab", "2", "Rotary Latch Lab", {475.0f, 390.0f}, 0, false, false},
-        {"lower_works", "3", "Flooded Lower Works", {680.0f, 505.0f}, 0, false, false},
-        {"counterweight_row", "4", "Counterweight Row", {885.0f, 365.0f}, 0, false, false},
-        {"neurotoxin_maze", "5", "The Neurotoxin Annex", {1100.0f, 475.0f}, 0, false, false},
-        {"clocktower_core", "6", "Clocktower Core", {1320.0f, 330.0f}, 0, false, false},
+        {"gatehouse", "1", "Gatehouse Generator", {}, {280.0f, 500.0f}, 0, true, false},
+        {"rotary_latch_lab", "2", "Rotary Latch Lab", {}, {475.0f, 390.0f}, 0, false, false},
+        {"lower_works", "3", "Flooded Lower Works", {}, {680.0f, 505.0f}, 0, false, false},
+        {"counterweight_row", "4", "Counterweight Row", {}, {885.0f, 365.0f}, 0, false, false},
+        {"neurotoxin_maze", "5", "The Neurotoxin Annex", {}, {1100.0f, 475.0f}, 0, false, false},
+        {"clocktower_core", "6", "Clocktower Core", {}, {1320.0f, 330.0f}, 0, false, false},
 
-        {"wendis_level_1", "W1", "Wendi's Three-Step Tumble", {545.0f, 465.0f}, 1, true, false},
-        {"wendis_level_2", "W2", "Portal Lift", {960.0f, 385.0f}, 1, true, false},
-        {"wendis_level_3", "K3", "Kiril's Rising Water Escape", {1250.0f, 520.0f}, 1, true, false},
+        {"wendis_level_1", "W1", "Wendi's Three-Step Tumble", {}, {545.0f, 465.0f}, 1, true, false},
+        {"wendis_level_2", "W2", "Portal Lift", {}, {960.0f, 385.0f}, 1, true, false},
+        {"kirils_level_3", "K3", "Kiril's Rising Water Escape", {}, {1250.0f, 520.0f}, 1, true, false},
 
-        {"test_level", "T", "Test Level", {285.0f, 405.0f}, 2, true, false},
-        {"massive_test_level", "M", "Massive Object Test Facility", {500.0f, 515.0f}, 2, true, false},
-        {"spring_test_level", "S", "Spring Laboratory", {720.0f, 375.0f}, 2, true, false},
-        {"tileset_reference", "R", "Tileset Reference", {935.0f, 490.0f}, 2, true, false},
-        {"gear_render_gallery", "G", "Gear Render Gallery", {1160.0f, 350.0f}, 2, true, false},
-        {"gatehouse_generator_test", "1G", "Gatehouse Generator Test", {1380.0f, 465.0f}, 2, true, false},
-        {"leedskalnin_workshop", "E", "Leedskalnin Workshop", {1390.0f, 250.0f}, 2, true, false},
-        {"incredible_machine_lab", "I", "Contraption Parts Laboratory", {1510.0f, 165.0f}, 2, true, false}
+        {"test_level", "T", "Test Level", {}, {285.0f, 405.0f}, 2, true, false},
+        {"massive_test_level", "M", "Massive Object Test Facility", {}, {500.0f, 515.0f}, 2, true, false},
+        {"spring_test_level", "S", "Spring Laboratory", {}, {720.0f, 375.0f}, 2, true, false},
+        {"tileset_reference", "R", "Tileset Reference", {}, {935.0f, 490.0f}, 2, true, false},
+        {"gear_render_gallery", "G", "Gear Render Gallery", {}, {1160.0f, 350.0f}, 2, true, false},
+        {"gatehouse_generator_test", "1G", "Gatehouse Generator Test", {}, {1380.0f, 465.0f}, 2, true, false},
+        {"leedskalnin_workshop", "E", "Leedskalnin Workshop", {}, {1390.0f, 250.0f}, 2, true, false},
+        {"incredible_machine_lab", "I", "Contraption Parts Laboratory", {}, {1510.0f, 165.0f}, 2, true, false}
     };
+
+    for (OverworldNode& node : overworldNodes) {
+        node.author = LoadLevelAuthorFromFile("game_data/levels/" + node.id + ".level");
+    }
 
     overworldPaths = {
         {0, 1},
@@ -3960,6 +3973,7 @@ void Game::Update(float dt) {
     }
     UpdateMachines(dt, player1Input, player2Input, player3Input, player4Input);
     UpdatePlayerAir(dt);
+    UpdateThornDamage(dt);
     UpdateEnemies(dt);
     luaScripts.Update(dt, {playerAlive ? &player : nullptr,
         multiplayerEnabled && player2Alive ? &player2 : nullptr,
@@ -4781,6 +4795,9 @@ void Game::UpdatePlayer(Player& activePlayer, const PlayerControls& controls, fl
         std::vector<Rectangle> climbLadders = level.ladders;
         for (const auto& link : level.buttonLadderLinks)
             if (link.activated) climbLadders.push_back(GetRevealedLadderRect(link));
+        for (const GuideObject& object : level.guideObjects)
+            if (IsPlayerCollisionLayer(object.layer) && IsGuideObjectClimbable(object))
+                climbLadders.push_back(GetGuideObjectBounds(object));
         Rectangle climbBounds = activePlayer.rect;
         // Include this step's horizontal travel so slight sideways movement on
         // the ladder does not collide with the edge of its temporary opening.
@@ -5338,6 +5355,38 @@ void Game::UpdatePlayerAir(float dt) {
         }
         else {
             playerAirWarningPhase[index] = 0.0f;
+        }
+    }
+}
+
+void Game::UpdateThornDamage(float dt) {
+    playerTouchingThorns = {};
+    if (won || lost || respawnGraceTimer > 0.0f) return;
+
+    Player* players[] = {
+        playerAlive ? &player : nullptr,
+        multiplayerEnabled && player2Alive ? &player2 : nullptr,
+        threePlayerEnabled && player3Alive ? &player3 : nullptr,
+        fourPlayerEnabled && player4Alive ? &player4 : nullptr
+    };
+    for (int playerIndex = 0; playerIndex < 4; ++playerIndex) {
+        Player* activePlayer = players[playerIndex];
+        if (activePlayer == nullptr) continue;
+
+        float damagePerSecond = 0.0f;
+        for (const GuideObject& object : level.guideObjects) {
+            if (!IsPlayerCollisionLayer(object.layer)) continue;
+            const float contactDamage = GetGuideObjectContactDamage(object);
+            if (contactDamage > 0.0f && CheckCollisionRecs(activePlayer->rect, GetGuideObjectBounds(object))) {
+                damagePerSecond = fmaxf(damagePerSecond, contactDamage);
+            }
+        }
+        playerTouchingThorns[playerIndex] = damagePerSecond > 0.0f;
+        if (!playerTouchingThorns[playerIndex] || playerInvincible) continue;
+
+        playerHealth[playerIndex] = fmaxf(0.0f, playerHealth[playerIndex] - damagePerSecond * dt);
+        if (playerHealth[playerIndex] <= 0.001f) {
+            KillPlayer(*activePlayer);
         }
     }
 }
@@ -6701,6 +6750,8 @@ void Game::KillPlayer(const Player& defeatedPlayer) {
     playerGasMasks[defeatedPlayerIndex] = false;
     playerScubaGear[defeatedPlayerIndex] = false;
     playerEnemyDamageGraceTimers[defeatedPlayerIndex] = 0.0f;
+    playerHealth[defeatedPlayerIndex] = 1.0f;
+    playerTouchingThorns[defeatedPlayerIndex] = false;
     const PlayerControllerSettings& controller = controllerSettings[defeatedPlayerIndex];
     const int gamepad = AvailableGamepad(controller);
     if (controller.vibration && gamepad >= 0) {
@@ -7320,12 +7371,12 @@ void Game::DrawOverworld() {
 
     constexpr const char* worldNames[3]{
         "FACTORY DISTRICT",
-        "WENDI'S WORKSHOP",
+        "DESIGNER WORKSHOP",
         "TEST WORLD"
     };
     constexpr const char* worldDescriptions[3]{
         "World 1  /  Main Campaign",
-        "World 2  /  Wendi's Levels",
+        "World 2  /  Guest Levels",
         "Tests & References"
     };
     selectedOverworldWorld = std::clamp(selectedOverworldWorld, 0, 2);
@@ -7419,15 +7470,16 @@ void Game::DrawOverworld() {
         DrawCenteredText(label, static_cast<int>(node.position.x), static_cast<int>(node.position.y - labelSize * 0.5f), labelSize, node.unlocked ? RAYWHITE : Fade(RAYWHITE, 0.38f));
     }
 
-    Rectangle panel{1030, 560, 460, 170};
+    Rectangle panel{1030, 548, 460, 190};
     DrawRectangleRec(panel, Color{20, 27, 34, 235});
     DrawRectangleLinesEx(panel, 2.0f, Fade(RAYWHITE, 0.45f));
 
     const OverworldNode& selectedNode = overworldNodes[selectedOverworldNode];
-    DrawText(selectedNode.name.c_str(), 1060, 583, 27, RAYWHITE);
-    DrawText(TextFormat("Node %s", selectedNode.label.c_str()), 1060, 620, 20, ORANGE);
-    DrawText(selectedNode.unlocked ? "Status: Unlocked" : "Status: Locked", 1060, 652, 20, selectedNode.unlocked ? GREEN : LIGHTGRAY);
-    DrawText(selectedNode.unlocked ? "Enter / click starts the level" : "Complete earlier levels to unlock", 1060, 684, 20, LIGHTGRAY);
+    DrawText(selectedNode.name.c_str(), 1060, 570, 27, RAYWHITE);
+    DrawText(TextFormat("Designed by %s", selectedNode.author.c_str()), 1060, 607, 19, LIGHTGRAY);
+    DrawText(TextFormat("Node %s", selectedNode.label.c_str()), 1060, 636, 20, ORANGE);
+    DrawText(selectedNode.unlocked ? "Status: Unlocked" : "Status: Locked", 1060, 666, 20, selectedNode.unlocked ? GREEN : LIGHTGRAY);
+    DrawText(selectedNode.unlocked ? "Enter / click starts the level" : "Complete earlier levels to unlock", 1060, 700, 20, LIGHTGRAY);
 
     std::vector<MenuButton> buttons{
         {{1240, 760, 250, 46}, "Back to Title"},
@@ -8493,16 +8545,6 @@ void Game::DrawGameplay() {
 
         DrawEllipse(861, 470, 54, 9, Color{210, 239, 45, 255});
         DrawEllipse(861, 468, 39, 5, YELLOW);
-        const auto drawVineCluster = [](float x, int firstY, int lastY) {
-            for (int y = firstY; y < lastY; y += 18) {
-                const float sway = static_cast<float>((y / 18) % 2 == 0 ? 7 : -7);
-                DrawLineEx({x, static_cast<float>(y)}, {x + sway, static_cast<float>(y + 18)}, 3.5f, DARKGREEN);
-                DrawLineEx({x + 16.0f, static_cast<float>(y + 4)}, {x + 16.0f - sway, static_cast<float>(y + 22)}, 3.5f, GREEN);
-            }
-        };
-        drawVineCluster(47.0f, 270, 390);
-        drawVineCluster(47.0f, 500, 704);
-        drawVineCluster(1042.0f, 259, 350);
     }
 
     // Draw ladders over simulated materials so submerged escape routes remain visible.
@@ -8709,7 +8751,11 @@ void Game::DrawGameplay() {
                 sinf(static_cast<float>(GetTime()) * 5.0f + swimPhase) * 3.5f;
         }
 
-        const Color tint = getAirWarningTint(activePlayer, playerIndex);
+        Color tint = getAirWarningTint(activePlayer, playerIndex);
+        if (playerTouchingThorns[playerIndex]) {
+            const float pulse = reducedFlashing ? 0.38f : 0.42f + 0.16f * sinf(static_cast<float>(GetTime()) * 12.0f);
+            tint = ColorLerp(tint, Color{255, 82, 70, 255}, pulse);
+        }
         const int character =
             std::clamp(selectedCharacters[playerIndex], 0, kCharacterCount - 1);
         if (character < 3) {
@@ -8806,6 +8852,31 @@ void Game::DrawGameplay() {
 
     if (objectTooltipsEnabled) {
         DrawHoveredObjectTooltip(level, renderCamera);
+    }
+
+    const bool hasThornyVines = std::any_of(level.guideObjects.begin(), level.guideObjects.end(),
+        [](const GuideObject& object) {
+            return IsPlayerCollisionLayer(object.layer) && IsGuideObjectClimbable(object);
+        });
+    if (hasThornyVines) {
+        const bool alive[] = {playerAlive, multiplayerEnabled && player2Alive,
+            threePlayerEnabled && player3Alive, fourPlayerEnabled && player4Alive};
+        const int activePlayers = fourPlayerEnabled ? 4 : (threePlayerEnabled ? 3 : (multiplayerEnabled ? 2 : 1));
+        const int panelWidth = 224;
+        const int panelX = Constants::ScreenWidth - panelWidth - 20;
+        DrawRectangle(panelX, 20, panelWidth, 18 + activePlayers * 26, Fade(BLACK, 0.62f));
+        for (int index = 0; index < activePlayers; ++index) {
+            const int y = 31 + index * 26;
+            const char* label = activePlayers == 1 ? "HEALTH" : TextFormat("P%d", index + 1);
+            DrawText(label, panelX + 10, y, 15, alive[index] ? RAYWHITE : GRAY);
+            const int barX = panelX + (activePlayers == 1 ? 76 : 42);
+            const int barWidth = panelWidth - (barX - panelX) - 10;
+            DrawRectangle(barX, y + 1, barWidth, 13, Color{43, 47, 49, 255});
+            DrawRectangle(barX + 2, y + 3,
+                static_cast<int>((barWidth - 4) * Clamp01(playerHealth[index])), 9,
+                playerTouchingThorns[index] ? Color{235, 57, 50, 255} : Color{78, 188, 91, 255});
+            DrawRectangleLines(barX, y + 1, barWidth, 13, BLACK);
+        }
     }
 
     if (showFPS) DrawFPS(10, 10);

@@ -1,4 +1,5 @@
 # Five-wheel latch lab. Uses game assets and contains placement/tuning only.
+author Adam Armstrong
 script rotary_latch_lab
 playerStart 80 600
 

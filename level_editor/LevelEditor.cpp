@@ -125,6 +125,7 @@ const char* GuideObjectCategory(GuideObjectType type) {
     if (type >= GuideObjectType::Spring && type <= GuideObjectType::CompositeSpring) return "Springs";
     switch (type) {
     case GuideObjectType::Rock: return "Geometry";
+    case GuideObjectType::ThornyVines: return "Hazards";
     case GuideObjectType::Ball:
     case GuideObjectType::Barrel:
     case GuideObjectType::PendulumBob:
@@ -274,7 +275,7 @@ const std::vector<CatalogEntry>& AssetCatalog() {
             {"Toxin Leak", "Hazards", LevelEditor::EditTool::ToxinLeak, true}, {"Valve Fluid Fill", "Logic"}
         };
         for (int value = static_cast<int>(GuideObjectType::Ball);
-            value <= static_cast<int>(GuideObjectType::Rock); ++value) {
+            value <= static_cast<int>(GuideObjectType::ThornyVines); ++value) {
             const GuideObjectType type = static_cast<GuideObjectType>(value);
             const LevelEditor::EditTool tool = GuideObjectTool(type);
             entries.push_back({GetGuideObjectName(type), GuideObjectCategory(type), tool,
@@ -342,7 +343,7 @@ bool ReadAssetCommand(IDataObject* data, int& assetCommand) {
     if (text != nullptr) {
         wchar_t* end = nullptr;
         const long value = wcstol(text, &end, 10);
-        valid = end != text && *end == L'\0' && value >= 0 && value <= 160;
+        valid = end != text && *end == L'\0' && value >= 0 && value <= 161;
         if (valid) assetCommand = static_cast<int>(value);
         GlobalUnlock(medium.hGlobal);
     }
@@ -515,6 +516,7 @@ const char* ToolName(LevelEditor::EditTool tool) {
     case LevelEditor::EditTool::Teleforce: return "Teleforce Projector";
     case LevelEditor::EditTool::TeslaCoil: return "Tesla Coil";
     case LevelEditor::EditTool::PlatformLoop: return "Platform Loop";
+    case LevelEditor::EditTool::ThornyVines: return "Thorny Vines";
     case LevelEditor::EditTool::SeeSaw: return "See Saw";
     case LevelEditor::EditTool::TrapDoor: return "Trap Door";
     case LevelEditor::EditTool::Chain: return "Chain";
@@ -968,7 +970,7 @@ void LevelEditor::GenerateContentThumbnails() const {
         "Pinball Flipper", "Laser Emitter", "Laser Mixer", "Laser Detector", "Hot-Air Balloon", "Blimp",
         "Leaky Bucket", "Destructible Wood", "Destructible Brick", "Destructible Glass",
         "Glass Pane", "Glass Block", "Ice Block", "Ice Sheet", "Heater", "Campfire", "Torch", "Bucket of Water",
-        "Signal Dust", "Ternary Trace", "Ternary Switch", "TNT", "Wedge", "Scuba Gear", "Teleforce Projector", "Tesla Coil", "Rock", "Platform Loop"
+        "Signal Dust", "Ternary Trace", "Ternary Switch", "TNT", "Wedge", "Scuba Gear", "Teleforce Projector", "Tesla Coil", "Rock", "Platform Loop", "Thorny Vines"
     };
     constexpr int Count = static_cast<int>(std::size(names));
     constexpr int Rows = (Count + Columns - 1) / Columns;
@@ -1305,6 +1307,7 @@ bool LevelEditor::SaveLevel() {
 
     output << std::fixed << std::setprecision(2);
     output << "# Saved by Power Pulley Panic Level Editor\n";
+    output << "author " << level.author << "\n";
     for (const auto& passage : level.tilePassages)
         output << "tilePassage " << passage.sheetIndex << ' ' << passage.column << ' '
             << passage.row << ' ' << passage.blockedFaces << '\n';
@@ -3566,6 +3569,7 @@ void LevelEditor::ProcessViewportHostCommand() {
             else if (value == 158) activeTool = EditTool::TeslaCoil;
             else if (value == 159) activeTool = EditTool::Rock;
             else if (value == 160) activeTool = EditTool::PlatformLoop;
+            else if (value == 161) activeTool = EditTool::ThornyVines;
             else break;
             {
                 tilePaintTool = TilePaintTool::None;
@@ -5564,7 +5568,8 @@ void LevelEditor::UpdateEditing(Rectangle canvas) {
 
     const bool fluidBoundsTool = activeTool == EditTool::Water || activeTool == EditTool::Sand ||
         activeTool == EditTool::Gel || activeTool == EditTool::Gas ||
-        activeTool == EditTool::WaterPit || activeTool == EditTool::ToxinLeak;
+        activeTool == EditTool::WaterPit || activeTool == EditTool::ToxinLeak ||
+        activeTool == EditTool::ThornyVines;
     if (assetDrop) {
         draggingCreate = false;
         dragStart = world;
@@ -6292,11 +6297,17 @@ void LevelEditor::UpdateEditing(Rectangle canvas) {
         case EditTool::Teleforce:
         case EditTool::Rock:
         case EditTool::TeslaCoil:
+        case EditTool::ThornyVines:
         {
             const auto* entry = FindAdvancedPlacement(activeTool);
             GuideObject object{};
             std::ostringstream arguments;
-            arguments << world.x << ' ' << world.y << ' ' << (std::string(entry->defaults).substr(4));
+            if (activeTool == EditTool::ThornyVines) {
+                arguments << rect.x << ' ' << rect.y << ' ' << rect.width << ' ' << rect.height << " 0.34";
+            }
+            else {
+                arguments << world.x << ' ' << world.y << ' ' << (std::string(entry->defaults).substr(4));
+            }
             std::istringstream stream(arguments.str());
             if (!ParseGuideObject(entry->command, stream, object)) break;
             if (object.type == GuideObjectType::ElectricalArc) {

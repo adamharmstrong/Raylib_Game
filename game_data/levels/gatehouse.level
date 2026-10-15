@@ -1,4 +1,5 @@
 # Power Pulley Panic factory layout
+author Adam Armstrong
 script power_pulley_panic
 playerStart 80 600
 

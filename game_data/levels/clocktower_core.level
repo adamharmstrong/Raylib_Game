@@ -1,6 +1,7 @@
 # Level 6: Clocktower Core
 # One vast mechanism fills the back wall. Stop the three marked drive gears when
 # their corresponding hands reach XII; a mistimed gear can be restarted.
+author Adam Armstrong
 script clocktower_core
 bounds 0 0 1600 900
 playerStart 64 770

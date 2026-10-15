@@ -1,4 +1,5 @@
 # Alternate Gatehouse test: the pulley machine drives a simulated generator.
+author Adam Armstrong
 script power_pulley_panic
 playerStart 80 600
 

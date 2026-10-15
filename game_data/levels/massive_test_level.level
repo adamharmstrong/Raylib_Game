@@ -1,5 +1,6 @@
 # Compact two-floor facility for testing the complete reusable object catalog.
 # Three ladder shafts provide shortcuts around the dedicated hazard room.
+author Adam Armstrong
 script power_pulley_panic
 bounds 0 0 3600 1800
 cameraZone 0 0 3600 900

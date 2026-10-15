@@ -1,4 +1,5 @@
 # Dedicated laboratory for comparing every reusable spring family.
+author Adam Armstrong
 script power_pulley_panic
 playerStart 780 810
 exit 1500 700 85 210

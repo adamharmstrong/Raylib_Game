@@ -83,6 +83,7 @@ struct OverworldNode {
     std::string id;
     std::string label;
     std::string name;
+    std::string author;
     Vector2 position;
     int world{0};
     bool unlocked{false};
@@ -148,6 +149,7 @@ private:
     void UpdateWind(float dt);
     void UpdateFluids(float dt);
     void UpdatePlayerAir(float dt);
+    void UpdateThornDamage(float dt);
     void UpdateNeurotoxin(
         float dt,
         const PlayerMachineInput& player1Input,
@@ -335,6 +337,8 @@ private:
     std::array<float, 4> toxinExposure{};
     std::array<float, 4> playerAir{1.0f, 1.0f, 1.0f, 1.0f};
     std::array<float, 4> playerAirWarningPhase{};
+    std::array<float, 4> playerHealth{1.0f, 1.0f, 1.0f, 1.0f};
+    std::array<bool, 4> playerTouchingThorns{};
     std::array<bool, 4> playerGasMasks{};
     std::array<bool, 4> playerScubaGear{};
     std::array<float, 4> playerEnemyDamageGraceTimers{};

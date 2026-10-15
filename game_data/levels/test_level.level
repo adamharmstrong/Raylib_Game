@@ -1,4 +1,5 @@
 # Organized sandbox for experimenting with reusable level objects.
+author Adam Armstrong
 script power_pulley_panic
 # Start beside the fluid tank on the upper catalog floor.
 playerStart 1040 260

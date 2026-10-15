@@ -1,6 +1,7 @@
 # Level 5: The Neurotoxin Annex
 # Follow the alternating ladders to the emergency shutoff, then return to the
 # entrance after the safety interlock opens the exit door.
+author Adam Armstrong
 script neurotoxin_maze
 playerStart 92 790
 

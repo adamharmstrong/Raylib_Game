@@ -1,5 +1,6 @@
 # Tileset reference room matched to Target_Example.png.
 # Coordinates are laid out on a 32px grid to make tile rule mistakes obvious.
+author Adam Armstrong
 script tileset_reference
 playerStart 657 232
 

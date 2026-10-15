@@ -1,4 +1,5 @@
 # Flooded Lower Works. Turn the valve, flood the spike pit, then swim across.
+author Adam Armstrong
 script flooded_foundry
 playerStart 80 600
 

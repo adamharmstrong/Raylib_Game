@@ -1,5 +1,6 @@
 # Gear Render Gallery
 # Two screen-sized galleries for auditing gears and reusable spring families.
+author Adam Armstrong
 bounds 0 0 3200 900
 cameraZone 0 0 1600 900
 cameraZone 1600 0 1600 900

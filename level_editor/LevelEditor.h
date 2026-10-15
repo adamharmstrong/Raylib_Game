@@ -177,6 +177,7 @@ public:
         TeslaCoil,
         Rock,
         PlatformLoop,
+        ThornyVines,
 
     };
 
