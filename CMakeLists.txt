@@ -55,6 +55,11 @@ if (NOT "${PLATFORM}" STREQUAL "Web")
 endif()
 
 if (BUILD_TESTING AND NOT "${PLATFORM}" STREQUAL "Web")
+    add_executable(WaterEscapeTests tests/WaterEscapeTests.cpp)
+    target_link_libraries(WaterEscapeTests PRIVATE RaylibGameCore)
+    target_compile_definitions(WaterEscapeTests PRIVATE
+        WATER_ESCAPE_LEVEL_PATH="${CMAKE_SOURCE_DIR}/game_data/levels/kirils_level_3.level")
+    add_test(NAME water_escape COMMAND WaterEscapeTests)
     add_executable(CustomLevelTests tests/CustomLevelTests.cpp)
     target_link_libraries(CustomLevelTests PRIVATE RaylibGameCore)
     add_test(NAME custom_levels COMMAND CustomLevelTests)

@@ -12,6 +12,8 @@
 #include <unordered_set>
 #include <vector>
 
+float GetTilePassageViewportStrokeWidth(const Level& level, const VisualTile& tile, float zoom);
+
 class LevelEditor {
     friend struct EditorRotationTestAccess;
 public:
@@ -178,6 +180,7 @@ public:
         Rock,
         PlatformLoop,
         ThornyVines,
+        SimpleHingedDoor,
 
     };
 
@@ -372,7 +375,10 @@ private:
     float TransformAxisLength(Rectangle bounds, Vector2 anchor, bool horizontal) const;
     std::array<Vector2, 3> ScaleHandlePositions(Rectangle bounds) const;
     bool IsGroupSelected(const Selection& item) const;
+    bool IsOutlinerObjectVisible(const std::string& name, int index) const;
     void SetPrimarySelection(const Selection& item);
+    void CaptureGroupTransformState();
+    void ApplyGroupRotation(float deltaDegrees);
     float* SelectedRotation();
     void EnsureRotationSelectionBounds();
     void TogglePivotLock();
@@ -391,6 +397,9 @@ private:
     void MarkDirty(const std::string& message);
 
     Level level{};
+    mutable Level visiblePreviewLevel{};
+    mutable bool visiblePreviewLevelDirty{true};
+    std::unordered_set<std::string> hiddenOutlinerObjects;
     Camera2D camera{};
     Font uiFont{};
     Texture2D industrialTiles{};
@@ -465,6 +474,7 @@ private:
     Vector2 marqueeCurrent{};
     std::vector<Rectangle> transformOriginalGroupRects;
     std::vector<Vector2> transformOriginalGroupPoints;
+    std::vector<float> transformOriginalGroupRotations;
     Rectangle transformOriginalGroupBounds{};
     float transformOriginalRotation{0.0f};
     float transformDragStartAngle{0.0f};

@@ -1032,7 +1032,10 @@ namespace {
         for (const TrapDoor& object : currentLevel.trapDoors) {
             float angle = object.angle * DEG2RAD;
             Vector2 center{object.hinge.x + cosf(angle) * object.length * 0.5f, object.hinge.y + sinf(angle) * object.length * 0.5f};
-            consider(RotatedObjectBounds(center, object.length + 18.0f, fmaxf(object.thickness, 28.0f), object.angle), "Trap Door", "A hinged floor door with attachment rings that ropes and chains can pull open.");
+            consider(RotatedObjectBounds(center, object.length + 18.0f, fmaxf(object.thickness, 28.0f), object.angle),
+                object.kind == HingedDoorKind::SimpleHingedDoor ? "Simple Hinged Door" : "Trap Door",
+                object.kind == HingedDoorKind::SimpleHingedDoor ? "A simple button-controlled plank that briefly slows incoming floodwater when lowered." :
+                "A hinged floor door with attachment rings that ropes and chains can pull open.");
         }
         for (const Button& object : currentLevel.buttons) consider(object.rect, "Button", "A pressure switch activated by a player or physics object resting on it.");
         for (const ArrowTrap& object : currentLevel.arrowTraps) consider({object.position.x - 19.0f, object.position.y - 19.0f, 38.0f, 38.0f}, "Arrow Trap", "A timed hazard that repeatedly fires arrows in its facing direction.");
@@ -3611,6 +3614,7 @@ void Game::Reset() {
     machinePhase = 0.0f;
     machinePower = 0.0f;
     gateBottom = HasArea(level.exitTrigger) ? level.exitTrigger.y + level.exitTrigger.height : 650.0f;
+    waterEscapeState = {};
     levelClearTimer = 0.0f;
     toxinExposure = {};
     playerAir = {1.0f, 1.0f, 1.0f, 1.0f};
@@ -5232,7 +5236,8 @@ std::array<bool, 4> Game::UpdateFlexibleEndpointInteractions(
         }
         else if (binding.anchorType == FlexibleAnchorType::TrapDoorRing) {
             if (binding.objectIndex >= 0 && binding.objectIndex < static_cast<int>(level.trapDoors.size()) &&
-                binding.pointIndex >= 0 && binding.pointIndex < 2) {
+                binding.pointIndex >= 0 && binding.pointIndex < 2 &&
+                level.trapDoors[binding.objectIndex].kind == HingedDoorKind::TrapDoor) {
                 std::array<Vector2, 2> rings = GetTrapDoorRingPositions(level.trapDoors[binding.objectIndex]);
                 setPinnedPosition(endpoint, rings[binding.pointIndex]);
             }
@@ -5266,6 +5271,7 @@ std::array<bool, 4> Game::UpdateFlexibleEndpointInteractions(
                 int bestTrapDoor = -1;
                 int bestRing = -1;
                 for (int trapDoorIndex = 0; trapDoorIndex < static_cast<int>(level.trapDoors.size()); trapDoorIndex++) {
+                    if (level.trapDoors[trapDoorIndex].kind != HingedDoorKind::TrapDoor) continue;
                     std::array<Vector2, 2> rings = GetTrapDoorRingPositions(level.trapDoors[trapDoorIndex]);
                     for (int ringIndex = 0; ringIndex < static_cast<int>(rings.size()); ringIndex++) {
                         Rectangle anchorBounds{rings[ringIndex].x - 2.0f, rings[ringIndex].y - 2.0f, 4.0f, 4.0f};
@@ -5564,6 +5570,7 @@ void Game::UpdateMachines(
         UpdateFluids(dt);
         UpdatePhysicsObjects(dt);
         UpdateButtons();
+        if (level.script != LevelScript::WaterEscape) UpdateSimpleHingedDoors(level, waterEscapeState, dt);
         UpdatePortals();
         UpdateArrowTraps(dt);
         UpdateBreakableTiles(dt);
@@ -5915,39 +5922,26 @@ void Game::UpdateMachines(
     }
 
     if (level.script == LevelScript::WaterEscape) {
-        // The ruptured pipe at the base of the chamber runs continuously. The
-        // shared fluid-fill settings define how quickly its water column rises.
         if (!won && !lost) {
-            for (ButtonTrapDoorLink& link : level.buttonTrapDoorLinks) {
-                if (link.buttonIndex >= 0 && link.buttonIndex < static_cast<int>(level.buttons.size()) &&
-                    level.buttons[link.buttonIndex].pressed) {
-                    link.activated = true;
-                }
-                if (link.activated && link.trapDoorIndex >= 0 &&
-                    link.trapDoorIndex < static_cast<int>(level.trapDoors.size())) {
-                    TrapDoor& door = level.trapDoors[link.trapDoorIndex];
-                    door.angle = MoveTowardsFloat(door.angle, link.openAngle, link.speed * dt);
-                }
-            }
-
-            if (level.buttonExitLink.buttonIndex >= 0 &&
-                level.buttonExitLink.buttonIndex < static_cast<int>(level.buttons.size()) &&
-                level.buttons[level.buttonExitLink.buttonIndex].pressed) {
-                level.buttonExitLink.activated = true;
-            }
+            std::vector<Rectangle> livingPlayers;
+            if (playerAlive) livingPlayers.push_back(player.rect);
+            if (multiplayerEnabled && player2Alive) livingPlayers.push_back(player2.rect);
+            if (threePlayerEnabled && player3Alive) livingPlayers.push_back(player3.rect);
+            if (fourPlayerEnabled && player4Alive) livingPlayers.push_back(player4.rect);
+            UpdateWaterEscape(level, waterEscapeState, livingPlayers, dt);
 
             FluidField* flood = GetValveFluid(level);
-            if (HasValveFluidFill(level) && flood != nullptr && flood->cellSize > 0.0f) {
+            if (waterEscapeState.flooding && HasValveFluidFill(level) && flood != nullptr && flood->cellSize > 0.0f) {
                 const float targetMass = GetValveFluidTargetMass(level, *flood);
                 const float remainingMass = fmaxf(0.0f, targetMass - GetFluidMass(*flood));
                 const float massPerVerticalPixel = static_cast<float>(flood->gridColumns) / flood->cellSize;
-                // Each deployed wooden door buffers the leak's pressure, but
-                // its floor gap still lets a meaningful amount of water pass.
-                float leakRate = level.valveFluidFill.riseRate;
-                for (const ButtonTrapDoorLink& link : level.buttonTrapDoorLinks) {
-                    if (link.activated) leakRate *= 0.72f;
-                }
-                AddCellularFluidMass(*flood, fminf(leakRate * massPerVerticalPixel * dt, remainingMass));
+                // Closed barriers leak partially, then lose their pressure buffer after five seconds.
+                const float leakRate = level.valveFluidFill.riseRate *
+                    WaterEscapeLeakMultiplier(level, waterEscapeState);
+                // Emit at the pipe mouth. Bulk bottom-up filling bypasses floors
+                // by directly creating water in disconnected upper spaces.
+                EmitCellularFluidMass(*flood, {338.0f, 832.0f},
+                    fminf(leakRate * massPerVerticalPixel * dt, remainingMass), {80.0f, 0.0f});
             }
         }
 
@@ -5968,6 +5962,8 @@ void Game::UpdateMachines(
             (level.buttonExitLink.buttonIndex >= 0 ? 1 : 0);
 
         for (ButtonTrapDoorLink& link : level.buttonTrapDoorLinks) {
+            if (link.trapDoorIndex >= 0 && link.trapDoorIndex < static_cast<int>(level.trapDoors.size()) &&
+                level.trapDoors[link.trapDoorIndex].kind == HingedDoorKind::SimpleHingedDoor) continue;
             if (link.buttonIndex >= 0 && link.buttonIndex < static_cast<int>(level.buttons.size()) &&
                 level.buttons[link.buttonIndex].pressed) {
                 link.activated = true;
@@ -7010,7 +7006,7 @@ void Game::CheckFailureConditions() {
 
         // Kiril's acid puddle is intentionally low and jumpable, unlike the
         // factory spike strips used by the rest of the campaign.
-        const Rectangle waterEscapeAcid{807.0f, 457.0f, 108.0f, 22.0f};
+        const Rectangle waterEscapeAcid{807.0f, 425.0f, 108.0f, 22.0f};
         if (level.script == LevelScript::WaterEscape &&
             CheckCollisionRecs(activePlayer->rect, waterEscapeAcid)) {
             KillPlayer(*activePlayer);
@@ -7115,6 +7111,8 @@ void Game::CheckWinCondition(float gateBottom) {
         bool playerCenteredInDoorway = fabsf(playerCenter.x - doorwayCenterX) <= DoorwayCenterTolerance;
         bool doorRaisedPastPlayer = gateBottom <= activePlayer->rect.y + 4.0f;
         bool doorUnlocked = luaExitOpen || (latchesComplete && doorRaisedPastPlayer && (!hasFactoryMachine || machinePower > 0.05f));
+        if (level.script == LevelScript::WaterEscape && waterEscapeState.exitSeconds <= 0.0f)
+            doorUnlocked = false;
 
         if (doorUnlocked && playerCenteredInDoorway && CheckCollisionPointRec(playerCenter, level.exitTrigger)) {
             BeginLevelClear();
@@ -8330,43 +8328,43 @@ void Game::DrawGameplay() {
             const bool above = std::find(level.customTileLayersAboveDefaults.begin(), level.customTileLayersAboveDefaults.end(), drawLayer)
                 != level.customTileLayersAboveDefaults.end();
             if (above != front) continue;
-            for (const VisualTile& tile : level.visualTiles) {
-                if (tile.layer != drawLayer) continue;
+            ForEachGameRenderableVisualTile(level, [&](const VisualTile& tile) {
+                if (tile.layer != drawLayer) return;
                 const Texture2D sheet = spriteSheets.Get(tile.sheetIndex, industrialTiles, industrialBackground, industrialFarBackground);
                 DrawTilesetTile(sheet, tile.sheetIndex == 2 ? 0 : tile.column, tile.sheetIndex == 2 ? 0 : tile.row,
                     tile.position, WHITE, tile.quarterTurns, tile.flipX, tile.flipY, tile.animationFrames, tile.animationFrameSeconds);
-            }
+            });
         }
     };
-    const bool hasExplicitVisualTiles = std::any_of(level.visualTiles.begin(), level.visualTiles.end(), [](const VisualTile& tile) {
-        return tile.layer != TileLayer::Collision;
+    const bool hasExplicitVisualTiles = std::any_of(level.visualTiles.begin(), level.visualTiles.end(), [&](const VisualTile& tile) {
+        return ShouldRenderVisualTileInGame(level, tile);
     });
     if (hasExplicitVisualTiles) {
         drawCustomLayers(false);
-        for (const VisualTile& tile : level.visualTiles) {
+        ForEachGameRenderableVisualTile(level, [&](const VisualTile& tile) {
             if (tile.layer == TileLayer::FarBackground) {
                 const Texture2D sheet = spriteSheets.Get(tile.sheetIndex, industrialTiles, industrialBackground, industrialFarBackground);
                 DrawTilesetTile(sheet, tile.sheetIndex == 2 ? 0 : tile.column,
                     tile.sheetIndex == 2 ? 0 : tile.row, tile.position, WHITE,
                     tile.quarterTurns, tile.flipX, tile.flipY, tile.animationFrames, tile.animationFrameSeconds);
             }
-        }
-        for (const VisualTile& tile : level.visualTiles) {
+        });
+        ForEachGameRenderableVisualTile(level, [&](const VisualTile& tile) {
             if (tile.layer == TileLayer::Background) {
                 const Texture2D sheet = spriteSheets.Get(tile.sheetIndex, industrialTiles, industrialBackground, industrialFarBackground);
                 DrawTilesetTile(sheet, tile.sheetIndex == 2 ? 0 : tile.column,
                     tile.sheetIndex == 2 ? 0 : tile.row, tile.position, WHITE,
                     tile.quarterTurns, tile.flipX, tile.flipY, tile.animationFrames, tile.animationFrameSeconds);
             }
-        }
-        for (const VisualTile& tile : level.visualTiles) {
+        });
+        ForEachGameRenderableVisualTile(level, [&](const VisualTile& tile) {
             if (tile.layer == TileLayer::Middleground) {
                 const Texture2D sheet = spriteSheets.Get(tile.sheetIndex, industrialTiles, industrialBackground, industrialFarBackground);
                 DrawTilesetTile(sheet, tile.sheetIndex == 2 ? 0 : tile.column,
                     tile.sheetIndex == 2 ? 0 : tile.row, tile.position, WHITE,
                     tile.quarterTurns, tile.flipX, tile.flipY, tile.animationFrames, tile.animationFrameSeconds);
             }
-        }
+        });
         for (const FluidField& fluid : level.fluids) {
             DrawFluidBackground(fluid);
         }
@@ -8389,15 +8387,22 @@ void Game::DrawGameplay() {
     }
 
     if (hasExplicitVisualTiles) {
-        for (const VisualTile& tile : level.visualTiles) {
+        ForEachGameRenderableVisualTile(level, [&](const VisualTile& tile) {
             if (tile.layer == TileLayer::Foreground) {
                 const Texture2D sheet = spriteSheets.Get(tile.sheetIndex, industrialTiles, industrialBackground, industrialFarBackground);
                 DrawTilesetTile(sheet, tile.sheetIndex == 2 ? 0 : tile.column,
                     tile.sheetIndex == 2 ? 0 : tile.row, tile.position, WHITE,
                     tile.quarterTurns, tile.flipX, tile.flipY, tile.animationFrames, tile.animationFrameSeconds);
             }
-        }
+        });
         drawCustomLayers(true);
+        ForEachGameRenderableVisualTile(level, [&](const VisualTile& tile) {
+            if (tile.layer != TileLayer::Collision) return;
+            const Texture2D sheet = spriteSheets.Get(tile.sheetIndex, industrialTiles, industrialBackground, industrialFarBackground);
+            DrawTilesetTile(sheet, tile.sheetIndex == 2 ? 0 : tile.column,
+                tile.sheetIndex == 2 ? 0 : tile.row, tile.position, WHITE,
+                tile.quarterTurns, tile.flipX, tile.flipY, tile.animationFrames, tile.animationFrameSeconds);
+        });
     }
     else {
         for (const Rectangle& solid : level.baseSolids) {
@@ -8715,11 +8720,13 @@ void Game::DrawGameplay() {
         DrawCircle(312, 819, 34.0f, Color{83, 96, 102, 255});
         DrawCircleLines(312, 819, 34.0f, Color{25, 31, 35, 255});
         DrawCircle(312, 819, 20.0f, Color{19, 28, 33, 255});
-        DrawCircle(338, 832, 7.0f, SKYBLUE);
-        DrawCircle(356, 844, 5.0f, Fade(SKYBLUE, 0.82f));
+        if (waterEscapeState.flooding) {
+            DrawCircle(338, 832, 7.0f, SKYBLUE);
+            DrawCircle(356, 844, 5.0f, Fade(SKYBLUE, 0.82f));
+        }
 
-        DrawEllipse(861, 470, 54, 9, Color{210, 239, 45, 255});
-        DrawEllipse(861, 468, 39, 5, YELLOW);
+        DrawEllipse(861, 438, 54, 9, Color{210, 239, 45, 255});
+        DrawEllipse(861, 436, 39, 5, YELLOW);
     }
 
     // Draw ladders over simulated materials so submerged escape routes remain visible.
@@ -9116,7 +9123,8 @@ void Game::DrawGameplay() {
         const float waterPercent = HasValveFluidFill(level) ? GetValveFluidFillProgress(level) * 100.0f : 0.0f;
         DrawRectangle(20, 20, 510, 66, Fade(BLACK, 0.52f));
         DrawText(TextFormat("Rising Water: %.0f%%", waterPercent), 34, 31, 20, RAYWHITE);
-        DrawText(level.buttonExitLink.activated ? "Exit gate open - get out!" : "Climb above the leak and unlock the exit", 34, 58, 20,
+        DrawText(level.buttonExitLink.activated ? TextFormat("Exit open: %.1fs - get back!", waterEscapeState.exitSeconds) :
+            (waterEscapeState.flooding ? "Water rising! Climb to the top release button" : "Reach the exit above. Moving right starts the flood"), 34, 58, 20,
             level.buttonExitLink.activated ? GREEN : ORANGE);
     }
 
@@ -9769,7 +9777,7 @@ void Game::DrawDebugCollision() const {
         std::array<Vector2, 2> rings = GetTrapDoorRingPositions(trapDoor);
         DrawLineEx(trapDoor.hinge, end, 2, Fade(BROWN, 0.95f));
         DrawCircleLinesV(trapDoor.hinge, trapDoor.thickness * 0.65f, Fade(BROWN, 0.95f));
-        for (Vector2 ring : rings) {
+        if (trapDoor.kind == HingedDoorKind::TrapDoor) for (Vector2 ring : rings) {
             DrawCircleLinesV(ring, trapDoor.thickness * 0.55f, Fade(BROWN, 0.95f));
         }
     }

@@ -146,6 +146,12 @@ int main() {
         Require(target.type == expected && target.index == 0, "Viewport target picking must identify each supported button target.");
         Require(PickEditorControlTarget(level, point, true).index == -1, "Valves must reject non-fluid targets.");
     }
+    pickDoor.kind = HingedDoorKind::SimpleHingedDoor;
+    pickDoor.hinge = {850, 100};
+    level.trapDoors.push_back(pickDoor);
+    const auto simpleHingedTarget = PickEditorControlTarget(level, {880, 100}, false);
+    Require(simpleHingedTarget.type == "simpleHingedDoor" && simpleHingedTarget.index == 0,
+        "New doors must be picked as their own object type with per-type editor indices.");
     FluidField pickFluid{}; pickFluid.bounds = {100, 300, 100, 100};
     level.fluids = {pickFluid, pickFluid};
     Require(PickEditorControlTarget(level, {150, 350}, true).index == 1,

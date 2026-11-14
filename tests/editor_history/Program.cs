@@ -232,6 +232,7 @@ Console.WriteLine("Placement document tests passed: synchronization, duplicate p
 
 foreach (var (targetType, targetArgs, expectedType, expectedArgs) in new[] {
     ("trapDoor", "200 300 80 16 0", "buttonTrapDoor", "0 0 75 120"),
+    ("simpleHingedDoor", "200 300 80 8 0", "buttonTrapDoor", "0 0 90 120"),
     ("fan", "200 300 1 0 160 40 300 1", "buttonFan", "0 0 1"),
     ("exit", "200 300 32 64", "buttonExit", "0"),
     ("ladder", "200 300 32 160", "buttonLadder", "0 200 300 32 160"),
@@ -330,7 +331,26 @@ Check(document.GetTilePassage(3, 2, 1) == 0 && document.Objects.Count(item => it
     "Passable override must replace rather than duplicate the setting.");
 document.SetTilePassage(3, 2, 1, null);
 Check(document.GetTilePassage(3, 2, 1) == null, "Reset must restore the layer default.");
-Console.WriteLine("Tile passage persistence and history checks passed.");
+var collisionArtworkDocument = new LevelDocument();
+collisionArtworkDocument.RestoreSnapshot(
+    "tileLayer collision\nvisualTile collision 2 1 64 96 0 0 0 1 0.12 3\nvisualTile collision 5 6 128 160 0 0 0 1 0.12 3");
+collisionArtworkDocument.SetTilePassage(3, 2, 1, 15, 50);
+var collisionArtworkDirectory = Path.Combine(Path.GetTempPath(), "level-collision-art-tests-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(collisionArtworkDirectory);
+try
+{
+    var collisionArtworkPath = Path.Combine(collisionArtworkDirectory, "collision-art.level");
+    collisionArtworkDocument.Save(collisionArtworkPath);
+    var reopenedCollisionArtwork = new LevelDocument();
+    reopenedCollisionArtwork.Load(collisionArtworkPath);
+    Check(reopenedCollisionArtwork.Objects.Any(item => item.Type == "visualTile" &&
+        item.Arguments.StartsWith("collision 2 1 ")) && reopenedCollisionArtwork.GetTilePassage(3, 2, 1) == 15,
+        "Saved collision-layer tile art and its passage metadata must both survive reopening.");
+    Check(reopenedCollisionArtwork.GetTilePassage(3, 5, 6) == null,
+        "Collision-only marker tiles must remain distinguishable from artwork with passage metadata.");
+}
+finally { Directory.Delete(collisionArtworkDirectory, recursive: true); }
+Console.WriteLine("Tile passage persistence, save/reopen, and history checks passed.");
 
 var audioDocument = new LevelDocument();
 audioDocument.RestoreSnapshot("music \"audio/my music.ogg\"\nstoneBlock 10 20 32 32 1\nstoneBlock 80 20 32 32 1\nobjectSound stoneBlock 2 \"audio/hit sound.wav\"");
@@ -361,3 +381,28 @@ try {
         "Save As must retain the original audio reference.");
 } finally { Directory.Delete(audioFolder, recursive: true); }
 Console.WriteLine("Audio tests passed: attachment round trip, deletion, playtest paths and Save As.");
+
+// Mixed hinged objects retain shared runtime indices across synchronization and history.
+document.RestoreSnapshot("button 0 0 32 16\ntrapDoor 100 100 80 16 0\nsimpleHingedDoor 200 100 80 8 0\ntrapDoor 300 100 80 16 0");
+var mixedButton = document.Objects.Single(item => item.Type == "button");
+var simpleDoor = document.Objects.Single(item => item.Type == "simpleHingedDoor");
+document.ConnectObjects(mixedButton, simpleDoor);
+Check(document.Objects.Single(item => item.Type == "buttonTrapDoor").Arguments == "0 1 90 120",
+    "New door connections must use the combined runtime index.");
+var mixedDoorRecords = new Dictionary<string, List<string>> {
+    ["hingedDoor"] = ["trapDoor 100 100 80 16 0 standard", "simpleHingedDoor 220 100 80 8 76 standard", "trapDoor 300 100 80 16 0 standard"],
+    ["button"] = ["0 0 32 16"], ["buttonTrapDoor"] = ["0 1 75 120"]
+};
+document.ReplaceEditableObjects(mixedDoorRecords);
+Check(document.Objects.Where(item => item.Type is "trapDoor" or "simpleHingedDoor").Select(item => item.Type)
+    .SequenceEqual(new[] { "trapDoor", "simpleHingedDoor", "trapDoor" }), "Sync must retain mixed door ordering.");
+Check(document.Objects.Single(item => item.Type == "simpleHingedDoor").Arguments == "220 100 80 8 76",
+    "New door must retain its own editable fields without a style flag.");
+var doorSnapshot = document.CaptureSnapshot();
+document.ReplaceEditableObjects(mixedDoorRecords);
+Check(document.CaptureSnapshot() == doorSnapshot, "Repeated door sync must not duplicate records.");
+document.ReplaceEditableObjects(new Dictionary<string, List<string>>());
+Check(!document.Objects.Any(item => item.Type is "trapDoor" or "simpleHingedDoor"), "Deleting all doors must remove both types.");
+document.RestoreSnapshot(doorSnapshot);
+Check(document.Objects.Count(item => item.Type == "simpleHingedDoor") == 1, "Undo must restore the distinct door type.");
+Console.WriteLine("Simple hinged door tests passed: distinct records, mixed links, synchronization, deletion and restore.");

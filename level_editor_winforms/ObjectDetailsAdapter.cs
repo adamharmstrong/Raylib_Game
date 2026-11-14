@@ -80,6 +80,7 @@ internal sealed class ObjectDetailsAdapter : ICustomTypeDescriptor
             new("Segments", "Appearance", ObjectFieldKind.Integer)],
         ["ramp"] = [X, Y, new("Length", "Size"), new("Thickness", "Size"), new("Angle", "Rotation"),
             new("Segments", "Appearance", ObjectFieldKind.Integer)],
+        ["simpleHingedDoor"] = [X, Y, new("Length", "Size"), new("Thickness", "Size"), new("Angle", "Rotation")],
         ["trapDoor"] = [X, Y, new("Length", "Size"), new("Thickness", "Size"), new("Angle", "Rotation"),
             new("Style", "Appearance", ObjectFieldKind.Choice, Choices: ["standard", "minimal"])],
         ["chain"] = LineFields([new("Spacing", "Appearance"), new("Scale", "Appearance"),

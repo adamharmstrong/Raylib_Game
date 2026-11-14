@@ -75,6 +75,7 @@ void UpdateFluidField(
 );
 void AddFluidImpulse(FluidField& field, Vector2 point, float radius, Vector2 velocityChange);
 float AddCellularFluidMass(FluidField& field, float amount, Vector2 velocity = {});
+// Emit into the source-connected open region; sealed or full outlets reject excess mass.
 float EmitCellularFluidMass(FluidField& field, Vector2 source, float amount, Vector2 velocity = {});
 int EmitParticleFluid(
     FluidField& field,

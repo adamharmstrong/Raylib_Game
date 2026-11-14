@@ -7,7 +7,7 @@
 #include <stdexcept>
 #include <sstream>
 
-int main() {
+static void RunTests() {
     const auto path = std::filesystem::temp_directory_path() / "power-pulley-sprite-sheet-test.level";
     {
         std::ofstream file(path);
@@ -22,7 +22,9 @@ int main() {
              << "tilePassage 9999 0 0 15\n"
              << "visualTile foreground 2 1 32 64 0 0 0 1 0.12 3\n"
              << "visualTile background 0 0 64 64\n"
-             << "visualTile middleground 1 2 96 64\n";
+             << "visualTile middleground 1 2 96 64\n"
+             << "visualTile collision 2 1 128 96 0 0 0 1 0.12 3\n"
+             << "visualTile collision 5 6 160 96 0 0 0 1 0.12 3\n";
     }
     const Level level = LoadLevelFromFile(path.string(), {});
     std::filesystem::remove(path);
@@ -39,7 +41,7 @@ int main() {
         throw std::runtime_error("Layer names and custom stacking order must load without moving the default layers.");
     if (level.spriteSheetPaths.size() != 3 || level.spriteSheetPaths[0] != "C:/Sprite Sheets/custom image.png" ||
         !level.spriteSheetPaths[1].empty() || level.spriteSheetPaths[2] != "C:/Sprite Sheets/second image.png" ||
-        level.visualTiles.size() != 3 || level.visualTiles[0].sheetIndex != 3 || level.visualTiles[1].sheetIndex != 1 ||
+        level.visualTiles.size() != 5 || level.visualTiles[0].sheetIndex != 3 || level.visualTiles[1].sheetIndex != 1 ||
         level.visualTiles[2].layer != TileLayer::Middleground || static_cast<int>(TileLayer::User1) != 4)
         throw std::runtime_error("Custom sheet paths, sparse IDs, or legacy tile defaults were lost.");
     if (level.tilePassages.size() != 2 || GetTileBlockedFaces(level, level.visualTiles[0]) != 1 ||
@@ -50,6 +52,14 @@ int main() {
     legacyPassageTile.row = 5;
     if (GetTilePassageLineWidth(level, legacyPassageTile) != 50)
         throw std::runtime_error("Legacy passage width default changed.");
+    if (!ShouldRenderVisualTileInGame(level, level.visualTiles[3]) ||
+        ShouldRenderVisualTileInGame(level, level.visualTiles[4]))
+        throw std::runtime_error("Reloaded collision artwork and collision-only markers were not distinguished.");
+    std::vector<const VisualTile*> gameRenderableTiles;
+    ForEachGameRenderableVisualTile(level, [&](const VisualTile& visibleTile) { gameRenderableTiles.push_back(&visibleTile); });
+    if (std::find(gameRenderableTiles.begin(), gameRenderableTiles.end(), &level.visualTiles[3]) == gameRenderableTiles.end() ||
+        std::find(gameRenderableTiles.begin(), gameRenderableTiles.end(), &level.visualTiles[4]) != gameRenderableTiles.end())
+        throw std::runtime_error("Game render list did not include collision artwork and exclude marker-only tiles.");
     auto tile = level.visualTiles[0];
     tile.quarterTurns = 1;
     if (GetTileBlockedFaces(level, tile) != 2) throw std::runtime_error("Rotated passage face is incorrect.");
@@ -69,14 +79,20 @@ int main() {
     Level passageLevel;
     tile = level.visualTiles[0]; passageLevel.visualTiles.push_back(tile);
     passageLevel.tilePassages.push_back({3, 2, 1, 15});
+    if (!ShouldRenderVisualTileInGame(passageLevel, passageLevel.visualTiles[0]))
+        throw std::runtime_error("Art on a tile with passage metadata must render in the game.");
     const auto solids = BuildSolids(passageLevel, WorldLayer::Foreground);
     if (std::none_of(solids.begin(), solids.end(), [](Rectangle r) { return r.x == 32 && r.y == 64 && r.width == 32; }))
         throw std::runtime_error("Solid visual tile did not enter shared physics colliders.");
     passageLevel.visualTiles[0].layer = TileLayer::Collision;
     passageLevel.tilePassages[0].blockedFaces = 0;
+    if (!ShouldRenderVisualTileInGame(passageLevel, passageLevel.visualTiles[0]))
+        throw std::runtime_error("Collision-layer art with explicit passage metadata must render in the game.");
     if (GetTileBlockedFaces(passageLevel, passageLevel.visualTiles[0]) != 0)
         throw std::runtime_error("Explicit passable override was ignored.");
     passageLevel.tilePassages.clear();
+    if (ShouldRenderVisualTileInGame(passageLevel, passageLevel.visualTiles[0]))
+        throw std::runtime_error("Collision-only tiles without passage artwork must remain hidden in the game.");
     if (GetTileBlockedFaces(passageLevel, passageLevel.visualTiles[0]) != 15)
         throw std::runtime_error("Legacy collision layer default changed.");
     passageLevel.tilePassages.push_back({3, 2, 1, 8});
@@ -139,4 +155,14 @@ int main() {
             throw std::runtime_error("Dynamic object did not respect directional tile layer isolation.");
     }
     std::cout << "Sprite sheet, tile passage, and layer isolation checks passed.\n";
+}
+
+int main() {
+    try {
+        RunTests();
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
 }

@@ -5,7 +5,12 @@
 #include <sstream>
 
 struct EditorRotationTestAccess {
-    static void Check(bool condition, const char* message) { if (!condition) throw std::runtime_error(message); }
+    static void Check(bool condition, const char* message) {
+        if (!condition) {
+            std::cerr << message << '\n';
+            throw std::runtime_error(message);
+        }
+    }
     static void Run() {
         LevelEditor editor;
         using Mode = LevelEditor::TransformMode;
@@ -35,6 +40,33 @@ struct EditorRotationTestAccess {
             !editor.SupportsTransform(Mode::Rotate), "Mixed groups must only enable tools supported by every member.");
         Check(editor.selectedSceneName == "Gear 1" && editor.selection.kind == LevelEditor::SelectionKind::SceneObject,
             "Group capability checks must preserve the primary selection.");
+        Gear secondGear{}; secondGear.center = {300, 200}; secondGear.radius = 32;
+        editor.level.gears.push_back(secondGear);
+        editor.groupSelection = {
+            {LevelEditor::SelectionKind::SceneObject, 0, "Gear 1", {168, 168, 64, 64}},
+            {LevelEditor::SelectionKind::SceneObject, 1, "Gear 2", {268, 168, 64, 64}}
+        };
+        editor.selection = editor.groupSelection.front();
+        editor.selectedSceneName = "Gear 1";
+        editor.selectedSceneBounds = editor.groupSelection.front().sceneBounds;
+        Check(editor.SupportsTransform(Mode::Rotate), "Groups of rotatable objects must allow group rotation.");
+        editor.transformMode = Mode::Rotate;
+        const Vector2 groupPivot = editor.SelectedRotationCenter();
+        const Rectangle groupBounds = editor.SelectionGroupBounds();
+        const float groupRingRadius = std::max(groupBounds.width, groupBounds.height) * 0.72f + 24.0f;
+        Check(editor.TransformHandleAt({groupPivot.x + groupRingRadius, groupPivot.y}) ==
+            LevelEditor::TransformHandle::RotateRing, "The group rotation ring must be interactive.");
+        editor.CaptureGroupTransformState();
+        editor.ApplyGroupRotation(90.0f);
+        Check(std::abs(editor.level.gears[0].center.x - 250.0f) < 0.01f &&
+            std::abs(editor.level.gears[0].center.y - 150.0f) < 0.01f &&
+            std::abs(editor.level.gears[1].center.x - 250.0f) < 0.01f &&
+            std::abs(editor.level.gears[1].center.y - 250.0f) < 0.01f,
+            "Group rotation must orbit each object around the shared pivot.");
+        Check(editor.level.gears[0].rotation == 90.0f && editor.level.gears[1].rotation == 90.0f,
+            "Group rotation must update every selected object's authored angle.");
+        editor.level.gears[0].center = {200, 200};
+        editor.level.gears[0].rotation = 0.0f;
         editor.groupSelection.clear();
         editor.transformMode = LevelEditor::TransformMode::Rotate;
         for (float zoom : {0.25f, 1.0f, 6.0f}) {
@@ -99,6 +131,38 @@ struct EditorRotationTestAccess {
         editor.EnsureRotationSelectionBounds();
         Check(editor.selectedSceneBounds.width == 80 && editor.SelectedRotation() != nullptr,
             "Selection bounds must initialize across rotatable object types.");
+        LevelEditor doorEditor;
+        TrapDoor hatch{}; hatch.hinge = {100, 100};
+        TrapDoor plank{}; plank.hinge = {400, 200}; plank.kind = HingedDoorKind::SimpleHingedDoor;
+        doorEditor.level.trapDoors = {hatch, plank};
+        const auto doorHit = doorEditor.HitTest({410, 200});
+        Check(doorHit.sceneName == "Simple Hinged Door 2" && doorHit.outlinerIndex == 0,
+            "New door selection must retain its own type and per-type outliner index.");
+        doorEditor.selection = doorHit;
+        Check(doorEditor.SupportsTransform(Mode::Move) && doorEditor.SupportsTransform(Mode::Scale) &&
+            doorEditor.SupportsTransform(Mode::Rotate), "New doors must support all editor transforms.");
+        *doorEditor.SelectedRotation() = 76;
+        Check(doorEditor.level.trapDoors[1].angle == 76 && doorEditor.level.trapDoors[0].angle == 0,
+            "Rotating a new door must not affect the old hatch.");
+        Check(doorEditor.DuplicateSelectedSceneObject(), "New door must support duplication.");
+        Check(doorEditor.level.trapDoors.back().kind == HingedDoorKind::SimpleHingedDoor &&
+            doorEditor.selection.outlinerIndex == 1, "Duplication must retain distinct type and ordinal.");
+
+        Level passageLevel;
+        VisualTile passageTile{};
+        passageTile.layer = TileLayer::Collision;
+        passageTile.column = 2;
+        passageTile.row = 1;
+        passageTile.sheetIndex = 3;
+        passageLevel.tilePassages.push_back({3, 2, 1, 15, 50});
+        for (const float zoom : {0.25f, 0.5f, 1.0f, 2.0f}) {
+            const float worldWidth = GetTilePassageViewportStrokeWidth(passageLevel, passageTile, zoom);
+            Check(std::fabs(worldWidth * zoom - 50.0f) < 0.01f,
+                "Viewport passage width must remain 50 screen pixels at every zoom.");
+        }
+        passageLevel.tilePassages[0].lineWidth = 24;
+        Check(std::fabs(GetTilePassageViewportStrokeWidth(passageLevel, passageTile, 0.5f) * 0.5f - 24.0f) < 0.01f,
+            "The configured passage width must affect viewport strokes.");
     }
 };
-int main() { EditorRotationTestAccess::Run(); std::cout << "Rotation selection bounds, ring hit detection, zoom, and angle binding passed.\n"; }
+int main() { EditorRotationTestAccess::Run(); std::cout << "Rotation, transform, and Tile Passage viewport-width checks passed.\n"; }

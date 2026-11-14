@@ -3,6 +3,7 @@
 
 #include "Achievement.h"
 #include "Level.h"
+#include "WaterEscape.h"
 #include "LuaScripts.h"
 #include "CppScripts.h"
 #include "Player.h"
@@ -345,6 +346,7 @@ private:
     float machinePhase{0.0f};
     float machinePower{0.0f};
     float gateBottom{650.0f};
+    WaterEscapeState waterEscapeState{};
     float levelClearTimer{0.0f};
     float screenShakeTimer{0.0f};
     std::array<float, 4> toxinExposure{};

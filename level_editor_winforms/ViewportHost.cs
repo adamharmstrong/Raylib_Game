@@ -147,6 +147,20 @@ internal sealed class ViewportHost : Panel
                 (IntPtr)command, (IntPtr)value);
     }
 
+    internal void SetActorVisibility(string outlinerKind, int index, bool visible)
+    {
+        if (viewportWindow == IntPtr.Zero) return;
+        var bytes = System.Text.Encoding.UTF8.GetBytes($"visibility\t{outlinerKind}\t{index}\t{(visible ? 1 : 0)}\0");
+        var buffer = Marshal.AllocHGlobal(bytes.Length);
+        try
+        {
+            Marshal.Copy(bytes, 0, buffer, bytes.Length);
+            var data = new NativeMethods.CopyData { Identifier = (IntPtr)3, ByteCount = bytes.Length, Data = buffer };
+            NativeMethods.SendCopyData(viewportWindow, NativeMethods.WmCopyData, Handle, ref data);
+        }
+        finally { Marshal.FreeHGlobal(buffer); }
+    }
+
     internal void StopViewport()
     {
         viewportWindow = IntPtr.Zero;

@@ -103,6 +103,7 @@ struct TilePassage {
 struct Level;
 int GetTileBlockedFaces(const Level& level, const VisualTile& tile);
 int GetTilePassageLineWidth(const Level& level, const VisualTile& tile);
+bool ShouldRenderVisualTileInGame(const Level& level, const VisualTile& tile);
 bool TileCollidesWithLayer(TileLayer tileLayer, WorldLayer bodyLayer);
 void AppendDirectionalTileSolids(std::vector<Rectangle>& solids, const Level& level,
     WorldLayer layer, Rectangle previous, Vector2 velocity, bool horizontal);
@@ -270,6 +271,12 @@ struct Level {
     std::vector<GuideObject> guideObjects;
     std::vector<Enemy> enemies;
 };
+
+template <typename Visitor>
+void ForEachGameRenderableVisualTile(const Level& level, Visitor&& visitor) {
+    for (const VisualTile& tile : level.visualTiles)
+        if (ShouldRenderVisualTileInGame(level, tile)) visitor(tile);
+}
 
 inline constexpr float StandardExitDoorWidth = 85.0f;
 inline constexpr float StandardExitDoorHeight = 210.0f;

@@ -6,6 +6,7 @@ internal sealed class LevelDocument
 {
     private const string OutlinerCategoryPrefix = "# editor-outliner-category ";
     private const string OutlinerItemPrefix = "# editor-outliner-item ";
+    private const string OutlinerVisibilityPrefix = "# editor-object-visibility ";
     private const float StandardExitDoorWidth = 85.0f;
     private const float StandardExitDoorHeight = 210.0f;
     private readonly List<LineRecord> lines = [];
@@ -88,6 +89,28 @@ internal sealed class LevelDocument
     internal string? OutlinerName(LevelObject item) => ParseOutlinerItem(item)?.Name;
 
     internal string? OutlinerCategoryId(LevelObject item) => ParseOutlinerItem(item)?.CategoryId;
+
+    internal bool IsObjectVisible(LevelObject item)
+    {
+        for (var index = lines.Count - 1; index >= 0; --index)
+        {
+            var text = lines[index].OriginalText;
+            if (!text.StartsWith(OutlinerVisibilityPrefix, StringComparison.Ordinal)) continue;
+            var parts = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 5 && parts[0] == "#" && parts[1] == "editor-object-visibility" &&
+                parts[2].Equals(item.Type, StringComparison.OrdinalIgnoreCase) &&
+                int.TryParse(parts[3], out var objectIndex) && objectIndex == item.Index)
+                return parts[4] != "0";
+        }
+        return true;
+    }
+
+    internal void SetObjectVisible(LevelObject item, bool visible)
+    {
+        var prefix = OutlinerVisibilityPrefix + item.Type + " " + item.Index + " ";
+        lines.RemoveAll(line => line.OriginalText.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+        if (!visible) lines.Add(new LineRecord(prefix + "0", null));
+    }
 
     internal OutlinerCategory AddOutlinerCategory(string name, string? parentId)
     {
@@ -274,6 +297,12 @@ internal sealed class LevelDocument
     {
         FilePath = path;
         RestoreSnapshot(string.Join('\n', File.ReadAllLines(path)));
+    }
+
+    internal void RestoreRecoverySnapshot(string snapshot, string? originalPath)
+    {
+        FilePath = originalPath;
+        RestoreSnapshot(snapshot);
     }
 
     internal string CaptureSnapshot()
@@ -661,14 +690,41 @@ internal sealed class LevelDocument
         lines.Add(new LineRecord(string.Empty, new LevelObject(type, index, arguments)));
     }
 
+    internal LevelObject AddObjectCopy(LevelObject source, float offsetX = 64, float offsetY = 64)
+    {
+        var args = source.Arguments;
+        var values = args.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        var coordinate = source.Type switch
+        {
+            "buttonTrapDoor" or "buttonFan" or "buttonExit" or "valveFluidFill" or "platformLoopButton" or "buttonPlatformLoop" => -1,
+            "buttonSpikeHazard" => 2,
+            "buttonLadder" or "buttonPlatform" or "toxinLeak" => 1,
+            "visualTile" or "visualTileRect" => 3,
+            _ => 0
+        };
+        if (coordinate >= 0 && values.Length > coordinate + 1 &&
+            float.TryParse(values[coordinate], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var x) &&
+            float.TryParse(values[coordinate + 1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var y))
+        {
+            values[coordinate] = (x + offsetX).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+            values[coordinate + 1] = (y + offsetY).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+            args = string.Join(' ', values);
+        }
+        var copy = new LevelObject(source.Type, Objects.Count(item => item.Type.Equals(source.Type, StringComparison.OrdinalIgnoreCase)) + 1, args)
+        { Scripts = [.. source.Scripts], Sound = source.Sound };
+        lines.Add(new LineRecord(string.Empty, copy));
+        return copy;
+    }
+
     internal void ReplaceEditableObjects(IReadOnlyDictionary<string, List<string>> records)
     {
+        ReplaceHingedDoors(records);
         var synchronizedTypes = new[]
         {
             "playerStart", "exit", "solid", "platform", "ladder", "cameraZone", "darkness",
             "visualTile", "visualTileRect", "water", "sand", "gel", "gas", "pulley", "weight", "rotaryLatch",
             "stoneBlock", "boulder", "physicsWheel", "gear", "flywheel",
-            "steeringWheel", "screw", "fan", "pinwheel", "wedge", "ramp", "seeSaw", "trapDoor", "chain",
+            "steeringWheel", "screw", "fan", "pinwheel", "wedge", "ramp", "seeSaw", "chain",
             "physicsRope", "button", "portalPair", "directionalSpikeHazard", "arrowTrap",
             "breakableTile", "enemy", "labelSized", "valve", "waterPit", "spikeHazard", "clockFace", "toxinLeak",
             "checkpoint", "collectible",
@@ -733,6 +789,26 @@ internal sealed class LevelDocument
         }
     }
 
+    // Preserve shared runtime ordering while retaining distinct authored types.
+    private void ReplaceHingedDoors(IReadOnlyDictionary<string, List<string>> records)
+    {
+        var replacements = records.TryGetValue("hingedDoor", out var values) ? values : [];
+        var existing = lines.Where(line => line.Object?.Type is "trapDoor" or "simpleHingedDoor").ToList();
+        for (var i = 0; i < replacements.Count; ++i) {
+            var split = replacements[i].IndexOf(' ');
+            if (split < 0) continue;
+            var type = replacements[i][..split];
+            var arguments = replacements[i][(split + 1)..];
+            if (type == "simpleHingedDoor") arguments = string.Join(' ', arguments.Split(' ').Take(5));
+            if (i < existing.Count) {
+                existing[i].Object!.Type = type;
+                existing[i].Object!.Arguments = arguments;
+            } else lines.Add(new LineRecord(string.Empty, new LevelObject(type, 1, arguments)));
+        }
+        for (var i = replacements.Count; i < existing.Count; ++i) lines.Remove(existing[i]);
+        ReindexObjects();
+    }
+
     private void ReplaceLabels(IReadOnlyDictionary<string, List<string>> records)
     {
         if (!records.TryGetValue("labelSized", out var replacements)) return;
@@ -759,7 +835,7 @@ internal sealed class LevelDocument
 
     internal IReadOnlyList<LevelObject> ConnectionTargets(LevelObject source) => Objects.Where(item =>
         source.Type == "valve" ? item.Type is "water" or "sand" or "gel" or "gas" :
-        source.Type == "button" && item.Type is "trapDoor" or "fan" or "ladder" or "platform" or "exit" or "directionalSpikeHazard" or "spikeHazard" or "buttonPlatformLoop")
+        source.Type == "button" && item.Type is "trapDoor" or "simpleHingedDoor" or "fan" or "ladder" or "platform" or "exit" or "directionalSpikeHazard" or "spikeHazard" or "buttonPlatformLoop")
         .ToList();
 
     internal void ConnectObjects(LevelObject source, LevelObject target)
@@ -778,7 +854,10 @@ internal sealed class LevelDocument
                 args[0] = button.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 target.Arguments = string.Join(' ', args);
                 return;
-            case "trapDoor": type = "buttonTrapDoor"; arguments = $"{button} {target.Index - 1} 75 120"; break;
+            case "trapDoor":
+            case "simpleHingedDoor":
+                var doorIndex = Objects.Where(item => item.Type is "trapDoor" or "simpleHingedDoor").ToList().IndexOf(target);
+                type = "buttonTrapDoor"; arguments = $"{button} {doorIndex} {(target.Type == "simpleHingedDoor" ? 90 : 75)} 120"; break;
             case "fan": type = "buttonFan"; arguments = $"{button} {target.Index - 1} 1"; break;
             case "exit": type = "buttonExit"; arguments = button.ToString(); break;
             case "ladder":
@@ -838,8 +917,12 @@ internal sealed class LevelDocument
 
     private void ReindexObjects()
     {
+        var hiddenObjects = new HashSet<LevelObject>(Objects.Where(item => !IsObjectVisible(item)), ReferenceEqualityComparer.Instance);
+        lines.RemoveAll(line => line.OriginalText.StartsWith(OutlinerVisibilityPrefix, StringComparison.Ordinal));
         var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var item in Objects) { counts.TryGetValue(item.Type, out var count); item.Index = counts[item.Type] = count + 1; }
+        foreach (var item in hiddenObjects)
+            if (Objects.Contains(item)) SetObjectVisible(item, false);
     }
 
     internal LevelObject AddPlatformLoop(float x, float y, float radiusX, float radiusY,

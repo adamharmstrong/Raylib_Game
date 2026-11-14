@@ -42,12 +42,17 @@ internal static class Program
         if (passageLayoutError != null) throw passageLayoutError;
         var selector = (ComboBox)type.GetField("tileSheetSelector", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
         var palette = type.GetField("tilePalette", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+        var passageOverlayWidth = (float)palette.GetType()
+            .GetField("PassageOverlayLineWidth", BindingFlags.Static | BindingFlags.NonPublic)!
+            .GetRawConstantValue()!;
+        if (passageOverlayWidth != 3.0f)
+            throw new Exception("Sprite-sheet passage outlines must stay 3 pixels wide, independent of viewport settings.");
         var size = (Size)palette.GetType().GetProperty("SheetSize", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(palette)!;
         if (selector.SelectedIndex != 0 || size.Width <= 0 || size.Height <= 0)
             throw new Exception("The default sprite sheet must load at startup without changing the dropdown.");
         var row = (RowStyle)type.GetField("spritePreviewRow", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
         if (row.Height <= 0) throw new Exception("The initial sprite sheet preview must have a visible height.");
-        Console.WriteLine($"Startup sheet loaded without dropdown interaction: {size.Width} x {size.Height}.");
+        Console.WriteLine($"Startup sheet loaded: {size.Width} x {size.Height}; sprite-sheet passage outlines fixed at {passageOverlayWidth}px.");
         _ = form.Handle;
         object Field(string name) => type.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
         void Invoke(string name, params object[] args) => type.GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, args);

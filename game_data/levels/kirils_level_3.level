@@ -1,75 +1,67 @@
-# Kiril's Level 3: Rising Water Escape
-# The platform stack is mapped directly from Kiril's multi-level water-escape
-# sketch: pipe and player on the bottom floor; a lower-right ladder; the broad
-# boulder lane; then increasingly staggered platforms to the top-left exit.
+# Kiril's Level 3: Rising Water Escape (updated October 3 design)
 author Kiril
 script water_escape
-bounds 0 0 1600 900
+bounds 0 -64 1600 964
 playerStart 520 810
 
-# A pipe on the bottom-left floor continually fills the connected chamber.
-water 32 28 1536 822 6 0.04 1
-valveFluidFill 0 0.96 22
-
-# Chamber shell and bottom floor. The player begins beside the pipe outlet,
-# rather than on a platform above it.
-solid 0 0 1600 28
-solid 0 28 32 872
-solid 1568 28 32 872
+# Dry until a living player crosses x=760 on floor one. Shared water still drowns.
+water 32 -36 1536 886 6 0 1
+valveFluidFill 0 0.96 10
+solid 0 -64 1600 28
+solid 0 -36 32 936
+solid 1568 -36 32 936
 solid 32 850 1536 50
 
-# Lowest elevated lane and the corrected lower-right ladder. This is the first
-# climb from the pipe floor in the original design.
+# Floor 2: climb on the right, raise the hanging door, cross, then lower it.
+# Its closed plank leaves a small leak at the floor; pressure relief lasts 5s.
 platform 32 740 1438 30
-ladder 1415 740 48 110
+ladder 1490 700 48 150
+simpleHingedDoor 1050 625 104 8 90
+button 1140 724 64 16
+button 930 724 64 16
+buttonTrapDoor 0 0 0 150
+buttonTrapDoor 1 0 90 150
+enemy 215 700 34 40 150 350 60
 
-# Broad boulder/enemy lane.
-platform 130 627 1438 30
-enemy 455 587 34 40 325 625 68
-boulder 865 592 30 3.4
-enemy 1170 587 34 40 1080 1335 70
+# Raised 32px to leave jumping room over the floor-two enemy.
+# Floor 3: thorny climb on the left, two enemies and a movable boulder.
+# The boulder supplies the extra height needed to jump through the floor-4 gap.
+platform 130 595 1438 30
+thornyVines 40 538 30 192 0.34
+enemy 455 555 34 40 325 625 68
+boulder 750 565 30 3.4
+enemy 1170 555 34 40 1080 1335 70
 
-# The first ceiling door hangs in the tall gap between this lane and the next
-# platform. Its 84px plank has clear space to swing down without touching floor.
-button 1250 611 76 16
-trapDoor 1390 502 84 8 0 minimal
-buttonTrapDoor 0 0 76 150
+# Raised 32px for floor-three jumps; upper floors shift 64px to keep floor four roomy.
+# Floor 4: enemy, acid puddle and a second barrier, initially raised.
+platform 32 440 187 30
+platform 270 440 430 30
+platform 800 440 670 30
+enemy 540 400 34 40 350 650 65
+simpleHingedDoor 1390 316 100 8 0
+button 1450 424 50 16
+button 1250 424 64 16
+buttonTrapDoor 2 1 0 150
+buttonTrapDoor 3 1 90 150
+thornyVines 40 206 30 227 0.34
 
-# Central acid lane and left-side climb.
-platform 32 472 187 30
-platform 270 472 1200 30
-ladder 430 472 48 155
-enemy 630 432 34 40 545 745 65
+# Floor 5: ladder or thorny vines provide the next climb.
+platform 140 286 700 30
+platform 935 286 633 30
+ladder 410 156 48 130
+thornyVines 1035 156 30 130 0.34
 
-# The wall growths are real climbable hazards. These replace the former
-# decorative vines while preserving their original locations and footprints.
-thornyVines 40 270 30 130 0.34
-thornyVines 40 500 30 220 0.34
+# Floor 6: staggered shelves lead back toward the exit side.
+platform 460 195 370 30
+platform 1035 195 370 30
 
-# The second short door is attached under the y=350 ceiling platform. Its 70px
-# plank clears the y=472 floor when it swings down.
-button 1250 456 76 16
-trapDoor 1390 380 70 8 0 minimal
-buttonTrapDoor 1 1 76 150
+# Floor 7: jump left from floor six, then out to the release shelf and back.
+# An 84px rise and 138px gap fit the player's jump arc.
+platform 32 111 330 30
+platform 935 111 365 30
 
-# Upper center shelf pair, reached from the central ladder.
-platform 140 350 700 30
-platform 935 350 633 30
-ladder 440 259 48 91
-enemy 1110 310 34 40 1060 1320 66
-
-# The two smaller shelves and the final ladder reproduce the split platforms
-# just below the exit route.
-platform 460 259 370 30
-platform 1035 259 370 30
-ladder 650 157 48 102
-thornyVines 1035 259 30 112 0.34
-
-# Top-left exit floor, its separate raised release-button shelf, and the
-# upper-right shelf. Keeping the release shelf detached matches the diagram.
-platform 32 157 330 30
-platform 500 90 247 30
-platform 935 157 365 30
-button 580 74 76 16
-buttonExit 2
-exit 60 28 85 210
+# Floor 8: stepping onto the release grants six seconds; leave and return to retry.
+platform 500 26 247 30
+button 580 10 76 16
+buttonExit 4
+exit 60 -36 85 147

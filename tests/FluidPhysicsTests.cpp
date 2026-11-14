@@ -8,6 +8,54 @@
 #include <vector>
 
 int main() {
+    for (const auto mode : {FluidSimulationMode::Tile, FluidSimulationMode::Advanced}) {
+        FluidField water{};
+        water.type = FluidType::Water;
+        water.bounds = {0, 0, 200, 200};
+        water.particleSpacing = 10;
+        water.initialFill = 0;
+        const std::vector<Rectangle> sealedFloor{{0, 90, 200, 20}};
+        InitializeFluidField(water, sealedFloor, mode);
+        const auto massOnSide = [&](bool above) {
+            float mass = 0;
+            for (int i = 0; i < static_cast<int>(water.cells.size()); ++i) {
+                const float y = GetFluidSimulationPoint(water, i).y;
+                if ((above && y < 90) || (!above && y > 110)) mass += water.cells[i].mass;
+            }
+            return mass;
+        };
+        // Saturating a source below a sealed floor must not create water above it.
+        const float accepted = EmitCellularFluidMass(water, {20, 170}, 10000);
+        if (accepted <= 0 || accepted >= 10000 || massOnSide(true) > 0.001f ||
+            EmitCellularFluidMass(water, {20, 170}, 10) > 0.001f ||
+            EmitCellularFluidMass(water, {20, 100}, 10) > 0.001f) {
+            std::cerr << "Water source crossed a sealed floor or a blocked outlet.\n";
+            return 1;
+        }
+        // Gravity and pressure must also leave the sealed floor impermeable.
+        for (int i = 0; i < 60; ++i) UpdateFluidField(water, sealedFloor, {}, 1.0f / 60, mode);
+        if (massOnSide(true) > 0.001f || std::fabs(GetFluidMass(water) - accepted) > 0.1f) {
+            std::cerr << "Water simulation leaked through a floor or lost source mass.\n";
+            return 1;
+        }
+        // An actual opening reconnects the chambers, permitting source pressure
+        // to drive water around the floor's right edge.
+        const std::vector<Rectangle> openFloor{{0, 90, 170, 20}};
+        UpdateFluidField(water, openFloor, {}, 1.0f / 60, mode);
+        if (EmitCellularFluidMass(water, {20, 170}, 10000) <= 0 || massOnSide(true) <= 0) {
+            std::cerr << "Water did not flow around the open end of a floor.\n";
+            return 1;
+        }
+        // Reverse the source: water falling from above must land on the floor.
+        InitializeFluidField(water, sealedFloor, mode);
+        EmitCellularFluidMass(water, {20, 30}, 40);
+        for (int i = 0; i < 120; ++i) UpdateFluidField(water, sealedFloor, {}, 1.0f / 60, mode);
+        if (massOnSide(false) > 0.001f || std::fabs(GetFluidMass(water) - 40) > 0.1f) {
+            std::cerr << "Falling water penetrated a sealed floor.\n";
+            return 1;
+        }
+    }
+    std::cout << "Water floors: source blockage, pressure, open gaps, falling water and mass conservation passed.\n";
     GuideObject scuba{};
     std::istringstream scubaStream("120 80 16");
     if (!ParseGuideObject("scubaGear", scubaStream, scuba) ||

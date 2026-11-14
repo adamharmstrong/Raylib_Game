@@ -14,6 +14,16 @@ authoring or rebuilding industrial tile artwork. It documents the three visual
 layers, atlas coordinates, collision alignment, renderer-owned hazards, and
 the mistakes that must not be reintroduced across campaign levels.
 
+`kirils_level_3.level` is Kiril's eight-floor Rising Water Escape. Crossing
+the bottom corridor at x=760 starts the flood. Each hanging door has a raise
+button on its right and a lower button on its left; lowering a door reduces
+incoming water for five seconds without stopping it. The first door starts
+lowered and the second starts raised. The upper release opens the exit for
+six seconds. Buttons respond to a fresh press, so standing on one cannot
+extend its timer; stepping off and back on retries it. Three existing Thorny
+Vines clusters provide climbable, damaging routes. The floor-three boulder
+provides the extra height to reach the opening above it.
+
 `gatehouse_generator_test.level` is an alternate copy of Level 1 that replaces
 the decorative generator behavior with mechanical-to-electrical conversion and
 a channel-powered gate motor. The completed `gatehouse.level` is unchanged.
@@ -82,7 +92,8 @@ Supported records:
 - `pinwheel <x> <y> <radius>`
 - `wedge <centerX> <centerY> <length> <thickness> <angleDegrees> [segmentCount]` â€” fixed triangular metal wedge using ramp slope collision. Center and length describe the sloped face; thickness sets its minimum base depth.
 - `ramp <centerX> <centerY> <length> <thickness> <angleDegrees> [segmentCount]`
-- `trapDoor <hingeX> <hingeY> <length> <thickness> <angleDegrees>`
+- `trapDoor <hingeX> <hingeY> <length> <thickness> <angleDegrees>` — original floor hatch with rope/chain attachment rings.
+- `simpleHingedDoor <hingeX> <hingeY> <length> <thickness> <angleDegrees>` — separate simple hinged plank, shown as **Simple Hinged Door** in the editor's Mechanical category. It has no attachment rings. Connect buttons using `buttonTrapDoor` with target angle 0 to raise it or 90 to lower it. Door indices in these links count both hinged object types in file order. Lowering this object briefly buffers the water escape flood.
 - `seeSaw <pivotX> <pivotY> <length> <thickness> <minAngle> <maxAngle> <response>`
 - `chain <startX> <startY> <endX> <endY> <spacing> <scale> [pinStart] [pinEnd]`
 - `physicsRope <startX> <startY> <endX> <endY> <length> <thickness> <pinStart> <pinEnd>`

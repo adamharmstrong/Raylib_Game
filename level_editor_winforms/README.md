@@ -260,3 +260,10 @@ Use **File > Choose Level Music** to import WAV, OGG, MP3 or FLAC music. The tra
 Select a game object and use **Objects > Attach Sound Effect**. The sound plays once when a player enters the object's bounds and can play again after leaving and returning. Clear **Audio > Sound** in Details to remove it. Music and effects respect the game's volume and mute settings.
 
 Import saves audio in an `audio` folder beside the level. Keep that folder with the level when sharing it. Audio attachments support undo, saving and temporary playtests.
+
+The Mechanical category includes **Simple Hinged Door**, Kiril's simple hinged
+plank. It is a separate object from **Trap Door**, which retains its floor frame
+and rope/chain attachment rings. Simple Hinged Door exposes position, length,
+thickness and angle. Connect a button to it and set the connection's target angle
+to 0 to raise it or 90 to lower it; use two buttons for paired controls. In Water
+Escape, lowering it provides five seconds of partial flood relief.

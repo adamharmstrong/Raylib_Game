@@ -42,7 +42,9 @@ EditorControlTarget PickEditorControlTarget(const Level& level, Vector2 point, b
             door.hinge.y + sinf(door.angle * DEG2RAD) * door.length};
         const float margin = std::max(4.0f, door.thickness * 0.5f);
         auto target = hit({std::min(door.hinge.x, end.x) - margin, std::min(door.hinge.y, end.y) - margin,
-            fabsf(end.x - door.hinge.x) + margin * 2, fabsf(end.y - door.hinge.y) + margin * 2}, "trapDoor", i);
+            fabsf(end.x - door.hinge.x) + margin * 2, fabsf(end.y - door.hinge.y) + margin * 2}, door.kind == HingedDoorKind::SimpleHingedDoor ? "simpleHingedDoor" : "trapDoor",
+            static_cast<int>(std::count_if(level.trapDoors.begin(), level.trapDoors.begin() + i,
+                [&](const TrapDoor& other) { return other.kind == door.kind; })));
         if (target.index >= 0) return target;
     }
     for (int i = static_cast<int>(level.fans.size()) - 1; i >= 0; --i) {
@@ -156,7 +158,7 @@ EditorConnections BuildEditorConnections(const Level& level) {
     for (int i = 0; i < static_cast<int>(level.trapDoors.size()); ++i) {
         const auto& door = level.trapDoors[i];
         doors.push_back(addNode(ConnectionNodeKind::TrapDoor, i,
-            {door.hinge.x, door.hinge.y - door.thickness * 0.5f, door.length, door.thickness}, "Trap Door " + std::to_string(i + 1)));
+            {door.hinge.x, door.hinge.y - door.thickness * 0.5f, door.length, door.thickness}, std::string(door.kind == HingedDoorKind::SimpleHingedDoor ? "Simple Hinged Door " : "Trap Door ") + std::to_string(i + 1)));
     }
     for (int i = 0; i < static_cast<int>(level.fans.size()); ++i) {
         const auto p = level.fans[i].center;

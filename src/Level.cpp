@@ -652,8 +652,9 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
             ramp.segmentCount = std::clamp(ramp.segmentCount, 1, 16);
             level.ramps.push_back(ramp);
         }
-        else if (command == "trapDoor") {
+        else if (command == "trapDoor" || command == "simpleHingedDoor") {
             TrapDoor trapDoor{};
+            trapDoor.kind = command == "simpleHingedDoor" ? HingedDoorKind::SimpleHingedDoor : HingedDoorKind::TrapDoor;
             stream >> trapDoor.hinge.x >> trapDoor.hinge.y >> trapDoor.length >> trapDoor.thickness >> trapDoor.angle;
             std::string style;
             if (stream >> style) {
@@ -661,7 +662,8 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
             }
             trapDoor.length = fmaxf(1.0f, trapDoor.length);
             trapDoor.thickness = fmaxf(1.0f, trapDoor.thickness);
-            trapDoor.angle = std::clamp(trapDoor.angle, -80.0f, 80.0f);
+            if (trapDoor.kind == HingedDoorKind::TrapDoor)
+                trapDoor.angle = std::clamp(trapDoor.angle, -80.0f, 80.0f);
             level.trapDoors.push_back(trapDoor);
         }
         else if (command == "chain") {
@@ -704,7 +706,6 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
         else if (command == "buttonTrapDoor") {
             ButtonTrapDoorLink link{};
             stream >> link.buttonIndex >> link.trapDoorIndex >> link.openAngle >> link.speed;
-            link.openAngle = std::clamp(link.openAngle, -80.0f, 80.0f);
             link.speed = fmaxf(1.0f, link.speed);
             level.buttonTrapDoorLinks.push_back(link);
         }
@@ -829,6 +830,12 @@ Level LoadLevelFromFile(const std::string& path, Level fallback) {
         }
     }
 
+    // Resolve after parsing so links may precede their door records.
+    for (ButtonTrapDoorLink& link : level.buttonTrapDoorLinks) {
+        if (link.trapDoorIndex >= 0 && link.trapDoorIndex < static_cast<int>(level.trapDoors.size()) &&
+            level.trapDoors[link.trapDoorIndex].kind == HingedDoorKind::SimpleHingedDoor) continue;
+        link.openAngle = std::clamp(link.openAngle, -80.0f, 80.0f);
+    }
     UpdatePlatformLoopButtonPositions(level);
     auto resolveAudio = [&](std::string& audioPath) {
         if (!audioPath.empty()) audioPath = (std::filesystem::path(path).parent_path() / audioPath).lexically_normal().generic_string();
@@ -874,6 +881,15 @@ int GetTilePassageLineWidth(const Level& level, const VisualTile& tile) {
         if (passage.sheetIndex == sheet && passage.column == tile.column && passage.row == tile.row)
             return passage.lineWidth;
     return 50;
+}
+
+bool ShouldRenderVisualTileInGame(const Level& level, const VisualTile& tile) {
+    if (tile.layer != TileLayer::Collision) return true;
+    const int sheet = tile.sheetIndex >= 0 ? tile.sheetIndex :
+        tile.layer == TileLayer::FarBackground ? 2 : tile.layer == TileLayer::Background ? 1 : 0;
+    return std::any_of(level.tilePassages.begin(), level.tilePassages.end(), [&](const TilePassage& passage) {
+        return passage.sheetIndex == sheet && passage.column == tile.column && passage.row == tile.row;
+    });
 }
 
 bool TileCollidesWithLayer(TileLayer tileLayer, WorldLayer bodyLayer) {

@@ -2448,7 +2448,7 @@ void DrawTrapDoor(const TrapDoor& trapDoor) {
     Vector2 hinge = trapDoor.hinge;
     Vector2 end = GetTrapDoorRingPosition(trapDoor);
 
-    if (trapDoor.minimal) {
+    if (trapDoor.kind == HingedDoorKind::SimpleHingedDoor || trapDoor.minimal) {
         // Kiril's flood doors are deliberately just thin wooden planks on a
         // pivot: no floor frame, latch, handles, chains, or ring hardware.
         Vector2 p1{hinge.x - normal.x * trapDoor.thickness * 0.5f, hinge.y - normal.y * trapDoor.thickness * 0.5f};

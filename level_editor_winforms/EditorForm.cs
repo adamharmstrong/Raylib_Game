@@ -33,7 +33,7 @@ internal sealed class EditorForm : Form
         "Pinball Flipper", "Laser Emitter", "Laser Mixer", "Laser Detector", "Hot-Air Balloon", "Blimp",
         "Leaky Bucket", "Destructible Wood", "Destructible Brick", "Destructible Glass", "Glass Pane", "Glass Block",
         "Ice Block", "Ice Sheet", "Heater", "Campfire", "Torch", "Bucket of Water", "Signal Dust",
-        "Ternary Trace", "Ternary Switch", "TNT", "Wedge", "Scuba Gear", "Teleforce Projector", "Tesla Coil", "Rock", "Platform Loop", "Thorny Vines"
+        "Ternary Trace", "Ternary Switch", "TNT", "Wedge", "Scuba Gear", "Teleforce Projector", "Tesla Coil", "Rock", "Platform Loop", "Thorny Vines", "Simple Hinged Door"
     ];
 
     private readonly LevelDocument document = new();
@@ -46,6 +46,16 @@ internal sealed class EditorForm : Form
         DrawMode = TreeViewDrawMode.OwnerDrawText
     };
     private readonly ContextMenuStrip outlinerMenu = new();
+    private readonly TextBox outlinerSearch = new()
+    {
+        Dock = DockStyle.Top,
+        PlaceholderText = "Search objects and folders...",
+        BorderStyle = BorderStyle.FixedSingle,
+        BackColor = DarkTheme.Field,
+        ForeColor = DarkTheme.Text,
+        Margin = new Padding(5)
+    };
+    private readonly Panel outlinerSearchPanel = new() { Dock = DockStyle.Top, Height = 30, Padding = new Padding(4, 2, 4, 3) };
     private readonly PropertyGrid details = new() { Dock = DockStyle.Fill, HelpVisible = true, ToolbarVisible = false };
     private readonly Panel anchorPickerPanel = new() { Dock = DockStyle.Top, Height = 88, Visible = false };
     private readonly Button[] anchorPointButtons = new Button[9];
@@ -189,6 +199,33 @@ internal sealed class EditorForm : Form
         KeyDown += OnEditorKeyDown;
         outliner.AfterSelect += OnOutlinerSelectionChanged;
         outliner.DrawNode += DrawOutlinerNode;
+        outlinerSearch.TextChanged += (_, _) => RebuildOutliner();
+        outliner.MouseDown += (_, eventArgs) =>
+        {
+            if (eventArgs.Button != MouseButtons.Left) return;
+            var node = outliner.GetNodeAt(eventArgs.Location);
+            if (node?.Tag is not LevelObject item || eventArgs.X - node.Bounds.X is < 0 or > 21) return;
+            BeginInvoke(() =>
+            {
+                var visible = !document.IsObjectVisible(item);
+                document.SetObjectVisible(item, visible);
+                var identity = ViewportOutlinerIdentity(item);
+                viewport.SetActorVisibility(identity.Name, identity.Index, visible);
+                if (visible && TryGetObjectPosition(item, out var x, out var y))
+                    viewport.SendCommand(5, ((Math.Clamp(y, short.MinValue, short.MaxValue) & 0xffff) << 16) |
+                        (Math.Clamp(x, short.MinValue, short.MaxValue) & 0xffff));
+                SetDirty(true, $"{(visible ? "Shown" : "Hidden")} {OutlinerObjectLabel(item)} in the editor viewport");
+                RebuildOutliner(item);
+            });
+        };
+        var clearOutlinerSearch = new Button
+        {
+            Text = "×", Dock = DockStyle.Right, Width = 28, FlatStyle = FlatStyle.Flat,
+            BackColor = DarkTheme.Header, ForeColor = DarkTheme.Text, TabStop = false
+        };
+        clearOutlinerSearch.Click += (_, _) => { outlinerSearch.Clear(); outlinerSearch.Focus(); };
+        outlinerSearchPanel.Controls.Add(outlinerSearch);
+        outlinerSearchPanel.Controls.Add(clearOutlinerSearch);
         outliner.NodeMouseClick += (_, eventArgs) =>
         {
             if (eventArgs.Button == MouseButtons.Right) outliner.SelectedNode = eventArgs.Node;
@@ -678,6 +715,7 @@ internal sealed class EditorForm : Form
         workspaceSplit.Panel1.Controls.Add(centerSplit);
 
         inspectorSplit.Panel1.Controls.Add(outliner);
+        inspectorSplit.Panel1.Controls.Add(outlinerSearchPanel);
         inspectorSplit.Panel1.Controls.Add(Header("World Outliner"));
         inspectorSplit.Panel2.Controls.Add(details);
         inspectorSplit.Panel2.Controls.Add(BuildAnchorPicker());
@@ -1644,7 +1682,7 @@ internal sealed class EditorForm : Form
 
     private static string GetAssetCategory(int index) => GetAssetCommandIndex(index) switch
     {
-        160 => "Mechanical",
+        160 or 162 => "Mechanical",
         161 => "Hazards",
         11 or 16 or 17 or 18 or 19 or 20 or 22 or 23 or 24 or 71 or 105 or 155 => "Simple Machines",
         0 or 1 or 2 or 44 or 46 or 159 => "Geometry",
@@ -1764,6 +1802,7 @@ internal sealed class EditorForm : Form
         if (recentLevelPaths.Count > 10) recentLevelPaths.RemoveRange(10, recentLevelPaths.Count - 10);
         RebuildOutliner();
         viewport.OpenLevel(document.FilePath!);
+        SyncActorVisibility();
         QueueThumbnailLoad();
         SendPaintConfiguration();
         SetGridSnap(gridSnap);
@@ -1774,6 +1813,7 @@ internal sealed class EditorForm : Form
     private void RebuildOutliner(LevelObject? preferredSelection = null)
     {
         preferredSelection ??= outliner.SelectedNode?.Tag as LevelObject;
+        var filter = outlinerSearch.Text.Trim();
         var expandedCategories = FlattenOutlinerNodes(outliner.Nodes)
             .Where(node => node.IsExpanded && node.Tag is OutlinerCategory)
             .Select(node => ((OutlinerCategory)node.Tag!).Id)
@@ -1790,6 +1830,7 @@ internal sealed class EditorForm : Form
         foreach (var category in document.OutlinerCategories)
         {
             var node = categoryNodes[category.Id];
+            if (filter.Length > 0 && !CategoryMatchesFilter(category, filter, categoryNodes)) continue;
             if (category.ParentId != null && categoryNodes.TryGetValue(category.ParentId, out var parent) &&
                 !CategoryDescendsFrom(parent, node))
                 parent.Nodes.Add(node);
@@ -1801,6 +1842,10 @@ internal sealed class EditorForm : Form
         foreach (var item in document.Objects)
         {
             if (IsHiddenOutlinerRecord(item)) continue;
+            if (filter.Length > 0 && !OutlinerObjectLabel(item).Contains(filter, StringComparison.OrdinalIgnoreCase) &&
+                !OfficialOutlinerObjectLabel(item).Contains(filter, StringComparison.OrdinalIgnoreCase) &&
+                !(document.OutlinerCategoryId(item) is { } itemCategory && CategoryNameMatchesFilter(itemCategory, filter, categoryNodes)))
+                continue;
             var node = CreateOutlinerObjectNode(item);
             if (ReferenceEquals(item, preferredSelection)) selectedNode = node;
             if (IsTileOutlinerItem(item))
@@ -1814,13 +1859,57 @@ internal sealed class EditorForm : Form
         }
 
         outliner.Nodes.AddRange([objectsRoot, tilesRoot, settingsRoot]);
+        objectsRoot.Text = $"Objects ({CountOutlinerObjects(objectsRoot)})";
+        tilesRoot.Text = $"Tiles ({CountOutlinerObjects(tilesRoot)})";
+        settingsRoot.Text = $"Level Settings ({CountOutlinerObjects(settingsRoot)})";
         objectsRoot.Expand();
         tilesRoot.Expand();
         settingsRoot.Expand();
         foreach (var node in categoryNodes.Values)
             if (expandedCategories.Contains(((OutlinerCategory)node.Tag!).Id)) node.Expand();
+        if (filter.Length > 0)
+            foreach (var node in FlattenOutlinerNodes(outliner.Nodes).Where(node => node.Nodes.Count > 0)) node.Expand();
         if (selectedNode != null) outliner.SelectedNode = selectedNode;
         outliner.EndUpdate();
+    }
+
+    private static int CountOutlinerObjects(TreeNode node) =>
+        (node.Tag is LevelObject ? 1 : 0) + node.Nodes.Cast<TreeNode>().Sum(CountOutlinerObjects);
+
+    private bool CategoryMatchesFilter(OutlinerCategory category, string filter,
+        IReadOnlyDictionary<string, TreeNode> categoryNodes) =>
+        category.Name.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+        CategoryNameMatchesFilter(category.Id, filter, categoryNodes) ||
+        document.OutlinerCategories.Any(descendant =>
+            IsCategoryWithin(descendant.Id, category.Id, categoryNodes) &&
+            descendant.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)) ||
+        document.Objects.Any(item => document.OutlinerCategoryId(item) is { } itemCategory &&
+            IsCategoryWithin(itemCategory, category.Id, categoryNodes) &&
+            (OutlinerObjectLabel(item).Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+             OfficialOutlinerObjectLabel(item).Contains(filter, StringComparison.OrdinalIgnoreCase)));
+
+    private static bool IsCategoryWithin(string categoryId, string ancestorId,
+        IReadOnlyDictionary<string, TreeNode> categoryNodes)
+    {
+        for (var current = categoryId; categoryNodes.TryGetValue(current, out var node) && node.Tag is OutlinerCategory category;)
+        {
+            if (current == ancestorId) return true;
+            if (category.ParentId == null) break;
+            current = category.ParentId;
+        }
+        return false;
+    }
+
+    private bool CategoryNameMatchesFilter(string categoryId, string filter,
+        IReadOnlyDictionary<string, TreeNode> categoryNodes)
+    {
+        for (var current = categoryId; categoryNodes.TryGetValue(current, out var node) && node.Tag is OutlinerCategory category;)
+        {
+            if (category.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)) return true;
+            if (category.ParentId == null) break;
+            current = category.ParentId;
+        }
+        return false;
     }
 
     private TreeNode CreateOutlinerObjectNode(LevelObject item)
@@ -1879,16 +1968,56 @@ internal sealed class EditorForm : Form
         eventArgs.Graphics.FillRectangle(background, row);
         var primary = OutlinerObjectLabel(item);
         var official = OfficialOutlinerObjectLabel(item);
-        var flags = TextFormatFlags.NoPadding | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine;
-        TextRenderer.DrawText(eventArgs.Graphics, primary, outliner.Font, row, selected ? Color.White : DarkTheme.Text, flags);
+        var flags = TextFormatFlags.NoPadding | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis;
+        var eyeBounds = new Rectangle(row.X, row.Y, 22, row.Height);
+        var visible = document.IsObjectVisible(item);
+        TextRenderer.DrawText(eventArgs.Graphics, visible ? "◉" : "○", outliner.Font, eyeBounds,
+            selected ? Color.White : visible ? Color.FromArgb(105, 190, 255) : DarkTheme.MutedText,
+            flags | TextFormatFlags.HorizontalCenter);
+        var labelBounds = new Rectangle(row.X + 23, row.Y, Math.Max(0, row.Width - 23), row.Height);
+        TextRenderer.DrawText(eventArgs.Graphics, primary, outliner.Font, labelBounds, selected ? Color.White : DarkTheme.Text, flags);
         if (!primary.Equals(official, StringComparison.Ordinal))
         {
             var width = TextRenderer.MeasureText(eventArgs.Graphics, primary, outliner.Font, Size.Empty,
                 TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width;
-            var secondary = new Rectangle(row.X + width + 10, row.Y, Math.Max(0, row.Width - width - 10), row.Height);
+            var secondary = new Rectangle(labelBounds.X + width + 10, row.Y, Math.Max(0, labelBounds.Width - width - 10), row.Height);
             TextRenderer.DrawText(eventArgs.Graphics, official, outliner.Font, secondary, DarkTheme.MutedText, flags);
         }
         if ((eventArgs.State & TreeNodeStates.Focused) != 0) ControlPaint.DrawFocusRectangle(eventArgs.Graphics, row);
+    }
+
+    private (string Name, int Index) ViewportOutlinerIdentity(LevelObject item)
+    {
+        if (item.Type is "water" or "sand" or "gel" or "gas")
+        {
+            var combined = document.Objects.Where(value => value.Type is "water" or "sand" or "gel" or "gas").ToList();
+            return ("Fluid Field", combined.IndexOf(item) + 1);
+        }
+        if (item.Type == "portalPair") return ("Portal Pair", item.Index);
+        if (item.Type == "cameraZone") return ("Camera Zone", item.Index);
+        if (item.Type == "darkness") return ("Darkness", item.Index);
+        if (item.Type == "playerStart") return ("Player Start", item.Index);
+        if (item.Type == "exit") return ("Exit Trigger", item.Index);
+        if (item.Type == "directionalSpikeHazard") return ("Directional Spikes", item.Index);
+        if (item.Type == "waterPit") return ("Water Pit", item.Index);
+        var aliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["waveWasher"] = "Wave Washer", ["constantForceSpring"] = "Constant-Force Spring",
+            ["constantTorqueSpring"] = "Constant-Torque Spring", ["oneWayPlatform"] = "One-Way Platform",
+            ["antiGravityPad"] = "Anti-Gravity Pad", ["comeAlong"] = "Come-Along",
+            ["hotAirBalloon"] = "Hot-Air Balloon", ["loadCart"] = "Heavy-Load Cart",
+            ["revolvingStoneGate"] = "Balanced Stone Gate", ["rockHammer"] = "Gear-Headed Rock Hammer",
+            ["spokePress"] = "Richmond Spoke Press", ["sundial"] = "Leedskalnin Sundial",
+            ["waterBucket"] = "Bucket of Water", ["transRotoConverter"] = "Trans-Roto Converter",
+            ["rotoTransConverter"] = "Roto-Trans Converter", ["tnt"] = "TNT"
+        };
+        if (aliases.TryGetValue(item.Type, out var alias)) return (alias, item.Index);
+        if (item.Type is "trapDoor" or "simpleHingedDoor")
+        {
+            var doors = document.Objects.Where(value => value.Type == item.Type).ToList();
+            return (item.Type == "trapDoor" ? "Trap Door" : "Simple Hinged Door", doors.IndexOf(item) + 1);
+        }
+        return (HumanizeObjectType(item.Type), item.Index);
     }
 
     private void AddOutlinerCategory(string? parentId)
@@ -2093,6 +2222,7 @@ internal sealed class EditorForm : Form
     private static string HumanizeObjectType(string value)
     {
         if (string.IsNullOrEmpty(value)) return "Object";
+        if (value == "simpleHingedDoor") return "Simple Hinged Door";
         var result = new System.Text.StringBuilder(value.Length + 8);
         result.Append(char.ToUpperInvariant(value[0]));
         for (var index = 1; index < value.Length; ++index)
@@ -2253,6 +2383,7 @@ internal sealed class EditorForm : Form
         document.Save();
         editHistory.MarkSaved(document.CaptureSnapshot());
         viewport.ReloadDocument(document.FilePath);
+        SyncActorVisibility();
         QueueThumbnailLoad();
         SendPaintConfiguration();
         SetDirty(false, $"Saved {Path.GetFileName(document.FilePath)}");
@@ -2266,9 +2397,20 @@ internal sealed class EditorForm : Form
         document.Save(dialog.FileName);
         editHistory.MarkSaved(document.CaptureSnapshot());
         viewport.ReloadDocument(dialog.FileName);
+        SyncActorVisibility();
         QueueThumbnailLoad();
         SendPaintConfiguration();
         SetDirty(false, $"Saved {Path.GetFileName(dialog.FileName)}");
+    }
+
+    private void SyncActorVisibility()
+    {
+        viewport.SetActorVisibility("__clear__", 0, true);
+        foreach (var item in document.Objects.Where(item => !document.IsObjectVisible(item)))
+        {
+            var identity = ViewportOutlinerIdentity(item);
+            viewport.SetActorVisibility(identity.Name, identity.Index, false);
+        }
     }
 
     private void ReloadLevel()
@@ -2835,7 +2977,7 @@ internal sealed class EditorForm : Form
             cursorSizeIndicator.Text = "Cursor: Loop bounds";
             return;
         }
-        if (synchronizingSelection || eventArgs.Node?.Tag is not LevelObject item ||
+        if (synchronizingSelection || eventArgs.Node?.Tag is not LevelObject item || !document.IsObjectVisible(item) ||
             !TryGetObjectPosition(item, out var x, out var y)) return;
         DeactivatePaintTools();
         var packed = ((Math.Clamp(y, short.MinValue, short.MaxValue) & 0xffff) << 16) |
@@ -2920,12 +3062,13 @@ internal sealed class EditorForm : Form
             detailsPreviewPath = Path.Combine(previewDirectory, $"preview-{Environment.ProcessId}.level");
             document.WriteSnapshot(detailsPreviewPath, resolveScriptPaths: true);
             viewport.ReloadDocument(detailsPreviewPath);
+            SyncActorVisibility();
             SendPaintConfiguration();
             SetGridSnap(gridSnap);
 
             if (outliner.SelectedNode?.Tag is LevelObject loop && loop.Type == "buttonPlatformLoop")
                 viewport.SendCommand(43, loop.Index - 1);
-            if (outliner.SelectedNode?.Tag is LevelObject item && TryGetObjectPosition(item, out var x, out var y))
+            if (outliner.SelectedNode?.Tag is LevelObject item && document.IsObjectVisible(item) && TryGetObjectPosition(item, out var x, out var y))
             {
                 var packed = ((Math.Clamp(y, short.MinValue, short.MaxValue) & 0xffff) << 16) |
                     (Math.Clamp(x, short.MinValue, short.MaxValue) & 0xffff);
@@ -3231,6 +3374,7 @@ internal sealed class EditorForm : Form
         if (values.Length != 3 || !int.TryParse(values[2], out var index)) return;
         if (values[1] == "None")
         {
+            if (outliner.SelectedNode?.Tag is LevelObject hiddenItem && !document.IsObjectVisible(hiddenItem)) return;
             synchronizingSelection = true;
             outliner.SelectedNode = null;
             synchronizingSelection = false;
@@ -3412,6 +3556,19 @@ internal sealed class EditorForm : Form
 
     private void OnEditorKeyDown(object? sender, KeyEventArgs eventArgs)
     {
+        if (eventArgs.Control && eventArgs.KeyCode == Keys.F)
+        {
+            outlinerSearch.Focus();
+            outlinerSearch.SelectAll();
+            eventArgs.SuppressKeyPress = true;
+            return;
+        }
+        if (eventArgs.KeyCode == Keys.Escape && outlinerSearch.Focused && outlinerSearch.Text.Length > 0)
+        {
+            outlinerSearch.Clear();
+            eventArgs.SuppressKeyPress = true;
+            return;
+        }
         if (eventArgs.KeyCode == Keys.Insert) {
             viewport.SendCommand(46, 1);
             eventArgs.SuppressKeyPress = true;

@@ -52,7 +52,14 @@ bool ScriptTarget(Level& level, const std::string& type, int ordinal, Rectangle&
     }
     if (type == "screw" && i < level.screws.size()) { auto& o = level.screws[i]; return center(o.center, o.length, o.radius * 2); }
     if (type == "seeSaw" && i < level.seeSaws.size()) { auto& o = level.seeSaws[i]; return center(o.pivot, o.length, o.thickness); }
-    if (type == "trapDoor" && i < level.trapDoors.size()) { auto& o = level.trapDoors[i]; return center(o.hinge, o.length, o.thickness); }
+    if (type == "trapDoor" || type == "simpleHingedDoor") {
+        size_t found = 0;
+        const auto kind = type == "simpleHingedDoor" ? HingedDoorKind::SimpleHingedDoor : HingedDoorKind::TrapDoor;
+        for (auto& o : level.trapDoors) {
+            if (o.kind == kind && found++ == i) return center(o.hinge, o.length, o.thickness);
+        }
+        return false;
+    }
     // Guide parts share a runtime vector, but attachment indices are per type.
     GuideObject prototype;
     std::istringstream defaults("0 0 32 32 1 1 1 1 1 1 1 1");

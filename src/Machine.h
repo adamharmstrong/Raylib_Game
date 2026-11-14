@@ -177,12 +177,15 @@ struct Ramp {
     bool wedge{false};
 };
 
+enum class HingedDoorKind { TrapDoor, SimpleHingedDoor };
+
 struct TrapDoor {
     Vector2 hinge;
     float length{120.0f};
     float thickness{16.0f};
     float angle{0.0f};
     bool minimal{false};
+    HingedDoorKind kind{HingedDoorKind::TrapDoor};
 };
 
 enum class FlexibleAnchorType {

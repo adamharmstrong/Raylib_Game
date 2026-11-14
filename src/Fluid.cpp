@@ -1249,25 +1249,40 @@ float EmitCellularFluidMass(FluidField& field, Vector2 source, float amount, Vec
         0, field.gridColumns - 1);
     const int sourceRow = std::clamp(static_cast<int>((source.y - field.bounds.y) / field.cellSize),
         0, field.gridRows - 1);
+    const int sourceIndex = CellIndex(field, sourceColumn, sourceRow);
+    // A covered outlet is blocked. Never search across a wall for an empty cell.
+    if (field.cells[sourceIndex].solid) return 0.0f;
+    std::vector<unsigned char> visited(field.cells.size(), 0);
+    std::vector<int> frontier{sourceIndex};
+    visited[sourceIndex] = 1;
     float remaining = amount;
-    const int maximumDistance = std::max(field.gridColumns, field.gridRows);
-    for (int distance = 0; distance <= maximumDistance && remaining > 0.0001f; ++distance) {
-        for (int row = std::max(0, sourceRow - distance);
-             row <= std::min(field.gridRows - 1, sourceRow + distance) && remaining > 0.0001f; ++row) {
-            for (int column = std::max(0, sourceColumn - distance);
-                 column <= std::min(field.gridColumns - 1, sourceColumn + distance) && remaining > 0.0001f; ++column) {
-                if (std::max(std::abs(column - sourceColumn), std::abs(row - sourceRow)) != distance) continue;
-                FluidCell& cell = field.cells[CellIndex(field, column, row)];
-                if (cell.solid || cell.mass >= 0.999f) continue;
-                const float added = fminf(remaining, 1.0f - cell.mass);
-                const float combined = cell.mass + added;
-                cell.velocity.x = (cell.velocity.x * cell.mass + velocity.x * added) / combined;
-                cell.velocity.y = (cell.velocity.y * cell.mass + velocity.y * added) / combined;
-                cell.mass = combined;
-                remaining -= added;
-            }
+    for (size_t next = 0; next < frontier.size() && remaining > 0.0001f; ++next) {
+        const int index = frontier[next];
+        FluidCell& cell = field.cells[index];
+        const float added = fminf(remaining, fmaxf(0.0f, 1.0f - cell.mass));
+        if (added > 0.0001f) {
+            const float combined = cell.mass + added;
+            cell.velocity.x = (cell.velocity.x * cell.mass + velocity.x * added) / combined;
+            cell.velocity.y = (cell.velocity.y * cell.mass + velocity.y * added) / combined;
+            cell.mass = combined;
+            remaining -= added;
+        }
+        const int column = index % field.gridColumns;
+        const int row = index / field.gridColumns;
+        // Gravity first, then the sides, then pressure upward. Every step must
+        // cross an open face; radial searches could create water through floors.
+        const int neighbors[][2] = {{column, row + 1}, {column - 1, row},
+            {column + 1, row}, {column, row - 1}};
+        for (const auto& neighbor : neighbors) {
+            if (neighbor[0] < 0 || neighbor[0] >= field.gridColumns ||
+                neighbor[1] < 0 || neighbor[1] >= field.gridRows) continue;
+            const int candidate = CellIndex(field, neighbor[0], neighbor[1]);
+            if (visited[candidate] || field.cells[candidate].solid) continue;
+            visited[candidate] = 1;
+            frontier.push_back(candidate);
         }
     }
+
     return amount - remaining;
 }
 

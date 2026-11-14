@@ -2,6 +2,7 @@ namespace PowerPulleyPanic.LevelEditor;
 
 internal sealed class TilePalette : ScrollableControl
 {
+    internal const float PassageOverlayLineWidth = 3.0f;
     private Bitmap? sheet;
     private int selectedColumn;
     private int selectedRow;
@@ -79,7 +80,7 @@ internal sealed class TilePalette : ScrollableControl
         eventArgs.Graphics.DrawImageUnscaled(sheet, offset.X, offset.Y);
         if (PassageAt != null)
         {
-            using var facePen = new Pen(Color.OrangeRed, 3);
+            using var facePen = new Pen(Color.OrangeRed, PassageOverlayLineWidth);
             using var textBrush = new SolidBrush(Color.LimeGreen);
             for (var row = 0; row * 32 < sheet.Height; ++row)
             for (var column = 0; column * 32 < sheet.Width; ++column)
